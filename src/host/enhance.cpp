@@ -466,6 +466,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         if(metal){
             if(settings.particles)emit(Kind::Spark,x,y,boss?18:7);
             if(settings.destruction)command(13,x,y,boss?4:2,hit.dx,hit.dy,1,0);
+            if(settings.blood)command(1,x,y,boss?40:14,hit.dx,hit.dy,1,0); // oil/grease spray
         }else{
             if(settings.blood)command(1,x,y,boss?72:24,hit.dx,hit.dy,0,0);
             if(settings.persistent_gore)command(11,x,y,1,hit.dx,hit.dy,0,boss?5:2);
@@ -478,6 +479,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         if(blast && settings.explosive_debris && resident_)continue;
         if(metal){
             if(settings.particles)emit(Kind::Spark,x,y-4,boss?64:blast?40:18);
+            if(settings.blood)command(1,x,y-4,boss?64:blast?32:12,0,0,1,0);
         }else if(settings.blood)emit(Kind::Blood,x,y-4,boss?96:blast?36:7);
         if(settings.destruction)command(13,x,y-4,boss?22:blast?12:4,0,0,metal?1:0,0);
     }
@@ -634,6 +636,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             if(settings.weapon_impacts || settings.fluid_smoke)command(15,x,y,1,old.vx,old.vy,old.weapon==0x4204?2:old.weapon==0x4205?1:3,1);
             if(target.metal) {
                 if(settings.particles)emit(Kind::Spark,x,y,scene.studio.boss?24:5);
+                if(settings.blood && scene.impacts.empty())command(1,x,y,scene.studio.boss?48:18,old.vx,old.vy,1,0);
             } else {
                 if(settings.blood && scene.impacts.empty()){
                     if(resident_)command(1,x,y,scene.studio.boss?104:52,old.vx,old.vy,0,0);

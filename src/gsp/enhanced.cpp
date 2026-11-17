@@ -184,6 +184,27 @@ void Machine::boost_enemy_motion() {
     }
 }
 
+void Machine::mutoid_wall_action() {
+    // GET_ST has chosen the next action in A0 and A8 is the tank half whose Y
+    // the retail MDN/MUP handlers test against WORLDTLY+[40,170]. Retail picks
+    // down/up/lunge without looking at that wall, so the tank can be sent into
+    // it for a frame or two (or a whole timer when a jerk clears its velocity).
+    // Turn such a choice around while it is still inside the legal interval.
+    if(!enhanced_scene(*this) || game_scene_state(*this)!=0x10)return;
+    const u32 tank=c.a[8];
+    const u32 offset=tank-object_pool_base;
+    if(offset>=object_slots*object_stride || offset%object_stride)return;
+    const u16 oid=rw(tank+0x150);
+    if(oid!=0x9801 && oid!=0x9802)return;
+    const s64 y=s64(s32(rlong(*this,tank+0x80)))-s64(s32(rlong(*this,0x01000260u)));
+    constexpr s64 top=40ll<<16, bottom=170ll<<16, margin=8ll<<16;
+    switch(c.a[0]){
+    case 1: case 13: if(y>=bottom-margin)c.a[0]=2;break;   // down / lunge down
+    case 2: case 12: if(y<=top+margin)c.a[0]=1;break;      // up / lunge up
+    default:break;
+    }
+}
+
 void Machine::analog_walk_facing() {
     const unsigned direction=c.a[3];
     if((!move_inputs[0] && !move_inputs[1]) || game_scene_state(*this)!=0x10 ||

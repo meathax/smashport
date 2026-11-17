@@ -107,7 +107,10 @@ struct ResidentEffects::Impl {
  PFN_libra_error_free errorFree{};
  struct Prepared {libra_d3d11_filter_chain_t chain{};ComPtr<ID3D11CommandList> commands;int mode{};std::string error;};
  libra_d3d11_filter_chain_t chain{};int requested{},active{};std::future<Prepared> preparing;
- ~Impl(){if(preparing.valid()){auto p=preparing.get();if(p.chain)chainFree(&p.chain);}if(chain)chainFree(&chain);if(library)FreeLibrary(library);destroyUI();}
+ ~Impl(){if(preparing.valid()){auto p=preparing.get();if(p.chain)chainFree(&p.chain);}if(chain)chainFree(&chain);destroyUI();}
+ // librashader_d3d11.dll stays loaded for the process: its worker threads can
+ // still be running library code after the chain is freed, and FreeLibrary
+ // then makes them execute unmapped memory (an intermittent crash under load).
  void destroyUI(){if(uiDC){SelectObject(uiDC,uiOld);DeleteObject(uiBitmap);DeleteDC(uiDC);uiDC=nullptr;}}
  template<class T>void load(T& fn,const char* symbol){fn=reinterpret_cast<T>(GetProcAddress(library,symbol));if(!fn)throw std::runtime_error(std::string("Missing shader runtime entry: ")+symbol);}
  void init(){

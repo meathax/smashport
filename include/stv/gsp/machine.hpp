@@ -89,6 +89,8 @@ struct Machine {
     void analog_walk_facing();
     void analog_velocity();
     void boost_enemy_motion();
+    // MUTOID.GETY: redirect an action that would press the tank into a wall.
+    void mutoid_wall_action();
     std::array<u16,2> move_inputs{};
     std::array<u16,2> aim_inputs{};
     std::array<u16,240> shot_aim{};
@@ -133,6 +135,9 @@ struct Machine {
     std::function<void(u16)> on_hcount_read;
     std::function<void(ObjectEvent,u32,u32)> on_object; // subject and optional contact partner
     std::function<void()> on_vblank;       // MAME Lua frame_done point (vblank begin)
+    // SOUNDS.ASM SNDLD observation (0 passed SOUNDSUP with A0 = table, 1 accepted,
+    // 2 exit). Host presentation only: the extended sound channels.
+    std::function<void(int)> on_sound_probe;
 
     u64 now_ps() const { return c.cyc * PS_PER_CYCLE; }
     u16 rw(u32 bitaddr);

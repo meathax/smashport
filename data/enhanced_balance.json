@@ -9,6 +9,20 @@
       "role": "Explosion loop: restore the caller and continue its effects when MUTPTR no longer owns the original Mutoid body. Classic retains the retail path."
     },
     {
+      "pc": "0xffef2ec0",
+      "instruction": "MOVE A11,*A8({W1}),1",
+      "operands": [["R", "A11", null], ["DISP", "A8", 64], ["K", null, 1]],
+      "policy": "mutoid_jerk_replan",
+      "role": "SKPLYR jerk release: after the jerk clears the tank velocity, expire the MDN/MUP timer so Mutoid chooses a new action instead of standing still against a wall. Classic retains the retail path."
+    },
+    {
+      "pc": "0xfff02aa0",
+      "instruction": "MOVB A0,@{L1}",
+      "operands": [["R", "A0", null], ["ABS", null, 17772088]],
+      "policy": "mutoid_wall_action",
+      "role": "GET_ST MACTION store: do not send the tank down into the bottom wall or up into the top wall (the retail MDN/MUP limits, WORLDTLY+170 and +40, with an 8 pixel margin); turn that action around. Classic retains the retail path."
+    },
+    {
       "pc": "0xffee1500",
       "instruction": "MOVE *A9({W1}),A0,0",
       "operands": [["DISP", "A9", 304], ["R", "A0", null], ["K", null, 0]],

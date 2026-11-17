@@ -26,7 +26,7 @@ void AudioOut::close() {
     release<IAudioClient>(client_);
     release<IMMDevice>(device_);
     release<IMMDeviceEnumerator>(enumerator_);
-    pending_.clear();
+    pending_.clear(); pending_r_.clear();
     servo_.reset();
     newly_queued_ = 0;
     resync_pending_ = false;
@@ -94,7 +94,7 @@ bool AudioOut::open() {
     min_pad_ = UINT32_MAX;
     pending_target_ = pending_limit_ = maximum_pending_ = 0;
     output_resyncs_ = dropped_source_samples_ = dropped_device_frames_ = 0;
-    pending_ = AudioResampler{};
+    pending_ = AudioResampler{}; pending_r_ = AudioResampler{};
     servo_.reset();
     rate_ = 48000; // matches the mixer's no-device startup fallback
     endpoint_rate_ = 0;
@@ -201,7 +201,7 @@ bool AudioOut::open_stream(bool preserve_rate) {
 
 bool AudioOut::discard_pending() {
     finish_priming(false);
-    pending_.clear();
+    pending_.clear(); pending_r_.clear();
     servo_.reset();
     newly_queued_ = 0;
     resync_pending_ = false;
@@ -237,30 +237,47 @@ uint32_t AudioOut::queued() {
     return pad + uint32_t(pending_.queued());
 }
 
-void AudioOut::push(const float* samples, std::size_t count) {
+void AudioOut::push(const float* samples, std::size_t count) { push_frames(samples, nullptr, count); }
+
+void AudioOut::push_stereo(const float* lr, std::size_t frames) {
+    stereo_left_.resize(frames);
+    stereo_right_.resize(frames);
+    for (std::size_t i = 0; i < frames; ++i) { stereo_left_[i] = lr[2 * i]; stereo_right_[i] = lr[2 * i + 1]; }
+    push_frames(stereo_left_.data(), stereo_right_.data(), frames);
+}
+
+// The right channel always mirrors the left queue's length, ratio and phase;
+// mono sources feed the same samples to both.
+void AudioOut::push_frames(const float* left, const float* right, std::size_t count) {
     if (!client_ || !count) return;
+    if (!right) right = left;
     if (count > pending_limit_ - std::min<std::size_t>(pending_.queued(), pending_limit_)) {
         // Trim before appending, so even a very large caller block cannot
         // temporarily allocate an unbounded output deque. Source data stays const.
         if (count >= pending_target_) {
             dropped_source_samples_ += pending_.retain_latest(0) + count - pending_target_;
-            pending_.append(samples + count - pending_target_, pending_target_);
+            pending_r_.retain_latest(0);
+            pending_.append(left + count - pending_target_, pending_target_);
+            pending_r_.append(right + count - pending_target_, pending_target_);
         } else {
             dropped_source_samples_ += pending_.retain_latest(pending_target_ - count);
-            pending_.append(samples, count);
+            pending_r_.retain_latest(pending_target_ - count);
+            pending_.append(left, count);
+            pending_r_.append(right, count);
         }
         servo_.reset();
         newly_queued_ = 0;
         resync_pending_ = true;
     } else {
-        pending_.append(samples, count);
+        pending_.append(left, count);
+        pending_r_.append(right, count);
         newly_queued_ += count;
     }
     maximum_pending_ = std::max(maximum_pending_, uint32_t(pending_.queued()));
 }
 
 void AudioOut::pump() {
-    if (!client_) { pending_.clear(); return; }
+    if (!client_) { pending_.clear(); pending_r_.clear(); return; }
     auto* ac = static_cast<IAudioClient*>(client_);
     auto* rc = static_cast<IAudioRenderClient*>(render_);
     UINT32 pad = 0;
@@ -284,7 +301,7 @@ void AudioOut::pump() {
         last_pad_ = UINT32_MAX;
         pad = 0;
         servo_.reset();
-        pending_.set_ratio(1.0);
+        set_ratio_both(1.0);
         newly_queued_ = 0;
         started_ = false;
         underrun_latched_ = false;
@@ -295,7 +312,7 @@ void AudioOut::pump() {
             if (started_) ++underrun_reprimes_;
             else ++startup_primes_;
             servo_.reset();
-            pending_.set_ratio(1.0); // keep phase and every source sample
+            set_ratio_both(1.0); // keep phase and every source sample
         }
         if (priming_) {
             // The real gap was already counted above. While its confirmed PCM
@@ -304,7 +321,7 @@ void AudioOut::pump() {
             if (pending_.available(priming_target_frames_) < priming_target_frames_) return;
             newly_queued_ = 0;
         } else if (newly_queued_) {
-            pending_.set_ratio(servo_.update(std::uint64_t(pad) + pending_.queued(),
+            set_ratio_both(servo_.update(std::uint64_t(pad) + pending_.queued(),
                                             buffer_frames_, rate_, newly_queued_));
             newly_queued_ = 0;
         }
@@ -319,12 +336,16 @@ void AudioOut::pump() {
     if (FAILED(hr) || !data) { fail("GetBuffer", FAILED(hr) ? hr : E_POINTER); return; }
     const std::size_t source_before = pending_.queued();
     for (uint32_t i = 0; i < n; ++i) {
-        float v = 0.0f;
+        float v = 0.0f, w = 0.0f;
         pending_.take(v); // n was bounded by source availability, including interpolation history
+        pending_r_.take(w);
         v = level_.apply(v);   // Device copy only; the pending/raw PCM stays unscaled.
+        w = level_.apply(w);
         for (uint32_t c = 0; c < channels_; ++c) {
-            if (is_float_) reinterpret_cast<float*>(data)[i * channels_ + c] = v;
-            else reinterpret_cast<int16_t*>(data)[i * channels_ + c] = audio_pcm16(v);
+            // Stereo endpoints: left/right. Surround layouts: front pair, rest mono.
+            const float out = channels_ >= 2 && c < 2 ? (c ? w : v) : 0.5f * (v + w);
+            if (is_float_) reinterpret_cast<float*>(data)[i * channels_ + c] = out;
+            else reinterpret_cast<int16_t*>(data)[i * channels_ + c] = audio_pcm16(out);
         }
     }
     hr = rc->ReleaseBuffer(n, 0);

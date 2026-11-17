@@ -35,7 +35,7 @@ std::string pc_player_name(std::string_view text) {
 namespace {
 bool valid(const PcSettings& s) {
     return s.run_ahead >= 0 && s.run_ahead <= 3 && s.window_scale >= 0 && s.window_scale <= 6 && s.scaling >= 0 && s.scaling <= 2 &&
-           s.filter >= 0 && s.filter <= 7 && s.glow >= 0 && s.glow <= 3 && s.sharpen >= 0 && s.sharpen <= 3 && s.curvature >= 0 && s.curvature <= 3 && s.volume >= 0 && s.volume <= 100 &&
+           s.filter >= 0 && s.filter <= 7 && s.glow >= 0 && s.glow <= 3 && s.sharpen >= 0 && s.sharpen <= 3 && s.curvature >= 0 && s.curvature <= 3 && s.volume >= 0 && s.volume <= 100 && s.reverb >= 0 && s.reverb <= 2 &&
            s.player_name == pc_player_name(s.player_name);
 }
 bool number(std::string_view value, int& result) {
@@ -110,6 +110,13 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "voxels") candidate.voxels = n != 0;
         }
         else if (key == "run_ahead") candidate.run_ahead = n;
+        else if (key == "reverb") candidate.reverb = n;
+        else if (key == "extended_sound" || key == "audio_wide" || key == "audio_hifi") {
+            if (n != 0 && n != 1) return invalid();
+            if (key == "extended_sound") candidate.extended_sound = n != 0;
+            if (key == "audio_wide") candidate.audio_wide = n != 0;
+            if (key == "audio_hifi") candidate.audio_hifi = n != 0;
+        }
         else if (key == "smooth_motion" || key == "fullscreen" || key == "vsync" || key == "fps" || key == "muted" || key == "swap_pads") {
             if (n != 0 && n != 1) return invalid();
             if (key == "smooth_motion") candidate.smooth_motion = n != 0;
@@ -155,6 +162,8 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\nsmooth_motion=" << int(settings.smooth_motion) << "\nrun_ahead=" << settings.run_ahead
            << "\nvsync=" << int(settings.vsync) << "\nfps=" << int(settings.show_fps)
            << "\nvolume=" << settings.volume << "\nmuted=" << int(settings.muted)
+           << "\nextended_sound=" << int(settings.extended_sound) << "\nreverb=" << settings.reverb
+           << "\naudio_wide=" << int(settings.audio_wide) << "\naudio_hifi=" << int(settings.audio_hifi)
            << "\nswap_pads=" << int(settings.swap_pads) << "\nname=" << settings.player_name << '\n';
     output.flush();
     bool ok = bool(output);

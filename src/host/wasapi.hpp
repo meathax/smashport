@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 #include "stv/host/audio_resampler.hpp"
 #include "stv/host/frame_clock.hpp"
 
@@ -72,8 +73,9 @@ public:
     // Frames queued in the device plus waiting here.
     uint32_t queued();
     void push(const float* s, std::size_t n); // immutable source PCM, matched to the device clock only
+    void push_stereo(const float* lr, std::size_t frames); // interleaved stereo (enhanced output)
     void pump();                          // move pending samples into the device buffer
-    void clear() { finish_priming(false); pending_.clear(); servo_.reset(); newly_queued_ = 0; resync_pending_ = false; }
+    void clear() { finish_priming(false); pending_.clear(); pending_r_.clear(); servo_.reset(); newly_queued_ = 0; resync_pending_ = false; }
     // Explicit game restart/disconnect only, on the output owning thread.
     bool discard_pending();              // reset software and already queued device audio
     // device buffer found empty after playback started (an audible gap), and the
@@ -109,7 +111,10 @@ private:
     bool is_float_{true};
     uint32_t bits_{32};
     uint32_t buffer_frames_{};
-    AudioResampler pending_;
+    AudioResampler pending_, pending_r_;   // left (counted) and right, in lockstep
+    std::vector<float> stereo_left_, stereo_right_;
+    void push_frames(const float* left, const float* right, std::size_t count);
+    void set_ratio_both(double r) { pending_.set_ratio(r); pending_r_.set_ratio(r); }
     AudioQueueServo servo_;
     std::size_t newly_queued_{};
     uint32_t pending_target_{}, pending_limit_{}, maximum_pending_{};

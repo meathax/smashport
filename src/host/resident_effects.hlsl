@@ -117,6 +117,24 @@ float tissueFace(float2 delta,float angle,float size,float tissue){
 float3 fleshColor(float face){
  return lerp(float3(.16,.029,.041),float3(.67,.31,.24),face*face);
 }
+// Mirror-polished steel reflects a fake arena: dark warm floor below a near-black
+// horizon line, cool blue-grey ceiling above, and one narrow specular hotspot.
+// Mostly dark with hard bright streaks, so small pieces read as chrome, not paint.
+float3 chromeColor(float face,float spin){
+ float e=saturate(face+.13*sin(spin));
+ float3 below=lerp(float3(.04,.036,.036),float3(.22,.19,.16),smoothstep(0.,.44,e));
+ float3 above=lerp(float3(.20,.25,.32),float3(.50,.58,.68),smoothstep(.52,.92,e));
+ float3 c=(e<.47?below:above)*(.12+.88*smoothstep(0.,.07,abs(e-.47)));
+ return c+float3(.88,.92,1)*pow(saturate(1-abs(e-.78)*8),2);
+}
+// Engine oil: glossy near-black with a thin-film rainbow sheen while wet.
+float3 oilColor(float2 p,float wet){
+ float film=noise(p*.11)*1.6+noise(p*.37)*.35+wet*.6;
+ float3 rainbow=.5+.5*cos(6.2831853*(film+float3(0,.33,.67)));
+ float glint=smoothstep(.82,.97,noise(p*.3+3.1))*wet;
+ return float3(.016,.015,.019)+rainbow*(.025+.075*wet)+glint*float3(.30,.32,.36);
+}
+bool oilDrop(float3 c){return c.b>=c.r;} // droplets are dark blue-black, blood is red
 bool floorPixel(float2 xy){
  if(floorRect.z>0 && (any(xy<floorRect.xy)||any(xy>=floorRect.xy+floorRect.zw)))return false;
  return true;
@@ -188,10 +206,9 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
   if(mark && (((mark>>8)&15)==4 ? (mask&32768) : (mask&2048)) &&
      (wallStain((mark>>8)&15) || floorPixel(id.xy))){
    uint type=(mark>>8)&15;float coverage=(mark&255)/255.;float wet=wetness(mark);
-   float3 pigment=type==4?float3(.048,.034,.030):type==1?lerp(float3(.045,.045,.055),float3(.10,.13,.16),wet):
+   float3 pigment=type==4?float3(.048,.034,.030):type==1||type==13?oilColor(float2(int2(id.xy)+floorOrigin),wet):
       lerp(float3(.19,.043,.040),float3(.54,.019,.047),wet);
-   if(type==13)pigment=lerp(float3(.035,.033,.045),float3(.085,.11,.13),wet);
-   else if(type>=5)pigment=fleshColor(float((type-5)%4)/3.)*(.72+.28*wet);
+   if(type>=5 && type!=13)pigment=fleshColor(float((type-5)%4)/3.)*(.72+.28*wet);
    if(type!=3 && type!=4 && type<9)coverage*=floorCoverage(id.xy);
    if(type==3)coverage*=saturate(float(((tick&1048575)-(mark>>12))&1048575)*.07-(1-coverage));
    surface=drawnSurface(id.xy);coverage*=surface;
@@ -274,6 +291,7 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
     float2 axis=normalize(float2(state.vel.x,state.vel.y-state.vel.z)+.0001);
     float2 uv=float2(dot(delta,axis),dot(delta,float2(-axis.y,axis.x)));
     float coverage=saturate(1.3-length(uv/float2(size,max(.75,size*.42))));
+    if(oilDrop(color))color+=float3(.30,.33,.38)*saturate(1.6-length(uv/size+float2(.2,.45))*2.2);
     rgb=lerp(rgb,color*sceneTint,coverage);
    }
    continue;
@@ -291,7 +309,8 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
     float drop=.24*along+.012*along*along+age*along*.35;
     float stripe=saturate(1.35-abs(delta.y-drop));
     float pulse=age<.43?1:step(.45,frac(along*.22-age*8));
-    if(along>=0 && along<=reach)rgb=lerp(rgb,float3(.22,.32,.36),stripe*pulse*(.95-.4*age));
+    float3 oil=oilColor(float2(along*3,delta.y*3+tick*.05),1)+float3(.20,.22,.25)*step(.82,frac(along*.31-age*5));
+    if(along>=0 && along<=reach)rgb=lerp(rgb,oil,stripe*pulse*(.95-.4*age));
    }
    continue;
   }
@@ -314,7 +333,7 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
    }
    if(abs(uv.x)+abs(uv.y)*(metal?1.5:1.08)>1.05 || uv.x+uv.y<-.83)continue;
    float face=saturate(.48-uv.y*.65+uv.x*.21);
-   float3 c=metal?lerp(float3(.065,.08,.10),float3(.42,.46,.48),face):
+   float3 c=metal?chromeColor(face,state.misc.w*2.3):
                   lerp(float3(.15,.005,.018),lerp(float3(.77,.06,.09),float3(.91,.42,.34),state.misc.z),face);
    if(metal && p.phase.x>.72){
     float arc=abs(uv.y-.28*sin(uv.x*8+floor(tick*.4)));
@@ -400,6 +419,7 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
    float shape=length(q)+.12*sin(q.x*5+p.phase.y);
    alpha*=saturate((1-shape)*size+.5);
    if(kind==2||kind==5)color*=.65+.45*saturate(.5-delta.y/(size*2));
+   if(kind==1 && oilDrop(color))color+=float3(.30,.33,.38)*saturate(1-length(q+float2(.3,.4))*2.4);
   }
   if(kind==4)rgb+=color*alpha;else rgb=lerp(rgb,color*sceneTint,saturate(alpha));
  }
@@ -467,7 +487,7 @@ void storeStain(int2 xy,uint type,float opacity);
 bool stickToWall(State p,float2 old){
  if(!(mask&2048) || floorRect.z<=0 || !floorPixel(old) || floorPixel(p.pos.xy))return false;
  uint kind=uint(p.misc.x);
- if((kind==19 && p.misc.y>1.5) || (kind==13 && p.misc.y>.5) || ((kind==2 || kind==5) && p.color.b>=p.color.r))return false;
+ if((kind==19 && p.misc.y>1.5) || (kind==13 && p.misc.y>.5) || ((kind==1 || kind==2 || kind==5 || kind==19) && oilDrop(p.color.rgb)))return false;
  float2 travel=p.pos.xy-old;
  float2 limit=clamp(p.pos.xy,floorRect.xy,floorRect.xy+floorRect.zw-.001);
  bool side=p.pos.x!=limit.x;
@@ -521,11 +541,11 @@ void settlePlayerGore(State p){
   if(tissue || kind==2 || kind==5){
    float face=tissueFace(delta,p.misc.w,size,p.misc.z);
    if(face<0)continue;
-   float3 color=metal?lerp(float3(.12,.13,.14),float3(.57,.55,.5),face):p.color.rgb;
+   float3 color=metal?chromeColor(face,p.misc.w*2.3):p.color.rgb;
    if(tissue && !metal)color=fleshColor(face);
    uint3 rgb=(uint3)round(saturate(color)*255);
    InterlockedMax(bodyWrite[cell+floorOrigin],(120u<<24)|(rgb.r<<16)|(rgb.g<<8)|rgb.b);
-  }else storeStain(cell,0,saturate(1.35-length(delta*float2(.85,1.25))/size));
+  }else storeStain(cell,oilDrop(p.color.rgb)?1:0,saturate(1.35-length(delta*float2(.85,1.25))/size));
  }
 }
 [numthreads(64,1,1)] void integrate(uint id:SV_DispatchThreadID) {
@@ -643,7 +663,7 @@ cbuffer BodyBatch : register(b2){BodyStamp bodies[256];};
   float2 d=float2(x,y),uv=float2(dot(d,dir),dot(d,float2(-dir.y,dir.x)))/size;
   if(abs(uv.x)+abs(uv.y)*1.45>1.15)continue;
   float face=saturate(.52-uv.y*.4);
-  float3 color=metal?lerp(float3(.10,.11,.12),float3(.56,.54,.49),face):
+  float3 color=metal?chromeColor(face,angle):
                     lerp(float3(.16,.027,.039),float3(.60,.24,.20),face);
   if(boss && metal){
    if(family==24 && component<=2){
@@ -814,7 +834,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    }else if(kind==19){
     // A few heavy pieces lead a fan of faster droplets or steel splinters.
     // A centred detonation uses the same distribution around the full circle.
-    bool steel=b.z>.5,heavy=i%4==0;
+    bool steel=b.z>.5,heavy=i%4==0,oil=steel && !heavy && i%3==1;
     float jitter=random(seed),angle=6.2831853*random(seed);
     if(dot(b.xy,b.xy)>.5 && i%8!=0)
      angle=atan2(b.y,b.x)+(jitter-.5)*(heavy?1.6:2.4);
@@ -822,8 +842,9 @@ void stampStain(float2 pos,float4 b,inout uint seed){
     float speed=(heavy?62:91)+(heavy?67:103)*random(seed);
     p.pos.xy=placeOnFloor(a.xy,0);p.pos.z=5+random(seed)*7;
     p.vel.xyz=float3(dir*speed*b.w,(27+random(seed)*64)*(.55+.45*b.w));
-    p.misc.y=steel?2:heavy?1:0;p.misc.z=random(seed);p.misc.w=angle;
+    p.misc.y=oil?0:steel?2:heavy?1:0;p.misc.z=random(seed);p.misc.w=angle;
     p.color.rgb=lerp(float3(.47,.016,.035),float3(.93,.11,.13),random(seed));
+    if(oil)p.color.rgb=float3(.028,.026,.034); // engine oil flung with the steel
     p.color.w=heavy?2.8+random(seed)*2.1:1.+random(seed)*1.35;
    }else if(kind==13){
     float angle=random(seed)*6.283;float speed=16+random(seed)*31;
@@ -850,6 +871,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
      if(b.z==3 || b.z==4)p.vel.xyz*=.8;
      p.misc.yz=float2(cos(angle),sin(angle));p.misc.w=angle;}
     if(kind==5){p.pos.w=4+random(seed)*3;p.color=float4(lerp(float3(.557,.063,.125),float3(.827,.208,.259),step(.5,random(seed))),.28+random(seed)*.42);}
+    if(kind==1 && b.z>.5)p.color.rgb=float3(.028,.026,.034); // oil/grease spray from machines (flag 1)
     if((kind==2 || kind==5) && b.z!=0)p.color.rgb=lerp(float3(.18,.19,.21),float3(.48,.45,.40),random(seed));
    }
    // A shot near the back wall starts above the walkable floor in screen space.

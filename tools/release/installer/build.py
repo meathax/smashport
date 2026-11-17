@@ -12,10 +12,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
-HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio game/cosched
+HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio snd/voices game/cosched
 net/rollback net/udp net/lobby net/epic_rooms host/pc_menu host/pc_settings host/video_filter
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
-host/win_main host/wasapi""".split()
+host/win_main host/wasapi host/audio_fx""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
 tools/gsp2cpp/decode.py tools/gsp2cpp/retail_tables.py tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
 tools/m6809_aot/codemap6809.py tools/m6809_aot/decode6809.py tools/m6809_aot/emit6809.py

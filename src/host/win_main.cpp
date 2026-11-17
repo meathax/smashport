@@ -43,6 +43,8 @@
 #include "title_background.hpp"
 #include "stv/host/firing_point.hpp"
 #include "stv/host/drop_player.hpp"
+#include "stv/host/audio_fx.hpp"
+#include "stv/snd/voices.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -72,6 +74,15 @@ std::unique_ptr<stv::snd::Mixer> g_mixer;
 stv::host::AudioOut g_audio;
 stv::host::AudioTelemetry g_audio_telemetry;
 std::vector<float> g_pcm;
+// Enhanced sound output (presentation only; g_pcm stays the retail board PCM).
+stv::snd::VoiceBank g_voices;
+stv::host::AudioFx g_fx;
+stv::host::AudioFxSettings g_fx_applied{false, false, 0};
+bool g_fx_configured = false;
+std::vector<float> g_stereo;
+uint64_t g_voice_starts = 0;
+u32 g_probe_table = 0;
+bool g_probe_pending = false;
 bool g_started = false;
 u32 g_pc = 0;
 bool g_frame_done = false;
@@ -631,6 +642,7 @@ const Machine& local_video_frame() {
     future.on_input_read = {};
     future.on_hcount_read = {};
     future.on_object = {};
+    future.on_sound_probe = {};
     sound.copy_prediction_state(g_snd);
     stv::game::CoScheduler scheduler(future, sound);
     scheduler.copy_prediction_timing(*g_sched);
@@ -977,9 +989,76 @@ void observe_confirmed_resync() {
 // command port belongs to the board; use the same guard as the native recorder.
 void connect_confirmed_sound() {
     g_m.on_sound_write = [](u32 address, u16 data) {
-        if (address >= 0x01e00000u && address < 0x01e00020u)
+        if (address >= 0x01e00000u && address < 0x01e00020u) {
             g_sched->main_sound_write(data);
+            if (g_voices.running()) {
+                const u32 channel = g_m.c.a[5];   // SNDSND: A5 = logical sound channel
+                g_voices.sound_write(stv::game::CoScheduler::main_time(g_m.c.cyc), channel <= 3 ? int(channel) : 0, data);
+            }
+        }
     };
+    // SNDLD: which sounds the retail loader accepts, and which it discards.
+    g_m.on_sound_probe = [](int probe) {
+        if (!g_voices.running()) { g_probe_pending = false; return; }
+        if (probe == 0) { g_probe_table = g_m.c.a[0]; g_probe_pending = true; return; }
+        if (!g_probe_pending) return;
+        g_probe_pending = false;
+        const u32 table = g_probe_table;
+        if (probe == 1) {
+            g_voices.sound_accepted(int((g_m.rw(table) >> 8) & 3), table);
+            return;
+        }
+        std::vector<u16> words;
+        for (u32 i = 0; i < 64; ++i) {
+            const u16 w = g_m.rw(table + i * 16);
+            words.push_back(w);
+            if (!w) break;
+        }
+        g_voices.sound_dropped(stv::game::CoScheduler::main_time(g_m.c.cyc), words, table);
+    };
+}
+
+// One confirmed frame of sound to the device. With every enhancement off this
+// is exactly the retail mono path. Otherwise the extra sound boards and the
+// output chain shape a stereo copy; g_pcm (audits, hashes) is never changed.
+void deliver_audio(bool to_device) {
+    const stv::host::AudioFxSettings want{g_settings.audio_hifi, g_settings.audio_wide, g_settings.reverb};
+    const bool extended = g_settings.extended_sound && g_mixer && g_sched;
+    if (extended && g_voices.running()) {
+        // A reset, snapshot load or long pause moved the board: realign.
+        const auto base = g_sched->base();
+        const auto vb = g_voices.base();
+        const bool behind = vb.sec + 1 < base.sec, ahead = base < vb;
+        if (behind || ahead) g_voices.stop();
+    }
+    if (extended && !g_voices.running() && g_snd.fault.empty())
+        ++g_voice_starts, g_voices.start(g_snd, *g_mixer, g_sched->base(), stv::snd::VoiceBank::kMaxEffectVoices);
+    if (!extended && g_voices.running()) g_voices.stop();
+    if (!extended && !want.any()) {
+        if (to_device) g_audio.push(g_pcm.data(), g_pcm.size());
+        return;
+    }
+    if (!g_fx_configured || !(want.hifi == g_fx_applied.hifi && want.wide == g_fx_applied.wide && want.reverb == g_fx_applied.reverb)) {
+        g_fx.configure(g_audio.ok() ? g_audio.rate() : 48000, want);
+        g_fx_applied = want;
+        g_fx_configured = true;
+    }
+    const std::size_t frames = g_pcm.size();
+    if (g_voices.running()) {
+        g_voices.tick(g_sched->base());
+        g_voices.render(g_sched->base(), frames, g_stereo);
+        if (!g_voices.fault().empty()) {           // never lose sound: fall back to the retail mix
+            g_settings.extended_sound = false;
+            g_toast = "Extended sound stopped: " + g_voices.fault();
+            g_toast_until = GetTickCount64() + 5000;
+        }
+    }
+    if (!g_voices.running()) {
+        g_stereo.resize(frames * 2);
+        for (std::size_t i = 0; i < frames; ++i) g_stereo[2 * i] = g_stereo[2 * i + 1] = g_pcm[i];
+    }
+    g_fx.process(g_stereo.data(), frames);
+    if (to_device) g_audio.push_stereo(g_stereo.data(), frames);
 }
 
 void write_net_checkpoints(FILE* file) {
@@ -1386,8 +1465,8 @@ void net_tick(bool audio, bool& output_was_paused) {
         if (g_lobby && g_net.host) record_room_frame(p1,p2);
         ++g_net.played;
         const bool accepted = audio && g_audio.ok();
+        deliver_audio(accepted);
         if (accepted) {
-            g_audio.push(g_pcm.data(), g_pcm.size());
             // Drain each confirmed block before another can fill the bounded
             // software queue. The sound owner still advances only once here.
             if (!paused) g_audio.pump();
@@ -2270,6 +2349,10 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::PlayfieldProfile: return g_enhanced ? "16:9 enhanced" : "reference";
     case I::MasterVolume: return std::to_string(g_settings.volume) + "%";
     case I::Mute: return g_settings.muted ? "on" : "off";
+    case I::SoundChannels: return g_settings.extended_sound ? "Extended" : "Arcade";
+    case I::Reverb: return g_settings.reverb == 2 ? "Arena" : g_settings.reverb == 1 ? "Studio" : "Off";
+    case I::StereoWidth: return g_settings.audio_wide ? "Wide" : "Mono";
+    case I::HiFiAudio: return g_settings.audio_hifi ? "on" : "off";
     case I::SwapPads: return g_swap_pads ? "pad 1 -> P2, pad 2 -> P1" : "pad 1 -> P1, pad 2 -> P2";
     case I::StickDeadzone: return std::to_string((g_deadzone * 100 + 16383) / 32767) + "%";
     case I::PlayerName: return g_settings.player_name;
@@ -2308,7 +2391,12 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::Brass: return "SPINNING CASINGS BOUNCE AND SETTLE";
     case I::Voxels: return "3D CUBE FRAGMENTS / COSMETIC PHYSICS";
     case I::Blood: return "BLOOD DROPLETS / COSMETIC GRAVITY AND SPLATS";
-    case I::Audio: return "VOLUME / MUTE / ORIGINAL SOUND TEST";
+    case I::Audio: return "VOLUME / SOUND CHANNELS / REVERB / STEREO / HI-FI";
+    case I::SoundChannels: return g_settings.extended_sound ? "EXTRA SOUND BOARDS / SPEECH NO LONGER CUTS GUNFIRE"
+                                                            : "ONE BOARD, ORIGINAL PRIORITIES / SOUNDS CAN CUT EACH OTHER";
+    case I::Reverb: return "ROOM ECHO / STUDIO: THE TV SET / ARENA: A BIG HALL";
+    case I::StereoWidth: return "STEREO SPREAD / SUMS CLEANLY TO MONO";
+    case I::HiFiAudio: return "SMOOTHS 8-BIT HASH / CABINET BASS / CLIP-FREE LIMITER";
     case I::Controls: return "REMAP KEYS AND PADS / TUNE YOUR STICKS";
     case I::HostMode: return g_host_mode.value_or(g_enhanced) != g_enhanced && g_record_local
         ? "HOSTING THIS MODE STARTS A NEW GAME" : "LEFT / RIGHT: CHOOSE THE MODE GUESTS WILL PLAY";
@@ -2825,6 +2913,10 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
                 g_settings.volume = std::clamp(g_settings.volume + event.delta * 5, 0, 100);
                 g_audio.set_volume(g_settings.volume); break;
             case I::Mute: g_settings.muted = !g_settings.muted; g_audio.set_muted(g_settings.muted); break;
+            case I::SoundChannels: g_settings.extended_sound = !g_settings.extended_sound; break;
+            case I::Reverb: g_settings.reverb = (g_settings.reverb + event.delta + 3) % 3; break;
+            case I::StereoWidth: g_settings.audio_wide = !g_settings.audio_wide; break;
+            case I::HiFiAudio: g_settings.audio_hifi = !g_settings.audio_hifi; break;
             case I::PlayerName:
                 g_name_edit = true; g_name_draft = g_settings.player_name; g_name_cursor = 0; break;
             case I::HostMode: g_host_mode = !g_host_mode.value_or(g_enhanced); save = false; break;
@@ -3536,8 +3628,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                     stv::host::ConfirmedAudioAudit::hash_word(raw_pcm_hash, bits, 4);
                 }
             }
+            deliver_audio(audio);
             if (audio) {
-                g_audio.push(g_pcm.data(), g_pcm.size());
                 g_audio.pump();
                 audio_status();
             }

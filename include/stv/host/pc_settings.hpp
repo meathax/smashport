@@ -27,6 +27,11 @@ struct PcSettings {
     bool show_fps = false;
     int volume = 100;
     bool muted = false;
+    // Sound enhancements (output only; the retail board stream is unchanged).
+    bool extended_sound = true;   // extra sound boards: nothing is cut off
+    int reverb = 1;               // 0 off, 1 studio, 2 arena
+    bool audio_wide = true;       // stereo widening
+    bool audio_hifi = true;       // analog-style smoothing, bass and limiter
     bool swap_pads = false;
     std::string player_name = "PLAYER";
     bool operator==(const PcSettings&) const = default;

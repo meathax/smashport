@@ -163,6 +163,10 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
     case PcMenuPage::Audio:
         add(Item::MasterVolume, "Volume", Kind::Adjustment);
         add(Item::Mute, "Mute", Kind::Adjustment);
+        add(Item::SoundChannels, "Sound channels", Kind::Adjustment);
+        add(Item::Reverb, "Reverb", Kind::Adjustment);
+        add(Item::StereoWidth, "Stereo", Kind::Adjustment);
+        add(Item::HiFiAudio, "Hi-fi output", Kind::Adjustment);
         offline(Item::SoundTest, "Sound test (operator menu)", Kind::Command);
         break;
     case PcMenuPage::Controls:

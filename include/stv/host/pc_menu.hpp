@@ -52,7 +52,8 @@ enum class PcMenuItem : std::uint8_t {
     PlayerName, HostGame, DirectHost, FindRooms, DirectJoin, Disconnect,
     Enhance, EnhanceAll, EnableAllEffects, Particles, Blood, Debris, Smoke, Fire, Lighting, RayTracing, Voxels, Shockwaves, Tracers, Brass, MuzzleFlash, RoomLights, PersistentGore, Materials, Destruction, WeaponImpacts, FluidSmoke, ExplosiveDebris,
     Back, Options,
-    RoomScores, PublicHost, PublicBrowser, Connections, HostMode, Motion, RunAhead, HardwareRT, Count
+    RoomScores, PublicHost, PublicBrowser, Connections, HostMode, Motion, RunAhead, HardwareRT,
+    SoundChannels, Reverb, StereoWidth, HiFiAudio, Count
 };
 
 constexpr std::size_t PcMenuItemCount = static_cast<std::size_t>(PcMenuItem::Count);

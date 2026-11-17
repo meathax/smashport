@@ -2,7 +2,16 @@
 
 ![Widescreen 16:9 arena with persistent blood and debris](screenshots/gameplay.webp)
 
-A native Windows x64 version of the retail L8 *Smash T.V.* arcade game. Play in the original 4:3 arena or in shared-screen 16:9.
+A native Windows x64 version of the retail L8 *Smash T.V.* arcade game: the arcade original, with uncapped display frame rates. Smooth Motion pans the camera between arcade frames while the game itself keeps exact arcade speed. Play in the original 4:3 arena or in shared-screen 16:9, and turn on as many enhanced graphics options as you like: persistent blood and gore, debris and destruction, smoke and fire, muzzle flash and tracers, room lighting with optional hardware ray tracing, and CRT filters.
+
+## Recent changes
+
+- Drop-in/drop-out online and LAN play: join a game in progress as player 2, leave any time
+- Extended sound channels: the announcer no longer cuts off gunfire, and every sound plays together
+- New audio options: reverb (Studio or Arena), wide stereo and hi-fi output
+- Chrome metal debris and engine-oil spray from machine enemies
+- Mutoid tanks no longer freeze against walls in 16:9
+- One `SmashTV.exe`: it installs, asks for your ROM, builds and launches
 
 The download contains no game data. On first launch it asks for **your own** retail L8 ROM ZIP and builds the game on your PC from that ROM's main and sound programs. Nothing is emulated at run time.
 
