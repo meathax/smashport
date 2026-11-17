@@ -2,7 +2,20 @@
 
 ![Widescreen 16:9 arena with persistent blood and debris](screenshots/gameplay.webp)
 
-A native Windows x64 version of the retail L8 *Smash T.V.* arcade game: the arcade original, with uncapped display frame rates. Smooth Motion pans the camera between arcade frames while the game itself keeps exact arcade speed. Play in the original 4:3 arena or in shared-screen 16:9, and turn on as many enhanced graphics options as you like: persistent blood and gore, debris and destruction, smoke and fire, muzzle flash and tracers, room lighting with optional hardware ray tracing, and CRT filters.
+A native Windows x64 recompilation of the retail L8 *Smash T.V.* arcade game.
+
+## Features
+
+- **Two versions of the game:** the arcade original in 4:3, or a new custom widescreen version that is harder, with more enemies at once, faster movement and tuned bosses
+- **Widescreen 16:9:** a shared-screen arena that fills modern displays
+- **Uncapped frame rates:** Smooth Motion pans the camera between arcade frames while the game keeps exact arcade speed
+- **Real hardware ray-traced lighting:** DirectX ray tracing lights every room, with per-room moods
+- **Enhanced graphics:**
+  - persistent gore and guts that stay on the floor and walls
+  - dynamic smoke particles and pixel-accurate muzzle flash
+  - bloody footprints, blast debris and destruction, fire, tracers and spinning brass
+  - CRT filters, glow and sharpening
+- **Online and LAN multiplayer** with drop-in/drop-out play
 
 ## Recent changes
 
