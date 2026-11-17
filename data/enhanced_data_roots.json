@@ -1,0 +1,559 @@
+{
+  "schema": 1,
+  "purpose": "Explicit compiled gameplay-data roots; physical program-ROM reads are never redirected. Original negative pointer sign and all read/instruction timing are preserved. Scene policy selects original or native data at these typed producers only.",
+  "program_base": "0xff800000",
+  "native_data_base": "0xff000000",
+  "roots": [
+    {
+      "name": "GAMEMODS",
+      "reference": "0xffe72650",
+      "sites": [
+        {
+          "pc": "0xffe6e7d0",
+          "instruction": "ADDI {L1},A0",
+          "source": "DEMO.ASM:1075"
+        },
+        {
+          "pc": "0xffe75720",
+          "instruction": "ADDI {L1},A0",
+          "source": "WAVES.ASM:365"
+        }
+      ]
+    },
+    {
+      "name": "CRCTTAB",
+      "reference": "0xffe8c7f0",
+      "sites": [
+        {
+          "pc": "0xffe78d00",
+          "instruction": "ADDI {L1},A1",
+          "source": "WAVES.ASM:688"
+        }
+      ]
+    },
+    {
+      "name": "STX pit walk limits",
+      "reference": "0xffe7c550",
+      "sites": [
+        {
+          "pc": "0xffe7c5d0",
+          "instruction": "MOVI {L1},A0",
+          "source": "WAVES.ASM:1181"
+        }
+      ]
+    },
+    {
+      "name": "BNDTBL",
+      "reference": "0xffe8b8d0",
+      "sites": [
+        {
+          "pc": "0xffe8b6a0",
+          "instruction": "MOVI {L1},A0",
+          "source": "WAVES.ASM:3147"
+        }
+      ]
+    },
+    {
+      "name": "CIRCTBL",
+      "reference": "0xffec30b0",
+      "sites": [
+        {
+          "pc": "0xffec26e0",
+          "instruction": "ADDI {L1},A0",
+          "source": "ENDWAVE.ASM:134"
+        }
+      ]
+    },
+    {
+      "name": "CIRC2TBL",
+      "reference": "0xffecce80",
+      "sites": [
+        {
+          "pc": "0xffec8190",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "MSGX",
+      "reference": "0xffe2cca0",
+      "sites": [
+        {
+          "pc": "0xffe2c920",
+          "instruction": "MOVI {L1},A1",
+          "source": "SCORE.ASM:942"
+        }
+      ]
+    },
+    {
+      "name": "CHASER.ASM:58 SX",
+      "reference": "0xffec0710",
+      "sites": [
+        {
+          "pc": "0xffec16b0",
+          "instruction": "MOVI {L1},A0",
+          "source": "CHASER.ASM:172"
+        }
+      ]
+    },
+    {
+      "name": "FATMAN.ASM:869 SX",
+      "reference": "0xffeeea10",
+      "sites": [
+        {
+          "pc": "0xffeee560",
+          "instruction": "MOVI {L1},A1",
+          "source": "FATMAN.ASM:825"
+        }
+      ]
+    },
+    {
+      "name": "GAL.ASM:813 SX",
+      "reference": "0xfff364a0",
+      "sites": [
+        {
+          "pc": "0xfff35b20",
+          "instruction": "MOVI {L1},A1",
+          "source": "GAL.ASM:684"
+        }
+      ]
+    },
+    {
+      "name": "LZRORB.ASM:478 SX",
+      "reference": "0xfff171a0",
+      "sites": [
+        {
+          "pc": "0xfff16b60",
+          "instruction": "MOVI {L1},A1",
+          "source": "LZRORB.ASM:404"
+        }
+      ]
+    },
+    {
+      "name": "ROBOTS.ASM:389 GXL",
+      "reference": "0xfff2ce10",
+      "sites": [
+        {
+          "pc": "0xfff2d290",
+          "instruction": "MOVI {L1},A1",
+          "source": "ROBOTS.ASM:418"
+        }
+      ]
+    },
+    {
+      "name": "ROBOTS.ASM:390 GXR",
+      "reference": "0xfff2ce90",
+      "sites": [
+        {
+          "pc": "0xfff2d2e0",
+          "instruction": "MOVI {L1},A1",
+          "source": "ROBOTS.ASM:423"
+        }
+      ]
+    },
+    {
+      "name": "ROBOTS.ASM:1057 SX",
+      "reference": "0xfff313e0",
+      "sites": [
+        {
+          "pc": "0xfff317c0",
+          "instruction": "MOVI {L1},A1",
+          "source": "ROBOTS.ASM:1101"
+        }
+      ]
+    },
+    {
+      "name": "HULKS.ASM:1104 SX",
+      "reference": "0xffe40ab0",
+      "sites": [
+        {
+          "pc": "0xffe41060",
+          "instruction": "MOVI {L1},A1",
+          "source": "HULKS.ASM:1148"
+        }
+      ]
+    },
+    {
+      "name": "HULKS.ASM:228 GXL (GHULK)",
+      "reference": "0xffe3bbd0",
+      "sites": [
+        {
+          "pc": "0xffe3bf80",
+          "instruction": "MOVI {L1},A1",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "HULKS.ASM:229 GXR (GHULK)",
+      "reference": "0xffe3bc50",
+      "sites": [
+        {
+          "pc": "0xffe3bfd0",
+          "instruction": "MOVI {L1},A1",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "SNAKE.ASM:263 GXL",
+      "reference": "0xfff46350",
+      "sites": [
+        {
+          "pc": "0xfff46610",
+          "instruction": "MOVI {L1},A1",
+          "source": "SNAKE.ASM:284"
+        }
+      ]
+    },
+    {
+      "name": "SNAKE.ASM:264 GXR",
+      "reference": "0xfff463b0",
+      "sites": [
+        {
+          "pc": "0xfff46660",
+          "instruction": "MOVI {L1},A1",
+          "source": "SNAKE.ASM:288"
+        }
+      ]
+    },
+    {
+      "name": "TANK.ASM:651 SX",
+      "reference": "0xffee02c0",
+      "sites": [
+        {
+          "pc": "0xffee0870",
+          "instruction": "MOVI {L1},A1",
+          "source": "TANK.ASM:710"
+        }
+      ]
+    },
+    {
+      "name": "FATMAN.ASM:604 CRNRYX",
+      "reference": "0xffeec900",
+      "sites": [
+        {
+          "pc": "0xffee9af0",
+          "instruction": "ADDI {L1},A10",
+          "source": "FATMAN.ASM:119"
+        }
+      ]
+    },
+    {
+      "name": "TANK.ASM:778 UPLFT",
+      "reference": "0xffee0d00",
+      "sites": [
+        {
+          "pc": "0xffee05c0",
+          "instruction": "MOVI {L1},A1",
+          "source": "TANK.ASM:680"
+        }
+      ]
+    },
+    {
+      "name": "TANK.ASM:779 DNRGT",
+      "reference": "0xffee0d80",
+      "sites": [
+        {
+          "pc": "0xffee0620",
+          "instruction": "MOVI {L1},A2",
+          "source": "TANK.ASM:685"
+        }
+      ]
+    },
+    {
+      "name": "ICONS.ASM:288 PX",
+      "reference": "0xffed7320",
+      "sites": [
+        {
+          "pc": "0xffed7650",
+          "instruction": "MOVI {L1},A1",
+          "source": "ICONS.ASM:322"
+        }
+      ]
+    },
+    {
+      "name": "ICONS.ASM:289 PX2",
+      "reference": "0xffed7360",
+      "sites": [
+        {
+          "pc": "0xffed76b0",
+          "instruction": "MOVI {L1},A1",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "ENDWAVE.ASM:869 EXX (EXIT sign per door)",
+      "reference": "0xffec8930",
+      "sites": [
+        {
+          "pc": "0xffec8790",
+          "instruction": "MOVI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "HULKS.ASM:3156 RED_CARPETX",
+      "reference": "0xffe4cfc0",
+      "sites": [
+        {
+          "pc": "0xffe41e20",
+          "instruction": "ADDI {L1},A2",
+          "source": "HULKS.ASM:1307"
+        }
+      ]
+    },
+    {
+      "name": "SMASZ intro logo",
+      "reference": "0xffe97900",
+      "sites": [
+        {
+          "pc": "0xffe96ec0",
+          "instruction": "MOVI {L1},A10",
+          "source": "ROBOATT.ASM:207"
+        }
+      ]
+    },
+    {
+      "name": "SMASTV2 intro TV logo",
+      "reference": "0xffe979d0",
+      "sites": [
+        {
+          "pc": "0xffe96ef0",
+          "instruction": "MOVI {L1},A9",
+          "source": "ROBOATT.ASM:208"
+        }
+      ]
+    },
+    {
+      "name": "XH host entrance",
+      "reference": "0xffe70aa0",
+      "sites": [
+        {
+          "pc": "0xffe711e0",
+          "instruction": "ADDI {L1},A0",
+          "source": "DEMO.ASM:1246"
+        }
+      ]
+    },
+    {
+      "name": "TVMOV player one studio path",
+      "reference": "0xffea44f0",
+      "sites": [
+        {
+          "pc": "0xffe9ef90",
+          "instruction": "MOVI {L1},A9",
+          "source": "ROBOATT.ASM:1176"
+        }
+      ],
+      "policy": "studio"
+    },
+    {
+      "name": "TVMOV2 player two studio path",
+      "reference": "0xffea4600",
+      "sites": [
+        {
+          "pc": "0xffe9ef50",
+          "instruction": "MOVI {L1},A9",
+          "source": "ROBOATT.ASM:1174"
+        }
+      ],
+      "policy": "studio"
+    },
+    {
+      "name": "GMOVTAB room entrance scripts",
+      "reference": "0xffea3df0",
+      "sites": [
+        {
+          "pc": "0xffe9efe0",
+          "instruction": "ADDI {L1},A0",
+          "source": "ROBOATT.ASM:1179"
+        }
+      ]
+    },
+    {
+      "name": "player_x widescreen movement",
+      "reference": "0xffe1f8a0",
+      "sites": [
+        {
+          "pc": "0xffe1feb0",
+          "instruction": "MOVI {L1},A2",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "player_y widescreen movement",
+      "reference": "0xffe1f9e0",
+      "sites": [
+        {
+          "pc": "0xffe1ff00",
+          "instruction": "MOVI {L1},A2",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "shoes_x widescreen movement",
+      "reference": "0xffe1fb20",
+      "sites": [
+        {
+          "pc": "0xffe1fe00",
+          "instruction": "MOVI {L1},A2",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "shoes_y widescreen movement",
+      "reference": "0xffe1fc60",
+      "sites": [
+        {
+          "pc": "0xffe1fe50",
+          "instruction": "MOVI {L1},A2",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "RMAX2 widescreen population",
+      "reference": "0xffe13018",
+      "sites": [
+        {
+          "pc": "0xffe11e10",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "OMAX widescreen population",
+      "reference": "0xffe12e98",
+      "sites": [
+        {
+          "pc": "0xffe11f10",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        },
+        {
+          "pc": "0xffe12790",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "GMAX2 widescreen population",
+      "reference": "0xffe13178",
+      "sites": [
+        {
+          "pc": "0xffe12280",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "HMAX2 widescreen population",
+      "reference": "0xffe132c8",
+      "sites": [
+        {
+          "pc": "0xffe12360",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "RMAX widescreen population",
+      "reference": "0xffe12f58",
+      "sites": [
+        {
+          "pc": "0xffe12690",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "GMAX widescreen population",
+      "reference": "0xffe130d8",
+      "sites": [
+        {
+          "pc": "0xffe12840",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "HMAX widescreen population",
+      "reference": "0xffe12d80",
+      "sites": [
+        {
+          "pc": "0xffe12a00",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "FMAX widescreen population",
+      "reference": "0xffe12e40",
+      "sites": [
+        {
+          "pc": "0xffe12b80",
+          "instruction": "ADDI {L1},A0",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "name": "CTBL1 initial formations",
+      "reference": "0xffe417c0",
+      "sites": [
+        {
+          "pc": "0xffe41b10",
+          "instruction": "MOVI {L1},A1",
+          "source": "HULKS.ASM:1266"
+        }
+      ]
+    },
+    {
+      "name": "WLMAN initial WX",
+      "reference": "0xfff1ab80",
+      "sites": [
+        {
+          "pc": "0xfff1ad10",
+          "instruction": "MOVI {L1},A0",
+          "source": "WLMAN.ASM:80"
+        }
+      ]
+    },
+    {
+      "name": "GET_WVADDR per-stage population",
+      "reference": "0xffe13790",
+      "sites": [
+        {
+          "pc": "0xffe18440",
+          "instruction": "ADDI {L1},A0",
+          "source": "ROBO.ASM GET_WVADDR retail L8"
+        }
+      ]
+    },
+    {
+      "name": "XPZ bonus prize columns",
+      "reference": "0xffe85200",
+      "sites": [
+        {
+          "pc": "0xffe84f10",
+          "instruction": "ADDI {L1},A0",
+          "source": "WAVES.ASM:2376"
+        }
+      ]
+    }
+  ]
+}

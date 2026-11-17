@@ -1,0 +1,219 @@
+// DXR 1.1 inline ray tracing for the presentation-only room lighting.
+// Cabinet projection: world (x, y, z) appears at screen (x, y - z).
+// Output (HDR): [0,1024) ground/wall irradiance, a = ambient occlusion;
+// [1024,2048) sprite irradiance, a = sprite tag; rows 256+ hold specular.
+#define MAX_LIGHTS 32
+struct Light {
+    float4 pos;   // xyz, radius
+    float4 color; // rgb, intensity
+    float4 dir;   // spot axis, cos outer (<= -1 omni)
+    float4 shape; // cos inner, source size, pattern, shadow samples
+};
+cbuffer Scene : register(b0) {
+    float4 extent;    // width, height, wing offset, arcade frame
+    float4 floorRect; // current room floor in light-map space
+    float4 ambient;   // rgb, floor gloss
+    float4 world;     // camera x, camera y, light count, flags (1 coverage, 2 specular rows)
+    float4 tone;      // actor floor, occlusion strength, unused, actor count
+    Light lights[MAX_LIGHTS];
+};
+RaytracingAccelerationStructure scene : register(t0);
+ByteAddressBuffer coverage : register(t1);
+StructuredBuffer<float4> actors : register(t2);
+RWTexture2D<float4> lightMap : register(u0);
+
+static const uint NoSelf = 0xffffffffu;
+static const float3 ViewDir = float3(0, .70710678, .70710678);
+static const float Tau = 6.2831853;
+
+uint hashU(uint x) {
+    x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16;
+    return x;
+}
+// World-locked hashes keep penumbra and contact dither fixed to the floor during pans.
+float hash2(float2 p) {
+    int2 q = int2(floor(p));
+    return float(hashU(uint(q.x) * 1597334677u ^ uint(q.y) * 3812015801u) & 0xffffff) / 16777216.;
+}
+float vnoise(float2 p) {
+    float2 i = floor(p), f = frac(p), s = f * f * (3 - 2 * f);
+    float a = hash2(i), b = hash2(i + float2(1, 0)), c = hash2(i + float2(0, 1)), d = hash2(i + 1);
+    return lerp(lerp(a, b, s.x), lerp(c, d, s.x), s.y);
+}
+bool spriteAt(int2 p) {
+    if (any(p < 0) || p.x >= int(extent.x) || p.y >= int(extent.y)) return false;
+    uint bits = coverage.Load((uint(p.y) * 32 + (uint(p.x) >> 5)) * 4);
+    return ((bits >> (uint(p.x) & 31)) & 1) != 0;
+}
+// Card-local u (across) and v (up) map back to the displayed sprite pixel.
+bool silhouette(uint id, float3 local) {
+    float4 r = actors[id * 2];
+    float u = local.x, v = local.z;
+    if ((uint(world.w) & 1) == 0) {
+        float2 q = float2((u - .5) / .42, (v - .48) / .52);
+        return dot(q, q) < 1;
+    }
+    return spriteAt(int2(floor(r.x + u * r.y), floor(r.z - v * r.w - .001)));
+}
+float visibility(float3 origin, float3 dir, float tmax, uint self) {
+    RayDesc ray;
+    ray.Origin = origin; ray.Direction = dir; ray.TMin = .02; ray.TMax = max(.03, tmax);
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
+    q.TraceRayInline(scene, RAY_FLAG_NONE, 0xff, ray);
+    while (q.Proceed()) {
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            uint id = q.CandidateInstanceID();
+            if (id == self) continue;
+            float3 local = q.CandidateObjectRayOrigin() + q.CandidateObjectRayDirection() * q.CandidateTriangleRayT();
+            if (silhouette(id, local)) q.CommitNonOpaqueTriangleHit();
+        }
+    }
+    return q.CommittedStatus() == COMMITTED_NOTHING ? 1. : 0.;
+}
+float gobo(uint pattern, float3 P, Light L, float t) {
+    float2 w = P.xy + world.xy;
+    if (pattern == 1) { // canopy: leaves drift across the sun
+        float2 c = w * .075 + float2(t * .0021, t * .0013);
+        float n = vnoise(c) * .6 + vnoise(c * 2.3 + 7.1) * .4;
+        return lerp(.42, 1.15, smoothstep(.34, .64, n));
+    }
+    if (pattern == 2) { // ceiling fan blades turning under the lamp
+        float2 d = P.xy - L.pos.xy;
+        float a = atan2(d.y, d.x) + t * .055;
+        float blade = abs(frac(a * 3 / Tau) - .5) * 2;
+        return lerp(.32, 1.08, smoothstep(.22, .42, blade) * saturate(length(d) * .08));
+    }
+    if (pattern == 3) { // mirror ball: rotating sparkle field
+        float2 d = P.xy - L.pos.xy;
+        float a = atan2(d.y, d.x) + t * .012, r = length(d);
+        float2 cell = float2(a * 11, r * .07), idc = floor(cell), f = frac(cell) - .5;
+        float on = step(.52, hash2(idc + 31));
+        float s = saturate(1 - length(f) * 3.1);
+        return .3 + 2.2 * on * s * s;
+    }
+    if (pattern == 4) { // caustic shimmer from a leaking tank
+        float2 c = w * .055 + t * .009;
+        float n = abs(vnoise(c) - vnoise(c * 1.7 + 3.3 + t * .007));
+        return .55 + 1.15 * saturate(1 - n * 4.5);
+    }
+    return 1;
+}
+void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine, float2 seed,
+                inout float3 diffuse, inout float3 spec) {
+    Light L = lights[i];
+    float3 delta = L.pos.xyz - P;
+    float dist = max(length(delta), .25);
+    float3 dir = delta / dist;
+    float x = dist / L.pos.w;
+    if (x >= 1) return;
+    float x2 = x * x, win = saturate(1 - x2 * x2);
+    float att = L.color.w * win * win / (1 + x2 * 5);
+    if (L.dir.w > -1) {
+        att *= smoothstep(L.dir.w, L.shape.x, dot(-dir, L.dir.xyz));
+        if (att <= 0) return;
+    }
+    float wrap = saturate((dot(N, dir) + .12) / 1.12);
+    float s = gloss * pow(saturate(dot(N, normalize(dir + ViewDir))), shine);
+    if (att * (wrap + s) < .0025) return;
+    uint pattern = uint(L.shape.z);
+    if (pattern) att *= gobo(pattern, P, L, extent.w);
+    float vis = 1;
+    uint samples = min(uint(L.shape.w), 3u);
+    if (samples) {
+        float3 t1 = normalize(cross(dir, abs(dir.z) < .95 ? float3(0, 0, 1) : float3(1, 0, 0)));
+        float3 t2 = cross(dir, t1);
+        float a = hash2(seed) * Tau, radius = samples > 1 ? L.shape.y * .75 : 0;
+        vis = 0;
+        for (uint k = 0; k < samples; ++k) {
+            float ang = a + Tau * k / samples;
+            float3 target = L.pos.xyz + (t1 * cos(ang) + t2 * sin(ang)) * radius - P;
+            float len = length(target);
+            vis += visibility(P + N * .35, target / len, len - .5, self);
+        }
+        vis /= samples;
+    }
+    diffuse += L.color.rgb * att * wrap * vis;
+    spec += L.color.rgb * att * s * vis;
+}
+float occlusion(float3 P, float3 N, uint self, float2 seed) {
+    if (tone.y <= 0) return 1;
+    float3 t1 = abs(N.z) > .5 ? float3(1, 0, 0) : float3(0, 0, 1);
+    float3 t2 = cross(N, t1);
+    float a = hash2(seed + 17.3) * Tau, hit = 0;
+    [unroll] for (uint k = 0; k < 3; ++k) {
+        float ang = a + Tau * k / 3;
+        float3 d = normalize(N + (t1 * cos(ang) + t2 * sin(ang)) * .9);
+        hit += 1 - visibility(P + N * .3, d, 28, self);
+    }
+    return 1 - tone.y * hit / 3 * .62;
+}
+// Receiver under a non-sprite pixel: rear wall face, side/front wall tops or floor.
+void surfaceAt(float2 px, out float3 P, out float3 N) {
+    float4 f = floorRect;
+    N = float3(0, 0, 1);
+    P = float3(px, 0);
+    bool spanX = px.x >= f.x - 30 && px.x <= f.x + f.z + 30;
+    if (spanX && px.y < f.y && px.y >= f.y - 44) {
+        P = float3(px.x, f.y + .6, f.y - px.y);
+        N = float3(0, 1, 0);
+        return;
+    }
+    bool sideRows = px.y >= f.y - 30 && px.y < f.y + f.w - 30;
+    if (sideRows && ((px.x >= f.x - 8 && px.x < f.x) || (px.x >= f.x + f.z && px.x < f.x + f.z + 8))) {
+        P = float3(px.x, px.y + 30, 30.4);
+        return;
+    }
+    if (px.x >= f.x - 8 && px.x < f.x + f.z + 8 && px.y >= f.y + f.w - 14 && px.y < f.y + f.w - 8)
+        P = float3(px.x, px.y + 14, 14.4);
+}
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    if (any(id.xy >= uint2(extent.xy))) return;
+    float2 pixel = id.xy + .5;
+    float2 seed = floor(pixel) + world.xy;
+    uint count = min(uint(world.z), MAX_LIGHTS);
+    bool specRows = (uint(world.w) & 2) != 0;
+
+    float3 P, N;
+    surfaceAt(pixel, P, N);
+    float ao = occlusion(P, N, NoSelf, seed);
+    float3 diffuse = 0, spec = 0;
+    for (uint i = 0; i < count; ++i) shadeLight(i, P, N, NoSelf, ambient.w, 22, seed, diffuse, spec);
+    lightMap[id.xy] = float4(ambient.rgb * ao + diffuse, ao);
+    if (specRows) lightMap[id.xy + uint2(0, 256)] = float4(spec, 0);
+
+    float4 actorLight = 0;
+    float3 actorSpec = 0;
+    if ((uint(world.w) & 1) == 0 || spriteAt(int2(id.xy))) {
+        RayDesc eye;
+        eye.Origin = float3(pixel.x, pixel.y + 200, 200);
+        eye.Direction = float3(0, -.70710678, -.70710678);
+        eye.TMin = 0; eye.TMax = 420;
+        RayQuery<RAY_FLAG_NONE> primary;
+        primary.TraceRayInline(scene, RAY_FLAG_NONE, 1, eye);
+        while (primary.Proceed()) {
+            if (primary.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+                float3 local = primary.CandidateObjectRayOrigin() +
+                               primary.CandidateObjectRayDirection() * primary.CandidateTriangleRayT();
+                if (silhouette(primary.CandidateInstanceID(), local)) primary.CommitNonOpaqueTriangleHit();
+            }
+        }
+        if (primary.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            uint a = primary.CommittedInstanceID();
+            float4 r = actors[a * 2], info = actors[a * 2 + 1];
+            float3 Pa = eye.Origin + eye.Direction * primary.CommittedRayT();
+            // Rounded body: a cylinder about the sprite's vertical axis, tipped up near the head.
+            float u = saturate((pixel.x - r.x) / max(r.y, 1.)), v = saturate((r.z - pixel.y) / max(r.w, 1.));
+            float th = (u - .5) * 2.5;
+            float3 Na = normalize(float3(sin(th), cos(th) * .8, .3 + .5 * v));
+            bool metal = info.y > .5;
+            float3 diff = 0;
+            for (uint i = 0; i < count; ++i)
+                shadeLight(i, Pa + Na * .2, Na, a, metal ? .95 : .3, metal ? 18 : 7, seed, diff, actorSpec);
+            float3 base = max(ambient.rgb, tone.x);
+            actorLight = float4(base + diff, (info.x + (metal ? 128 : 0)) / 255.);
+        }
+    }
+    lightMap[id.xy + uint2(1024, 0)] = actorLight;
+    if (specRows) lightMap[id.xy + uint2(1024, 256)] = float4(actorSpec, 0);
+}

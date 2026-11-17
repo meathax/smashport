@@ -1,0 +1,280 @@
+{
+  "files": [
+    {
+      "path": "shaders/blurs/shaders/royale/blur9fast-horizontal.slang",
+      "sha256": "ff2b81caaa789dd483948aee55fb2dae6534bd80d9bff5e33d0c220dd8ecd40f"
+    },
+    {
+      "path": "shaders/blurs/shaders/royale/blur9fast-vertical.slang",
+      "sha256": "50293730bd8ca7f25029ae334f1a60e2085ca96923490920930c759e2188fd89"
+    },
+    {
+      "path": "shaders/blurs/shaders/royale/vertex-shader-blur-fast-horizontal.h",
+      "sha256": "9f93874916a748a36fabdcc70927beb505ad979db37c1d5c6e97c34f78436f90"
+    },
+    {
+      "path": "shaders/blurs/shaders/royale/vertex-shader-blur-fast-vertical.h",
+      "sha256": "a8259485245991570a0214485c3d24f7cf996c4a9e7f8c058c84b6e33e5a5702"
+    },
+    {
+      "path": "shaders/crt/crt-guest-advanced.slangp",
+      "sha256": "8927f4c441ca238e30d120a5f1b51022f63f4e35b2d633b1f82db0fee1801215"
+    },
+    {
+      "path": "shaders/crt/crt-lottes.slangp",
+      "sha256": "3b446751c38a7e332d608e4eb04d4e45b63614530ebe2234f3020459773e7b2d"
+    },
+    {
+      "path": "shaders/crt/crt-royale.slangp",
+      "sha256": "14d99d7a73b7121dceecf189f5969bfa2043d4131677e30e9689aaeb052128e8"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-lottes.slang",
+      "sha256": "6e7c15683ccbda2e03834aa2097205e879960906d0f166bbb2117bd383782d27"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/LICENSE.TXT",
+      "sha256": "51ad7b22ec5aa25d62f34ae212edd379a4c4a6af40eb1ddfd439bdcf61d576c2"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/bind-shader-params.h",
+      "sha256": "49816d030bacca9f631df4402debb10606f51b3449ef8fa33d638de015714313"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/bloom-functions.h",
+      "sha256": "0a03d622ffe163e77496a3024a2925473c0c5fa62bcbc0432639141202efa360"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-bloom-approx.h",
+      "sha256": "a0207716236571a32484c05e9db7b22ab85cdbde87cef25999a80d9b99a312c4"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-bloom-approx.slang",
+      "sha256": "4349b0d421716522b0ffed839684a90bf060660e55d46e9b5044b2b20cc3b80c"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-bloom-horizontal-reconstitute.slang",
+      "sha256": "33dfa3d3379368870502081d545814f638bce7eef27be91effc4b6331bfd4cb6"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-bloom-vertical.slang",
+      "sha256": "e9b716d29a1509909e1a50dc3f7e3ab1babf79564a47f82ffe8e4de961bfaa11"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-brightpass.slang",
+      "sha256": "a88e53291d6596d3d0bff558fa8700a54489912cbcc4d669ac58a1599d83d313"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-first-pass-linearize-crt-gamma-bob-fields.slang",
+      "sha256": "c46c43ad3b13b605bb67fe0994bfd8cd11e769063546c0a308ebaa920af8b36c"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-geometry-aa-last-pass.h",
+      "sha256": "789c4abf43ece237e55c25c928e1a41f962f5ca36039bfde48f8ff4a4bb6147f"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-geometry-aa-last-pass.slang",
+      "sha256": "4532a96982a15ed38285155b30674e8a56faf7067c07a526a90157ffb246791f"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-mask-resize-horizontal.slang",
+      "sha256": "9309a8bf1a93558d0f5c9d437aec52d52932cab85011f0bb52ba68dfb514ac33"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-mask-resize-vertical.slang",
+      "sha256": "9f9ec1d0af585d7c5d6bae7b03ef1dea18408a1a70619518f5f508c4a17ff77f"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-scanlines-horizontal-apply-mask.h",
+      "sha256": "e0fc99943893b2a3224cf8fb75489d28a8a5293482d688159f86453c529393b8"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-scanlines-horizontal-apply-mask.slang",
+      "sha256": "c9e763d36d46718464b597f5aa8616dc1b68f6b4835de03cee8a8545ae03eb46"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/crt-royale-scanlines-vertical-interlacing.slang",
+      "sha256": "099f2ef87b35b6e87b15cc65505ac61c23e6386c6e8511f6cc66154955b21d67"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/derived-settings-and-constants.h",
+      "sha256": "f1d6bb93d9aa1d86093f96f0b28f2a385b71c8f651a7bc90d7d23afab5a651e0"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/geometry-functions.h",
+      "sha256": "8a6551d97c4a352b080681f665fed4a8ff82d717b75320f3b44c22d888052bae"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/phosphor-mask-resizing.h",
+      "sha256": "6757e3cd73d4e3e01f7e0323643dec6539b713f2689ec41e2e31d08e49386e9a"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/scanline-functions.h",
+      "sha256": "241d134e8cd28fd3a3b0fdf2d8b49dd0904b817caa32689b85afcdaa1550ed33"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/tex2Dantialias.h",
+      "sha256": "592d8cdcc45fe15c2cd0f31535c66b26c99100114c7afdb50a9bb303f61056c0"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/src/user-cgp-constants.h",
+      "sha256": "6e9fd1d04453d0edd6a37920fe386d3a578e4c74047bdf3d176425de9008f73c"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearApertureGrille15Wide8And5d5Spacing.png",
+      "sha256": "4b46103e20567b99e9525ce521438573f49609452d142438088fa6309902aef2"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearApertureGrille15Wide8And5d5SpacingResizeTo64.png",
+      "sha256": "3ba708dba5989741c58d9b7a1d1e38499bb6dabeb6787da523c9ca6e06159215"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearShadowMaskEDP.png",
+      "sha256": "637e567fe5180ba53af5a185ceef24b4a44b86d74d802fb33df6a2d02d3bcf49"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearShadowMaskEDPResizeTo64.png",
+      "sha256": "d68808ef5c819555c6001ea2d0627c18e64a7d0a7a6ebb3af4a09261a4c23713"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacing.png",
+      "sha256": "4d4385d8476faaaebc6c4f6540b73c28bf3b643a6efb93866e58050f3d0f6567"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacingResizeTo64.png",
+      "sha256": "b3ab2c1d9205e167c44fc86aeb5a031a4fe7199de728d52f94e11635a467ab6d"
+    },
+    {
+      "path": "shaders/crt/shaders/crt-royale/user-settings.h",
+      "sha256": "1aae7facfd307ffc064c6e9252654863bfbb1755a3d2a5ff33381a4a39068c30"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/afterglow0.slang",
+      "sha256": "7e6ba7d2896cc7a1f37e07e9efc61fa77a179c0e6c3e1f6a0fcc4f7cc0de7ccc"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/avg-lum.slang",
+      "sha256": "333c97235e5728f909d2748776aabc07d8ef6543354b87b0d343c5d225ea90a2"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/bloom_horizontal.slang",
+      "sha256": "0fe1df811be9c183ef653b54302737a2b4751252c44c7fcee9ee1a41edb6a379"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/bloom_vertical.slang",
+      "sha256": "5dac736195e67d3222964407e1ef1873aa64e08d7d032dcdc5ff4bc3978b0a07"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/crt-guest-advanced.slang",
+      "sha256": "82ec26ec71939be02a8641f2d94fcdf2913c90743c9e680d13ef02ad7a8c2ffd"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/deconvergence.slang",
+      "sha256": "da0e06761366a6c0247c8ad3e75cfcf1b319cd179b63a2816834d64f39bfee07"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/gaussian_horizontal.slang",
+      "sha256": "a36afc266343a9043349b33ac8d28b9abef9a48a37babc343d4d0ab428f56cb5"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/gaussian_vertical.slang",
+      "sha256": "530516ff22eccc53853ad4ee894029419ee3c33e3c218f18b98467c5e08f9324"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/linearize.slang",
+      "sha256": "77acbb8f7036f119e71def8ed4d759042c95081af3c53f5f2af3c8f5b5addf3b"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/lut/inv-trinitron-lut.png",
+      "sha256": "2acb6633e4dede7f36e3e62b7aa9d0ed76ecfbc5cb7ed7f3f8813dddec0e9145"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/lut/nec-lut.png",
+      "sha256": "86ec3d2e21138845cb73500e915425582b991e173a4149fa192a62d798382b59"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/lut/ntsc-lut.png",
+      "sha256": "a23ae9d27d6d5f9073d4a84678187f54758b329387c47686294ea979dcde6d03"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/lut/trinitron-lut.png",
+      "sha256": "bcc8c237eb39ed2a632554959cb4c5e0dd52b59a4922745b46b7525fc6b6b61a"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/pre-shaders-afterglow.slang",
+      "sha256": "53eaf6b102a21d4cc909dafe953ec64bde055baf19476b50e2b87df5d2e6ef1b"
+    },
+    {
+      "path": "shaders/crt/shaders/guest/advanced/stock.slang",
+      "sha256": "427561946575838d800ae55d65b9ac6e8863f96d525f3e4c391af6e5f46e7590"
+    },
+    {
+      "path": "shaders/include/blur-functions.h",
+      "sha256": "95356b36e40fe242a193e6b6ad3666e1008c0fa899b8d7aaf3223cc52b5e244a"
+    },
+    {
+      "path": "shaders/include/compat_macros.inc",
+      "sha256": "b333302e16d89cf0ee24e212eb9e52bf3b8046728a98d2f04128b9a02b8cfd93"
+    },
+    {
+      "path": "shaders/include/gamma-management.h",
+      "sha256": "756cbdfb81d8bcb0b92b32e16f4744b3d29b39e62772b9b8e23fb2a6e9abf7b9"
+    },
+    {
+      "path": "shaders/include/quad-pixel-communication.h",
+      "sha256": "08689237488dfc009f5dd18afcfff9d208b24731383f2264984926a46af130ee"
+    },
+    {
+      "path": "shaders/include/special-functions.h",
+      "sha256": "01e45dcd26c6e811288f74917ac4276ef6c8fed7908e9c69bb34ce601fe1b04d"
+    },
+    {
+      "path": "librashader.dll",
+      "sha256": "8e5912fc7432ff39e935c61674823f37b96a824bb6c727f1319cc31fc561a74a"
+    },
+    {
+      "path": "dxcompiler.dll",
+      "sha256": "0689e2fee0a1c9df8662a59680469f24e2a3ad7ce6bbbcc9284f7a83172bfc59"
+    },
+    {
+      "path": "licenses/librashader-MPL.txt",
+      "sha256": "69c15395f33bc9ce8e1d8b6cef42b7e49cdec4c6f5233d4b9cfc4bfa335f97f9"
+    },
+    {
+      "path": "licenses/librashader-GPL.txt",
+      "sha256": "831e92808eb553250066261a1387a9323cbf300d4559a41f2c71fd3712bdb44a"
+    },
+    {
+      "path": "licenses/blurbusters-MIT.txt",
+      "sha256": "64baf37c51f18b1ccfdc2958f6da7fc0fdefbc92370977cd3114d5111828cf33"
+    },
+    {
+      "path": "licenses/PINS_crt.md",
+      "sha256": "f9dffb0f676f44ec84409cc9b6fa24d814470e8ab8666fafc279049282ae7975"
+    },
+    {
+      "path": "licenses/PROVENANCE.json",
+      "sha256": "68e88878f3e558ccc869f9db8bcea315a1a90b0af0cea86190a46fafaeedd1f4"
+    },
+    {
+      "path": "licenses/LICENSE-LLVM.txt",
+      "sha256": "729615317e28dd03907e46f0fc3b5e88f7853cee61d1a1471d2749335516b46f"
+    },
+    {
+      "path": "licenses/LICENSE-MS.txt",
+      "sha256": "734f72f239fe7b07b4c7203f294c1a7ce27095687278bab7e56d630d7c672963"
+    },
+    {
+      "path": "licenses/LICENCE-MIT.txt",
+      "sha256": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c"
+    },
+    {
+      "path": "librashader_d3d11.dll",
+      "sha256": "1890f647c7fbe52d4cc591526db24367caca284996855c4565c6003c7e46f8cc"
+    },
+    {
+      "path": "licenses/librashader-d3d11-PROVENANCE.json",
+      "sha256": "82ef6978c81329b883e4b9ebb1ef3580b0a4553579ea4dacccb7c65b7b0e16ba"
+    }
+  ]
+}

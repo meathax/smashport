@@ -1,0 +1,768 @@
+{
+  "note": "Typed enhanced-profile geometry. Source-annotated points bind to accepted source matches; explicit PC points additionally verify retail instruction shape and immediate. Geometry is selected by enhanced_scene(m), preserving native attract and diagnostics.",
+  "points": [
+    {
+      "name": "player_rescue_left_bound",
+      "pc": "0xffe7bec0",
+      "instruction": "MOVI {L1},A2",
+      "role": "Retail CKONSCRN [Y30,X26] lower bound follows enhanced left wall +4",
+      "reference_imm": "0x001e001a",
+      "enhanced_imm": "0x001e001e"
+    },
+    {
+      "name": "player_rescue_right_bound",
+      "pc": "0xffe7bef0",
+      "instruction": "MOVI {L1},A3",
+      "role": "Retail CKONSCRN [Y252,X374] upper bound follows enhanced right wall +141",
+      "reference_imm": "0x00fc0176",
+      "enhanced_imm": "0x00fc0203"
+    },
+    {
+      "name": "player_rescue_centre_x",
+      "pc": "0xffe7c010",
+      "instruction": "ADDI {L1},A0",
+      "role": "Retail CKONSCRN rescue X200 follows enhanced centre +72; Y128 unchanged",
+      "reference_imm": "0x00c80000",
+      "enhanced_imm": "0x01100000"
+    },
+    {
+      "name": "screen_tl_init",
+      "src": "NDSP1.ASM:860",
+      "role": "SCRNST [Y1,X5] into SCRNTL"
+    },
+    {
+      "name": "screen_lr_init",
+      "src": "NDSP1.ASM:862",
+      "role": "SCRNEND [Y252,X395] into SCRNLR",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_lr_attract_1",
+      "src": "ROBOATT.ASM:320",
+      "role": "SCRNEND in attract",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_lr_attract_2",
+      "src": "ROBOATT.ASM:409",
+      "role": "SCRNEND in attract",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_lr_attract_3",
+      "src": "ROBOATT.ASM:444",
+      "role": "SCRNEND in attract",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_lr_attract_4",
+      "src": "ROBOATT.ASM:657",
+      "role": "SCRNEND in attract",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_lr_attract_5",
+      "src": "ROBOATT.ASM:699",
+      "role": "SCRNEND in attract",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_tl_util",
+      "src": "UTIL.ASM:682",
+      "role": "SCRNST"
+    },
+    {
+      "name": "screen_lr_util",
+      "src": "UTIL.ASM:684",
+      "role": "SCRNEND",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_mid_wave",
+      "src": "WAVES.ASM:3563",
+      "role": "Scene window centre [Y128,X200] follows widened active area +68",
+      "reference_imm": "0x008000c8",
+      "enhanced_imm": "0x0080010c"
+    },
+    {
+      "name": "screen_tl_wave",
+      "src": "WAVES.ASM:4037",
+      "role": "SCRNST"
+    },
+    {
+      "name": "screen_lr_wave",
+      "src": "WAVES.ASM:4038",
+      "role": "SCRNEND",
+      "reference_imm": "0x00fc018b",
+      "enhanced_imm": "0x00fc0218"
+    },
+    {
+      "name": "screen_mid_wave_2",
+      "src": "WAVES.ASM:4043",
+      "role": "Arena closing aperture centre [Y128,X200] follows room centre +68 and camera centering +4",
+      "reference_imm": "0x008000c8",
+      "enhanced_imm": "0x00800110"
+    },
+    {
+      "name": "screen_mid_wave_3",
+      "src": "WAVES.ASM:4044",
+      "role": "Arena closing aperture centre [Y128,X200] follows room centre +68 and camera centering +4",
+      "reference_imm": "0x008000c8",
+      "enhanced_imm": "0x00800110"
+    },
+    {
+      "name": "screen_mid_wave_4",
+      "src": "WAVES.ASM:4048",
+      "role": "Arena closing aperture centre [Y128,X200] follows room centre +68 and camera centering +4",
+      "reference_imm": "0x008000c8",
+      "enhanced_imm": "0x00800110"
+    },
+    {
+      "name": "camera_set_x",
+      "src": "WAVES.ASM:291",
+      "role": "WORLDTLX per room"
+    },
+    {
+      "name": "camera_set_y",
+      "src": "WAVES.ASM:300",
+      "role": "WORLDTLY per room"
+    },
+    {
+      "name": "bounds_apply",
+      "src": "WAVES.ASM:3150",
+      "role": "SETBND region (NORMBND/POW1BND/POW2BND data at WAVES.ASM:3180-3185)"
+    },
+    {
+      "name": "hud_p2_score",
+      "src": "SCORE.ASM:289",
+      "role": "P2 score position [35H,111H]; P2 HUD box moves +141",
+      "reference_imm": "0x00350111",
+      "enhanced_imm": "0x0035019e"
+    },
+    {
+      "name": "hud_p1_score",
+      "src": "SCORE.ASM:293",
+      "role": "P1 score position [35H,24H]; camera centring +4",
+      "reference_imm": "0x00350024",
+      "enhanced_imm": "0x00350028"
+    },
+    {
+      "name": "x_shots_1106",
+      "src": "SHOTS.ASM:1106",
+      "role": "bullet kill TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x00210020",
+      "enhanced_imm": "0x00210024"
+    },
+    {
+      "name": "x_shots_1107",
+      "src": "SHOTS.ASM:1107",
+      "role": "bullet kill LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0173",
+      "enhanced_imm": "0x00fc0200"
+    },
+    {
+      "name": "x_shots_1323",
+      "src": "SHOTS.ASM:1323",
+      "role": "grenade kill TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x001e0020",
+      "enhanced_imm": "0x001e0024"
+    },
+    {
+      "name": "x_shots_1324",
+      "src": "SHOTS.ASM:1324",
+      "role": "grenade kill LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0176",
+      "enhanced_imm": "0x00fc0203"
+    },
+    {
+      "name": "x_shots_1503",
+      "src": "SHOTS.ASM:1503",
+      "role": "bomb kill TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x00230021",
+      "enhanced_imm": "0x00230025"
+    },
+    {
+      "name": "x_shots_1504",
+      "src": "SHOTS.ASM:1504",
+      "role": "bomb kill LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0171",
+      "enhanced_imm": "0x00fc01fe"
+    },
+    {
+      "name": "x_shots_1678",
+      "src": "SHOTS.ASM:1678",
+      "role": "bullet kill TL (LP_TP) (SCRTSTG [Y,X])",
+      "reference_imm": "0x00210020",
+      "enhanced_imm": "0x00210024"
+    },
+    {
+      "name": "x_shots_1679",
+      "src": "SHOTS.ASM:1679",
+      "role": "bullet kill LR (LP_TP) (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0173",
+      "enhanced_imm": "0x00fc0200"
+    },
+    {
+      "name": "x_pow1_156",
+      "src": "POW1.ASM:156",
+      "role": "power-up shot kill TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x00230021",
+      "enhanced_imm": "0x00230025"
+    },
+    {
+      "name": "x_pow1_157",
+      "src": "POW1.ASM:157",
+      "role": "power-up shot kill LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0171",
+      "enhanced_imm": "0x00fc01fe"
+    },
+    {
+      "name": "x_pow2_158",
+      "src": "POW2.ASM:158",
+      "role": "laser kill TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x00230021",
+      "enhanced_imm": "0x00230025"
+    },
+    {
+      "name": "x_pow2_159",
+      "src": "POW2.ASM:159",
+      "role": "laser kill LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00fc0171",
+      "enhanced_imm": "0x00fc01fe"
+    },
+    {
+      "name": "x_snake_337",
+      "src": "SNAKE.ASM:337",
+      "role": "snake off-screen TL (SCRTSTG [Y,X])",
+      "reference_imm": "0x00010040",
+      "enhanced_imm": "0x00010044"
+    },
+    {
+      "name": "x_snake_338",
+      "src": "SNAKE.ASM:338",
+      "role": "snake off-screen LR (SCRTSTG [Y,X])",
+      "reference_imm": "0x00f00146",
+      "enhanced_imm": "0x00f001d3"
+    },
+    {
+      "name": "x_mutoid_323",
+      "src": "MUTOID.ASM:323",
+      "role": "Mutoid left wall test (16.16 X)",
+      "reference_imm": "0x005a0000",
+      "enhanced_imm": "0x005e0000"
+    },
+    {
+      "name": "x_mutoid_329",
+      "src": "MUTOID.ASM:329",
+      "role": "Mutoid right wall test (16.16 X)",
+      "reference_imm": "0x00f50000",
+      "enhanced_imm": "0x013d0000"
+    },
+    {
+      "name": "x_mutoid_599",
+      "src": "MUTOID.ASM:599",
+      "role": "Mutoid CKBNDX left (16.16 X)",
+      "reference_imm": "0x00640000",
+      "enhanced_imm": "0x00680000"
+    },
+    {
+      "name": "x_mutoid_602",
+      "src": "MUTOID.ASM:602",
+      "role": "Mutoid CKBNDX right (16.16 X)",
+      "reference_imm": "0x00eb0000",
+      "enhanced_imm": "0x01330000"
+    },
+    {
+      "name": "x_mutoid_2484",
+      "src": "MUTOID.ASM:2484",
+      "role": "Mutoid FPNDLFT left (16.16 X)",
+      "reference_imm": "0x00730000",
+      "enhanced_imm": "0x00770000"
+    },
+    {
+      "name": "x_mutoid_2488",
+      "src": "MUTOID.ASM:2488",
+      "role": "Mutoid CKR right (16.16 X)",
+      "reference_imm": "0x00d70000",
+      "enhanced_imm": "0x011f0000"
+    },
+    {
+      "name": "x_mutoid_225",
+      "src": "MUTOID.ASM:225",
+      "role": "Mutoid spawn X (then ADJSTWTL)",
+      "reference_imm": "0x000000ad",
+      "enhanced_imm": "0x000000f5"
+    },
+    {
+      "name": "msg_p2_offset",
+      "src": "SCORE.ASM:934",
+      "role": "P2 coin/start message X offset from MSGX (P1 base +4, P2 +141)",
+      "reference_imm": "0x000000eb",
+      "enhanced_imm": "0x00000174"
+    },
+    {
+      "name": "hud_p2_lives",
+      "src": "WAVES.ASM:3394",
+      "role": "P2 lives digit X from WAVEYX (right HUD +141)",
+      "reference_imm": "0x01690000",
+      "enhanced_imm": "0x01f60000"
+    },
+    {
+      "name": "hud_p1_lives",
+      "src": "WAVES.ASM:3415",
+      "role": "P1 lives digit X from WAVEYX (left HUD +4)",
+      "reference_imm": "0x001e0000",
+      "enhanced_imm": "0x00220000"
+    },
+    {
+      "name": "prize_tv_p1_x",
+      "src": "SHOTS.ASM:142",
+      "role": "prize flies to P1 TV: WAVEYX X +30 (left HUD +4)",
+      "reference_imm": "0x0000001e",
+      "enhanced_imm": "0x00000022"
+    },
+    {
+      "name": "prize_tv_p2_dx",
+      "src": "SHOTS.ASM:146",
+      "role": "P2 TV adds 340 (right HUD: total +141)",
+      "reference_imm": "0x00000154",
+      "enhanced_imm": "0x000001dd"
+    },
+    {
+      "name": "prize_tv_p1_x_2",
+      "src": "SHOTS.ASM:245",
+      "role": "prize flies to P1 TV (second path)",
+      "reference_imm": "0x0000001e",
+      "enhanced_imm": "0x00000022"
+    },
+    {
+      "name": "prize_tv_p2_dx_2",
+      "src": "SHOTS.ASM:261",
+      "role": "P2 TV adds 340 (second path)",
+      "reference_imm": "0x00000154",
+      "enhanced_imm": "0x000001dd"
+    },
+    {
+      "name": "buyin_window_x",
+      "src": "WAVES.ASM:4543",
+      "role": "PRESS START TO CONTINUE window centre [41+SCRNTOP,200] (screen relative): X 200 to 268, centred like the rack-up screen (+68)",
+      "reference_imm": "0x008d00c8",
+      "enhanced_imm": "0x008d010c"
+    },
+    {
+      "name": "cobra_left_head_spawn",
+      "src": "COBRA.ASM:87",
+      "role": "Room 2/7 rightward transition: extra room pitch plus left-floor centring, preserving local head X90 as X94",
+      "reference_imm": "0x02290000",
+      "enhanced_imm": "0x02b60000"
+    },
+    {
+      "name": "cobra_right_head_spawn",
+      "src": "COBRA.ASM:95",
+      "role": "Room 2/7 rightward transition: extra room pitch plus right-floor widening, preserving local head X275 as X416",
+      "reference_imm": "0x02e20000",
+      "enhanced_imm": "0x03f80000"
+    },
+    {
+      "name": "cobra_x_bound_179",
+      "src": "COBRA.ASM:179",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x00300000",
+      "enhanced_imm": "0x00340000"
+    },
+    {
+      "name": "cobra_x_bound_181",
+      "src": "COBRA.ASM:181",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x01600000",
+      "enhanced_imm": "0x01ed0000"
+    },
+    {
+      "name": "cobra_x_bound_221",
+      "src": "COBRA.ASM:221",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x00300000",
+      "enhanced_imm": "0x00340000"
+    },
+    {
+      "name": "cobra_x_bound_226",
+      "src": "COBRA.ASM:226",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x01600000",
+      "enhanced_imm": "0x01ed0000"
+    },
+    {
+      "name": "cobra_x_bound_1615",
+      "src": "COBRA.ASM:1615",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x00300000",
+      "enhanced_imm": "0x00340000"
+    },
+    {
+      "name": "cobra_x_bound_1620",
+      "src": "COBRA.ASM:1620",
+      "role": "Screen-relative COBRA fire/wall X boundary; remap all repetitions, preserve Y, acceleration and timing",
+      "reference_imm": "0x01600000",
+      "enhanced_imm": "0x01ed0000"
+    },
+    {
+      "name": "rboss_head_spawn",
+      "pc": "0xfff1d3d0",
+      "instruction": "ADDI {L1},A0",
+      "role": "Adjacent room pan: +137 wider room pitch and +141 right floor placement; retain native spawn phase",
+      "reference_imm": "0x02e00000",
+      "enhanced_imm": "0x03f60000"
+    },
+    {
+      "name": "rboss_face_movement_0",
+      "pc": "0xfff1e260",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_face_movement_1",
+      "pc": "0xfff1e2a0",
+      "instruction": "SUBI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_face_movement_2",
+      "pc": "0xfff1e2e0",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_face_movement_3",
+      "pc": "0xfff1e320",
+      "instruction": "SUBI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_face_movement_4",
+      "pc": "0xfff1e4c0",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_face_movement_5",
+      "pc": "0xfff1e510",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_skull_movement_0",
+      "pc": "0xfff1efc0",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_skull_movement_1",
+      "pc": "0xfff1f000",
+      "instruction": "SUBI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_skull_movement_2",
+      "pc": "0xfff1f040",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_skull_movement_3",
+      "pc": "0xfff1f080",
+      "instruction": "SUBI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_skull_movement_4",
+      "pc": "0xfff1f220",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x00580000",
+      "enhanced_imm": "0x005c0000"
+    },
+    {
+      "name": "rboss_skull_movement_5",
+      "pc": "0xfff1f270",
+      "instruction": "CMPI {~L1},A3",
+      "role": "Camera-relative X movement boundary follows widened floor; Y/velocity integration unchanged",
+      "reference_imm": "0x01400000",
+      "enhanced_imm": "0x01cd0000"
+    },
+    {
+      "name": "rboss_x_bound_967",
+      "src": "RBOSS.ASM:967",
+      "role": "RBBNDCK [Y,X] bound consumed by OFPNTTST after subtracting WORLDTL; preserve Y",
+      "reference_imm": "0x002e002a",
+      "enhanced_imm": "0x002e002e"
+    },
+    {
+      "name": "rboss_x_bound_968",
+      "src": "RBOSS.ASM:968",
+      "role": "RBBNDCK [Y,X] bound consumed by OFPNTTST after subtracting WORLDTL; preserve Y",
+      "reference_imm": "0x00980116",
+      "enhanced_imm": "0x009801a3"
+    },
+    {
+      "name": "tank_gate_x_1902",
+      "src": "TANK.ASM:1902",
+      "role": "Top/bottom centre doorway; GATELFT/GATERGT shift together by72, preserving doorway width and Y",
+      "reference_imm": "0x00a50000",
+      "enhanced_imm": "0x00ed0000"
+    },
+    {
+      "name": "tank_gate_x_1904",
+      "src": "TANK.ASM:1904",
+      "role": "Top/bottom centre doorway; GATELFT/GATERGT shift together by72, preserving doorway width and Y",
+      "reference_imm": "0x00ed0000",
+      "enhanced_imm": "0x01350000"
+    },
+    {
+      "name": "shots_gate_x_1738",
+      "src": "SHOTS.ASM:1738",
+      "role": "Top/bottom centre doorway; GATELFT/GATERGT shift together by72, preserving doorway width and Y",
+      "reference_imm": "0x00a50000",
+      "enhanced_imm": "0x00ed0000"
+    },
+    {
+      "name": "shots_gate_x_1740",
+      "src": "SHOTS.ASM:1740",
+      "role": "Top/bottom centre doorway; GATELFT/GATERGT shift together by72, preserving doorway width and Y",
+      "reference_imm": "0x00ed0000",
+      "enhanced_imm": "0x01350000"
+    },
+    {
+      "name": "shots_mutoid_gate_x_1729",
+      "src": "SHOTS.ASM:1729",
+      "role": "Mutoid top-door opening: remap the GATELFT/GATERGT anchor, retain its original +/-45-pixel margin",
+      "reference_imm": "0x00780000",
+      "enhanced_imm": "0x00c00000"
+    },
+    {
+      "name": "shots_mutoid_gate_x_1731",
+      "src": "SHOTS.ASM:1731",
+      "role": "Mutoid top-door opening: remap the GATELFT/GATERGT anchor, retain its original +/-45-pixel margin",
+      "reference_imm": "0x011a0000",
+      "enhanced_imm": "0x01620000"
+    },
+    {
+      "name": "studio_p2_legs",
+      "src": "ROBO.ASM:2385",
+      "pc": "0xffe20250",
+      "instruction": "MOVI {L1},A0",
+      "role": "Fresh studio P2 legs +68 with the intact podium and central walkway",
+      "reference_imm": "0x01300000",
+      "enhanced_imm": "0x01740000"
+    },
+    {
+      "name": "studio_p1_legs",
+      "src": "ROBO.ASM:2389",
+      "pc": "0xffe202c0",
+      "instruction": "MOVI {L1},A0",
+      "role": "Fresh studio P1 legs +68 with the intact podium and central walkway",
+      "reference_imm": "0x00670000",
+      "enhanced_imm": "0x00ab0000"
+    },
+    {
+      "name": "studio_p2_torso",
+      "src": "ROBO.ASM:2424",
+      "pc": "0xffe20640",
+      "instruction": "MOVI {L1},A0",
+      "role": "Fresh studio P2 torso initial anchor +68; original follow/velocity unchanged",
+      "reference_imm": "0x00d80000",
+      "enhanced_imm": "0x011c0000"
+    },
+    {
+      "name": "studio_p1_torso",
+      "src": "ROBO.ASM:2427",
+      "pc": "0xffe206b0",
+      "instruction": "MOVI {L1},A0",
+      "role": "Fresh studio P1 torso initial anchor +68; original follow/velocity unchanged",
+      "reference_imm": "0x00d00000",
+      "enhanced_imm": "0x01140000"
+    },
+    {
+      "name": "join_left_legs",
+      "src": "ROBO.ASM:2371",
+      "pc": "0xffe200f0",
+      "instruction": "MOVI {L1},A0",
+      "role": "Left-side join legs follow the centred arena left edge +4",
+      "reference_imm": "0x00080000",
+      "enhanced_imm": "0x000c0000"
+    },
+    {
+      "name": "join_right_legs",
+      "src": "ROBO.ASM:2376",
+      "pc": "0xffe20190",
+      "instruction": "MOVI {L1},A0",
+      "role": "Right-side join legs follow the widened arena right edge +141",
+      "reference_imm": "0x01900000",
+      "enhanced_imm": "0x021d0000"
+    },
+    {
+      "name": "join_left_torso",
+      "src": "ROBO.ASM:2411",
+      "pc": "0xffe204e0",
+      "instruction": "MOVI {L1},A0",
+      "role": "Left-side join torso follows the centred arena left edge +4",
+      "reference_imm": "0x00080000",
+      "enhanced_imm": "0x000c0000"
+    },
+    {
+      "name": "join_right_torso",
+      "src": "ROBO.ASM:2416",
+      "pc": "0xffe20580",
+      "instruction": "MOVI {L1},A0",
+      "role": "Right-side join torso follows the widened arena right edge +141",
+      "reference_imm": "0x01900000",
+      "enhanced_imm": "0x021d0000"
+    },
+    {
+      "name": "studio_rigging_x",
+      "src": "DEMO.ASM:858",
+      "role": "Restore approved viewport-left scaffold anchor: subtract89, moving intact rigging68px left from the regressed subtract21.",
+      "reference_imm": "0x00000059",
+      "enhanced_imm": "0x00000059"
+    },
+    {
+      "name": "studio_window_size",
+      "src": "WAVES.ASM:3562",
+      "pc": "0xffe8e7a0",
+      "instruction": "MOVI {L1},A8",
+      "reference_imm": "0x01000190",
+      "enhanced_imm": "0x01000219",
+      "role": "Full-screen transition window grows from400to537px at original256pxheight"
+    },
+    {
+      "name": "studio_camera_hold",
+      "src": "WAVES.ASM:558>SLEEP:258",
+      "pc": "0xffe77940",
+      "instruction": "MOVI {W1},A0",
+      "role": "INIT_GAME camera hold: full137px extra actor path needs100 ticks; camera scroll605 vs472 at3px/tick supplies44, so hold grows56. Other wave waits stay original.",
+      "reference_imm": "0x000000c8",
+      "enhanced_imm": "0x00000100"
+    },
+    {
+      "name": "hud_p1_meter_reset",
+      "src": "WAVES.ASM:1006",
+      "pc": "0xffe7b0e0",
+      "instruction": "MOVI {L1},A1",
+      "role": "SET_WAVE reset of P1 meter OXVAL before ADJSTWTL: match intact left score bezel and camera centering +4",
+      "reference_imm": "0x00220000",
+      "enhanced_imm": "0x00260000"
+    },
+    {
+      "name": "hud_p2_meter_reset",
+      "src": "WAVES.ASM:1008",
+      "pc": "0xffe7b130",
+      "instruction": "MOVI {L1},A1",
+      "role": "SET_WAVE reset of P2 meter OXVAL before ADJSTWTL: match intact right score bezel +137 and camera centering +4",
+      "reference_imm": "0x010f0000",
+      "enhanced_imm": "0x019c0000"
+    },
+    {
+      "name": "wave_title_center",
+      "src": "WAVES.ASM:744",
+      "pc": "0xffe791e0",
+      "instruction": "ADDI {L1},A9",
+      "role": "SET_WAVE arena title relative to WAVEYX: intact room centre +68 and camera centering +4",
+      "reference_imm": "0x008000c4",
+      "enhanced_imm": "0x0080010c"
+    },
+    {
+      "name": "initial_random_x_min",
+      "pc": "0xffe41d00",
+      "instruction": "MOVI {L1},B0",
+      "role": "GET_VALID_XY left floor clearance",
+      "reference_imm": "0x002a0000",
+      "enhanced_imm": "0x002e0000"
+    },
+    {
+      "name": "initial_random_x_max",
+      "pc": "0xffe41d30",
+      "instruction": "MOVI {L1},B1",
+      "role": "GET_VALID_XY right floor clearance",
+      "reference_imm": "0x01570000",
+      "enhanced_imm": "0x01e40000"
+    },
+    {
+      "name": "cash_cluster_x_min",
+      "pc": "0xfff13c60",
+      "instruction": "MOVI {W1},B0",
+      "role": "SENDR cluster left edge 35 to39; 116px internal scatter retained",
+      "reference_imm": "0x00000023",
+      "enhanced_imm": "0x00000027"
+    },
+    {
+      "name": "cash_cluster_x_max",
+      "pc": "0xfff13c80",
+      "instruction": "MOVI {W1},B1",
+      "role": "SENDR rightmost cluster endpoint332 follows right floor to473; origin357",
+      "reference_imm": "0x000000d8",
+      "enhanced_imm": "0x00000165"
+    },
+    {
+      "name": "bonus_figure_origin",
+      "pc": "0xffe88e80",
+      "instruction": "MOVI {W1},A11",
+      "role": "WAVES DOIMG bonus portraits follow centred rack-up boards +72px; fixed initials retain original",
+      "reference_imm": "0x00000026",
+      "enhanced_imm": "0x0000006e"
+    },
+    {
+      "name": "tally_p1_studio_x",
+      "pc": "0xffe7f960",
+      "instruction": "MOVI {L1},A1",
+      "role": "Bonus-tally P1 legs/torso X becomes the next circuit's studio start: widened studio camera is137px left, so world X moves -ceil(137/2) to keep the contestant on the intact central ramp (+68 on screen)",
+      "reference_imm": "0x00620000",
+      "enhanced_imm": "0x001d0000",
+      "condition": "studio"
+    },
+    {
+      "name": "tally_p2_studio_x",
+      "pc": "0xffe7fb50",
+      "instruction": "MOVI {L1},A1",
+      "role": "Bonus-tally P2 legs/torso X becomes the next circuit's studio start: world X -69 for the widened studio camera, as P1",
+      "reference_imm": "0x012b0000",
+      "enhanced_imm": "0x00e60000",
+      "condition": "studio"
+    },
+    {
+      "name": "circuit_studio_camera_hold",
+      "src": "WAVES.ASM:1575>SLEEP",
+      "pc": "0xffe7f680",
+      "instruction": "MOVI {W1},A0",
+      "role": "Circuit 2/3 start hold before SET_WAVE (40H+88H = INIT_GAME's C8H): grow by the same 56 ticks as studio_camera_hold so the -69 world studio start completes the full 137px longer walk",
+      "reference_imm": "0x00000088",
+      "enhanced_imm": "0x000000c0",
+      "condition": "studio"
+    }
+  ]
+}

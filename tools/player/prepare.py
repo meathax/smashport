@@ -1,0 +1,123 @@
+"""Prepare native player sources using only the ROM selected for this installation."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[2]
+PROFILE = ROOT / "docs/reference-rom-profile.json"
+LOCATIONS = ROOT / "tools/player/l8_locations.json"
+
+
+def digest(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def read_chips(selected):
+    profile = json.loads(PROFILE.read_bytes())["roms"]
+    expected = {(r["size"], r["crc32"]): r for r in profile}
+    found = {}
+
+    def collect(path):
+        if path.stat().st_size > 64 * 1024 * 1024:
+            raise ValueError(f"ROM archive exceeds 64 MiB: {path.name}")
+        with zipfile.ZipFile(path) as archive:
+            if len(archive.infolist()) > 1024:
+                raise ValueError("Too many members in ROM archive")
+            for item in archive.infolist():
+                record = expected.get((item.file_size, item.CRC))
+                if record and record["name"] not in found:
+                    data = archive.read(item)
+                    if hashlib.sha1(data).hexdigest() == record["sha1"]:
+                        found[record["name"]] = data
+            return any(item.CRC in {0x33b626c3,0x5f6fbc25,0xa50ccb71,0xef0b0279,
+                                    0x81f564b9,0xe5017d25,0xf1666017,0x908aca5d}
+                       and item.file_size == 0x20000 for item in archive.infolist())
+
+    clone = collect(selected)
+    if (found or clone) and len(found) < len(profile):
+        for sibling in sorted(selected.parent.glob("smashtv*.zip")):
+            if sibling != selected:
+                collect(sibling)
+            if len(found) == len(profile):
+                break
+    missing = [r["name"] for r in profile if r["name"] not in found]
+    if missing:
+        raise ValueError("This ZIP does not supply the retail L8 set. For split sets, "
+                         "keep the parent ZIP beside it. Missing: " + ", ".join(missing))
+    return [(r["name"], found[r["name"]]) for r in profile]
+
+
+def prepare(selected, cache, generated):
+    chips = read_chips(selected)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    # A stable normalized archive also handles merged sets and renamed members.
+    if selected.resolve() != cache.resolve():
+        with tempfile.TemporaryDirectory(dir=cache.parent) as td:
+            temporary = Path(td) / "selected.zip"
+            with zipfile.ZipFile(temporary, "w") as archive:
+                for name, data in chips:
+                    archive.writestr(zipfile.ZipInfo(name), data)
+            os.replace(temporary, cache)
+    generators = [Path(__file__), PROFILE, LOCATIONS]
+    for directory in ("tools/gsp2cpp", "tools/m6809_aot"):
+        generators.extend(sorted((ROOT / directory).glob("*.py")))
+    generators += [ROOT / "tools/gsp2cpp/isa_table.json", *sorted((ROOT / "data").glob("enhanced*.json"))]
+    key = hashlib.sha256()
+    for _, content in chips:
+        key.update(content)
+    for path in generators:
+        key.update(bytes.fromhex(digest(path)))
+    destination = generated / key.hexdigest()
+    if destination.exists():
+        sealed = json.loads((destination / "outputs.json").read_bytes())
+        if sealed != output_hashes(destination):
+            raise ValueError(f"Generated native files changed: {destination}")
+        return destination
+    generated.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=generated) as td:
+        root = Path(td)
+        output = root / "program"
+        locations = {}
+        for source, rows in json.loads(LOCATIONS.read_bytes()).items():
+            for offset, line in rows:
+                locations[f"{0xffe00000 + offset:08x}"] = [0, 0, f"{source}:{line}" if source else line]
+        codemap = root / "locations.json"
+        codemap.write_text(json.dumps({"instructions": locations}), encoding="utf-8")
+        subprocess.run([sys.executable, ROOT / "tools/gsp2cpp/emit.py", "--rom", cache,
+                        "--codemap", codemap, "--out", output / "l8"], check=True)
+        index = (output / "l8/l8_translation_index.csv").read_text().splitlines()[1:]
+        if len(index) != len(locations) or any(not row.endswith(",translated") for row in index):
+            raise ValueError("Incomplete main program translation")
+        subprocess.run([sys.executable, ROOT / "tools/m6809_aot/emit6809.py", cache,
+                        "--out", output / "snd"], check=True)
+        (output / "outputs.json").write_text(json.dumps(output_hashes(output)), encoding="utf-8")
+        try:
+            output.rename(destination)
+        except FileExistsError:
+            if output_hashes(output) != output_hashes(destination):
+                raise
+    return destination
+
+
+def output_hashes(directory):
+    return {p.relative_to(directory).as_posix(): digest(p)
+            for p in directory.rglob("*") if p.is_file() and p.name != "outputs.json"}
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    for flag in ("rom", "cache", "generated", "result"):
+        parser.add_argument("--" + flag, required=True, type=Path)
+    args = parser.parse_args()
+    try:
+        path = prepare(args.rom.resolve(), args.cache.resolve(), args.generated.resolve())
+        args.result.write_text(str(path), encoding="utf-8")
+    except (OSError, ValueError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
+        sys.exit(str(error))

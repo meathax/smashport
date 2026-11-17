@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "purpose": "Refresh the native cached full-screen bounds immediately after the complete, verified retail GAMSTATE writer set. The original store, CPU registers, flags and cycles are unchanged. Original program-ROM bytes remain immutable.",
+  "destination": "0x010865a0",
+  "sites": [
+    {
+      "pc": "0xffe0d930",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe0d910",
+      "value": "0x0030",
+      "source": "MAIN.ASM:104"
+    },
+    {
+      "pc": "0xffe1c380",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe1c360",
+      "value": "0x0050",
+      "source": ""
+    },
+    {
+      "pc": "0xffe74ce0",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe74cc0",
+      "value": "0x0018",
+      "source": "WAVES.ASM:286"
+    },
+    {
+      "pc": "0xffe76c80",
+      "instruction": "MOVE A2,@{L1},0",
+      "value_pc": "0xffe76c60",
+      "value": "0x0018",
+      "source": "WAVES.ASM:464"
+    },
+    {
+      "pc": "0xffe78c90",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe78c70",
+      "value": "0x0018",
+      "source": "WAVES.ASM:685"
+    },
+    {
+      "pc": "0xffe7aec0",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe7aea0",
+      "value": "0x0010",
+      "source": ""
+    },
+    {
+      "pc": "0xffe91870",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe91850",
+      "value": "0x0050",
+      "source": "WAVES.ASM:4166"
+    },
+    {
+      "pc": "0xffe93eb0",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe93e90",
+      "value": "0x0010",
+      "source": "WAVES.ASM:4559"
+    },
+    {
+      "pc": "0xffe94a70",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe94a50",
+      "value": "0x0010",
+      "source": "WAVES.ASM:4668"
+    },
+    {
+      "pc": "0xffe95ed0",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffe95eb0",
+      "value": "0x0030",
+      "source": "ROBOATT.ASM:113"
+    },
+    {
+      "pc": "0xffea31f0",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffea31d0",
+      "value": "0x0010",
+      "source": "ROBOATT.ASM:1938"
+    },
+    {
+      "pc": "0xffebad50",
+      "instruction": "MOVE A0,@{L1},0",
+      "value_pc": "0xffebad30",
+      "value": "0x0040",
+      "source": "TEST.ASM:563"
+    }
+  ]
+}

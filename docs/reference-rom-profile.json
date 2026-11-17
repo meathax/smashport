@@ -1,0 +1,146 @@
+{
+  "identity": "MAME smashtv L8 reference data ONLY",
+  "source_compatibility": "UNVERIFIED",
+  "roms": [
+    {
+      "name": "la8_smash_tv_game_rom_u105.u105",
+      "size": 131072,
+      "crc32": 1221425471,
+      "sha1": "7d0d9edccf0610f57e40934ab33e32315369656d",
+      "region": 0,
+      "offset": 786432,
+      "stride": 2,
+      "reload": 0
+    },
+    {
+      "name": "la8_smash_tv_game_rom_u89.u89",
+      "size": 131072,
+      "crc32": 2390746211,
+      "sha1": "629332be706cda26f8b170b8e2877355230119ee",
+      "region": 0,
+      "offset": 786433,
+      "stride": 2,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u111.u111",
+      "size": 131072,
+      "crc32": 1928379012,
+      "sha1": "2e925b3cdd3c8e14046b3948d82f0f3cde3c22c5",
+      "region": 1,
+      "offset": 0,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u112.u112",
+      "size": 131072,
+      "crc32": 1131348611,
+      "sha1": "ec33a8942c0fc326db885e08dad9346ec5a63360",
+      "region": 1,
+      "offset": 131072,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u113.u113",
+      "size": 131072,
+      "crc32": 1246462224,
+      "sha1": "9f1881d1d2682764ab85aebd685d97eb8b4afe46",
+      "region": 1,
+      "offset": 262144,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u95.u95",
+      "size": 131072,
+      "crc32": 3898909771,
+      "sha1": "40eb8e11a183f4f82dc8decb36aaeded9cd1bc26",
+      "region": 1,
+      "offset": 2097152,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u96.u96",
+      "size": 131072,
+      "crc32": 357916327,
+      "sha1": "4fefc059736ca424dc05a08cb55b9acf9e31228b",
+      "region": 1,
+      "offset": 2228224,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u97.u97",
+      "size": 131072,
+      "crc32": 3433864606,
+      "sha1": "a43d70d1a0bbd377f0fc539c2e8b725f7079f463",
+      "region": 1,
+      "offset": 2359296,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u106.u106",
+      "size": 131072,
+      "crc32": 1550943073,
+      "sha1": "6178b1d53411f24d5a5a01559727e300cd27d587",
+      "region": 1,
+      "offset": 4194304,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u107.u107",
+      "size": 131072,
+      "crc32": 263855670,
+      "sha1": "17038cf35a72678bba149a632f1ad1b80cc3a38c",
+      "region": 1,
+      "offset": 4325376,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "la1_smash_tv_game_rom_u108.u108",
+      "size": 131072,
+      "crc32": 3406432559,
+      "sha1": "33cbb87b4be1eadb1f3624ef5e218e65109fa3eb",
+      "region": 1,
+      "offset": 4456448,
+      "stride": 1,
+      "reload": 0
+    },
+    {
+      "name": "sl2_smash_tv_sound_rom_u4.u4",
+      "size": 65536,
+      "crc32": 701757128,
+      "sha1": "8a90cdff54f59ddb7dba521504d880515a59df08",
+      "region": 2,
+      "offset": 65536,
+      "stride": 1,
+      "reload": 131072
+    },
+    {
+      "name": "sl2_smash_tv_sound_rom_u19.u19",
+      "size": 65536,
+      "crc32": 2891595818,
+      "sha1": "c476018062126dc3936caa2c328de490737165ec",
+      "region": 2,
+      "offset": 196608,
+      "stride": 1,
+      "reload": 262144
+    },
+    {
+      "name": "sl2_smash_tv_sound_rom_u20.u20",
+      "size": 65536,
+      "crc32": 2270979801,
+      "sha1": "51cdad62ec57e69bba6fcf14e59841ec628dec11",
+      "region": 2,
+      "offset": 327680,
+      "stride": 1,
+      "reload": 393216
+    }
+  ]
+}

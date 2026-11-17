@@ -1,0 +1,380 @@
+{
+  "date": "2026-11-11",
+  "scope": "Private local donor snapshot; donor working-tree commit not established; exact source bytes pinned below. Upstream pins and licenses in copied PINS_crt.md. No donor changes.",
+  "files": [
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\post_chain.cpp",
+      "copy": "third_party\\graphics\\runtime\\post\\post_chain.cpp",
+      "sha256": "a1d2c7cdd8bff2dde9e2b422f0a2154e2b6b38a5f064fda73366039ec8d46e1b"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\post_chain.h",
+      "copy": "third_party\\graphics\\runtime\\post\\post_chain.h",
+      "sha256": "5c85ba3002aa672dc481df769a8cc805c88f4a0207d7173607ae1913dab70324"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\gdl_post_test.cpp",
+      "copy": "third_party\\graphics\\runtime\\post\\gdl_post_test.cpp",
+      "sha256": "14a761d19893b2561a4c6b79901124874992bc06da23dd45b307cd59cd2336e7"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\blurbusters\\LICENSE",
+      "copy": "third_party\\graphics\\runtime\\post\\blurbusters\\LICENSE",
+      "sha256": "64baf37c51f18b1ccfdc2958f6da7fc0fdefbc92370977cd3114d5111828cf33"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\blurbusters\\crt-simulator.hlsl",
+      "copy": "third_party\\graphics\\runtime\\post\\blurbusters\\crt-simulator.hlsl",
+      "sha256": "de1a931a0ef4f2c01babf7ea43ea4d1f5af2302eca53651897ee2f9eb5fe3ea6"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\PINS_crt.md",
+      "copy": "third_party\\graphics\\third_party\\PINS_crt.md",
+      "sha256": "f9dffb0f676f44ec84409cc9b6fa24d814470e8ab8666fafc279049282ae7975"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\include\\librashader.h",
+      "copy": "third_party\\graphics\\third_party\\librashader\\include\\librashader.h",
+      "sha256": "a20da26f079e7e15e4736368fa553bb94dd4cc6039078d0af81cd5427bae5393"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\include\\librashader_ld.h",
+      "copy": "third_party\\graphics\\third_party\\librashader\\include\\librashader_ld.h",
+      "sha256": "bcffcbc854afb287c9f935c1a0e3b569f5e6775ef85914bd7f7025ad1f6bde33"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\LICENSE.md",
+      "copy": "third_party\\graphics\\third_party\\librashader\\LICENSE.md",
+      "sha256": "69c15395f33bc9ce8e1d8b6cef42b7e49cdec4c6f5233d4b9cfc4bfa335f97f9"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\LICENSE-GPL.md",
+      "copy": "third_party\\graphics\\third_party\\librashader\\LICENSE-GPL.md",
+      "sha256": "831e92808eb553250066261a1387a9323cbf300d4559a41f2c71fd3712bdb44a"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\bin\\librashader.dll",
+      "copy": "third_party\\graphics\\third_party\\librashader\\bin\\librashader.dll",
+      "sha256": "8e5912fc7432ff39e935c61674823f37b96a824bb6c727f1319cc31fc561a74a"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\dxc\\dxcompiler.dll",
+      "copy": "third_party\\graphics\\third_party\\librashader\\dxc\\dxcompiler.dll",
+      "sha256": "0689e2fee0a1c9df8662a59680469f24e2a3ad7ce6bbbcc9284f7a83172bfc59"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\dxc\\LICENSE-LLVM.txt",
+      "copy": "third_party\\graphics\\third_party\\librashader\\dxc\\LICENSE-LLVM.txt",
+      "sha256": "729615317e28dd03907e46f0fc3b5e88f7853cee61d1a1471d2749335516b46f"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\dxc\\LICENSE-MS.txt",
+      "copy": "third_party\\graphics\\third_party\\librashader\\dxc\\LICENSE-MS.txt",
+      "sha256": "734f72f239fe7b07b4c7203f294c1a7ce27095687278bab7e56d630d7c672963"
+    },
+    {
+      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\librashader\\dxc\\LICENCE-MIT.txt",
+      "copy": "third_party\\graphics\\third_party\\librashader\\dxc\\LICENCE-MIT.txt",
+      "sha256": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/blurs/shaders/royale/blur9fast-horizontal.slang",
+      "copy": "third_party\\graphics\\shaders\\blurs\\shaders\\royale\\blur9fast-horizontal.slang",
+      "sha256": "ff2b81caaa789dd483948aee55fb2dae6534bd80d9bff5e33d0c220dd8ecd40f"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/blurs/shaders/royale/blur9fast-vertical.slang",
+      "copy": "third_party\\graphics\\shaders\\blurs\\shaders\\royale\\blur9fast-vertical.slang",
+      "sha256": "50293730bd8ca7f25029ae334f1a60e2085ca96923490920930c759e2188fd89"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/blurs/shaders/royale/vertex-shader-blur-fast-horizontal.h",
+      "copy": "third_party\\graphics\\shaders\\blurs\\shaders\\royale\\vertex-shader-blur-fast-horizontal.h",
+      "sha256": "9f93874916a748a36fabdcc70927beb505ad979db37c1d5c6e97c34f78436f90"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/blurs/shaders/royale/vertex-shader-blur-fast-vertical.h",
+      "copy": "third_party\\graphics\\shaders\\blurs\\shaders\\royale\\vertex-shader-blur-fast-vertical.h",
+      "sha256": "a8259485245991570a0214485c3d24f7cf996c4a9e7f8c058c84b6e33e5a5702"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/crt-guest-advanced.slangp",
+      "copy": "third_party\\graphics\\shaders\\crt\\crt-guest-advanced.slangp",
+      "sha256": "8927f4c441ca238e30d120a5f1b51022f63f4e35b2d633b1f82db0fee1801215"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/crt-lottes.slangp",
+      "copy": "third_party\\graphics\\shaders\\crt\\crt-lottes.slangp",
+      "sha256": "3b446751c38a7e332d608e4eb04d4e45b63614530ebe2234f3020459773e7b2d"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/crt-royale.slangp",
+      "copy": "third_party\\graphics\\shaders\\crt\\crt-royale.slangp",
+      "sha256": "14d99d7a73b7121dceecf189f5969bfa2043d4131677e30e9689aaeb052128e8"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-lottes.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-lottes.slang",
+      "sha256": "6e7c15683ccbda2e03834aa2097205e879960906d0f166bbb2117bd383782d27"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/LICENSE.TXT",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\LICENSE.TXT",
+      "sha256": "51ad7b22ec5aa25d62f34ae212edd379a4c4a6af40eb1ddfd439bdcf61d576c2"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/bind-shader-params.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\bind-shader-params.h",
+      "sha256": "49816d030bacca9f631df4402debb10606f51b3449ef8fa33d638de015714313"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/bloom-functions.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\bloom-functions.h",
+      "sha256": "0a03d622ffe163e77496a3024a2925473c0c5fa62bcbc0432639141202efa360"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-bloom-approx.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-bloom-approx.h",
+      "sha256": "a0207716236571a32484c05e9db7b22ab85cdbde87cef25999a80d9b99a312c4"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-bloom-approx.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-bloom-approx.slang",
+      "sha256": "4349b0d421716522b0ffed839684a90bf060660e55d46e9b5044b2b20cc3b80c"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-bloom-horizontal-reconstitute.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-bloom-horizontal-reconstitute.slang",
+      "sha256": "33dfa3d3379368870502081d545814f638bce7eef27be91effc4b6331bfd4cb6"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-bloom-vertical.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-bloom-vertical.slang",
+      "sha256": "e9b716d29a1509909e1a50dc3f7e3ab1babf79564a47f82ffe8e4de961bfaa11"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-brightpass.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-brightpass.slang",
+      "sha256": "a88e53291d6596d3d0bff558fa8700a54489912cbcc4d669ac58a1599d83d313"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-first-pass-linearize-crt-gamma-bob-fields.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-first-pass-linearize-crt-gamma-bob-fields.slang",
+      "sha256": "c46c43ad3b13b605bb67fe0994bfd8cd11e769063546c0a308ebaa920af8b36c"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-geometry-aa-last-pass.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-geometry-aa-last-pass.h",
+      "sha256": "789c4abf43ece237e55c25c928e1a41f962f5ca36039bfde48f8ff4a4bb6147f"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-geometry-aa-last-pass.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-geometry-aa-last-pass.slang",
+      "sha256": "4532a96982a15ed38285155b30674e8a56faf7067c07a526a90157ffb246791f"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-mask-resize-horizontal.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-mask-resize-horizontal.slang",
+      "sha256": "9309a8bf1a93558d0f5c9d437aec52d52932cab85011f0bb52ba68dfb514ac33"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-mask-resize-vertical.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-mask-resize-vertical.slang",
+      "sha256": "9f9ec1d0af585d7c5d6bae7b03ef1dea18408a1a70619518f5f508c4a17ff77f"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-scanlines-horizontal-apply-mask.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-scanlines-horizontal-apply-mask.h",
+      "sha256": "e0fc99943893b2a3224cf8fb75489d28a8a5293482d688159f86453c529393b8"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-scanlines-horizontal-apply-mask.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-scanlines-horizontal-apply-mask.slang",
+      "sha256": "c9e763d36d46718464b597f5aa8616dc1b68f6b4835de03cee8a8545ae03eb46"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/crt-royale-scanlines-vertical-interlacing.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\crt-royale-scanlines-vertical-interlacing.slang",
+      "sha256": "099f2ef87b35b6e87b15cc65505ac61c23e6386c6e8511f6cc66154955b21d67"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/derived-settings-and-constants.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\derived-settings-and-constants.h",
+      "sha256": "f1d6bb93d9aa1d86093f96f0b28f2a385b71c8f651a7bc90d7d23afab5a651e0"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/geometry-functions.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\geometry-functions.h",
+      "sha256": "8a6551d97c4a352b080681f665fed4a8ff82d717b75320f3b44c22d888052bae"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/phosphor-mask-resizing.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\phosphor-mask-resizing.h",
+      "sha256": "6757e3cd73d4e3e01f7e0323643dec6539b713f2689ec41e2e31d08e49386e9a"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/scanline-functions.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\scanline-functions.h",
+      "sha256": "241d134e8cd28fd3a3b0fdf2d8b49dd0904b817caa32689b85afcdaa1550ed33"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/tex2Dantialias.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\tex2Dantialias.h",
+      "sha256": "592d8cdcc45fe15c2cd0f31535c66b26c99100114c7afdb50a9bb303f61056c0"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/src/user-cgp-constants.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\src\\user-cgp-constants.h",
+      "sha256": "6e9fd1d04453d0edd6a37920fe386d3a578e4c74047bdf3d176425de9008f73c"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearApertureGrille15Wide8And5d5Spacing.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearApertureGrille15Wide8And5d5Spacing.png",
+      "sha256": "4b46103e20567b99e9525ce521438573f49609452d142438088fa6309902aef2"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearApertureGrille15Wide8And5d5SpacingResizeTo64.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearApertureGrille15Wide8And5d5SpacingResizeTo64.png",
+      "sha256": "3ba708dba5989741c58d9b7a1d1e38499bb6dabeb6787da523c9ca6e06159215"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearShadowMaskEDP.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearShadowMaskEDP.png",
+      "sha256": "637e567fe5180ba53af5a185ceef24b4a44b86d74d802fb33df6a2d02d3bcf49"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearShadowMaskEDPResizeTo64.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearShadowMaskEDPResizeTo64.png",
+      "sha256": "d68808ef5c819555c6001ea2d0627c18e64a7d0a7a6ebb3af4a09261a4c23713"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacing.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacing.png",
+      "sha256": "4d4385d8476faaaebc6c4f6540b73c28bf3b643a6efb93866e58050f3d0f6567"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacingResizeTo64.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\TileableLinearSlotMaskTall15Wide9And4d5Horizontal9d14VerticalSpacingResizeTo64.png",
+      "sha256": "b3ab2c1d9205e167c44fc86aeb5a031a4fe7199de728d52f94e11635a467ab6d"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/crt-royale/user-settings.h",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\crt-royale\\user-settings.h",
+      "sha256": "1aae7facfd307ffc064c6e9252654863bfbb1755a3d2a5ff33381a4a39068c30"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/afterglow0.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\afterglow0.slang",
+      "sha256": "7e6ba7d2896cc7a1f37e07e9efc61fa77a179c0e6c3e1f6a0fcc4f7cc0de7ccc"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/avg-lum.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\avg-lum.slang",
+      "sha256": "333c97235e5728f909d2748776aabc07d8ef6543354b87b0d343c5d225ea90a2"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/bloom_horizontal.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\bloom_horizontal.slang",
+      "sha256": "0fe1df811be9c183ef653b54302737a2b4751252c44c7fcee9ee1a41edb6a379"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/bloom_vertical.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\bloom_vertical.slang",
+      "sha256": "5dac736195e67d3222964407e1ef1873aa64e08d7d032dcdc5ff4bc3978b0a07"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/crt-guest-advanced.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\crt-guest-advanced.slang",
+      "sha256": "82ec26ec71939be02a8641f2d94fcdf2913c90743c9e680d13ef02ad7a8c2ffd"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/deconvergence.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\deconvergence.slang",
+      "sha256": "da0e06761366a6c0247c8ad3e75cfcf1b319cd179b63a2816834d64f39bfee07"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/gaussian_horizontal.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\gaussian_horizontal.slang",
+      "sha256": "a36afc266343a9043349b33ac8d28b9abef9a48a37babc343d4d0ab428f56cb5"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/gaussian_vertical.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\gaussian_vertical.slang",
+      "sha256": "530516ff22eccc53853ad4ee894029419ee3c33e3c218f18b98467c5e08f9324"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/linearize.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\linearize.slang",
+      "sha256": "77acbb8f7036f119e71def8ed4d759042c95081af3c53f5f2af3c8f5b5addf3b"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/lut/inv-trinitron-lut.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\lut\\inv-trinitron-lut.png",
+      "sha256": "2acb6633e4dede7f36e3e62b7aa9d0ed76ecfbc5cb7ed7f3f8813dddec0e9145"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/lut/nec-lut.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\lut\\nec-lut.png",
+      "sha256": "86ec3d2e21138845cb73500e915425582b991e173a4149fa192a62d798382b59"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/lut/ntsc-lut.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\lut\\ntsc-lut.png",
+      "sha256": "a23ae9d27d6d5f9073d4a84678187f54758b329387c47686294ea979dcde6d03"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/lut/trinitron-lut.png",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\lut\\trinitron-lut.png",
+      "sha256": "bcc8c237eb39ed2a632554959cb4c5e0dd52b59a4922745b46b7525fc6b6b61a"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/pre-shaders-afterglow.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\pre-shaders-afterglow.slang",
+      "sha256": "53eaf6b102a21d4cc909dafe953ec64bde055baf19476b50e2b87df5d2e6ef1b"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/crt/shaders/guest/advanced/stock.slang",
+      "copy": "third_party\\graphics\\shaders\\crt\\shaders\\guest\\advanced\\stock.slang",
+      "sha256": "427561946575838d800ae55d65b9ac6e8863f96d525f3e4c391af6e5f46e7590"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/include/blur-functions.h",
+      "copy": "third_party\\graphics\\shaders\\include\\blur-functions.h",
+      "sha256": "95356b36e40fe242a193e6b6ad3666e1008c0fa899b8d7aaf3223cc52b5e244a"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/include/compat_macros.inc",
+      "copy": "third_party\\graphics\\shaders\\include\\compat_macros.inc",
+      "sha256": "b333302e16d89cf0ee24e212eb9e52bf3b8046728a98d2f04128b9a02b8cfd93"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/include/gamma-management.h",
+      "copy": "third_party\\graphics\\shaders\\include\\gamma-management.h",
+      "sha256": "756cbdfb81d8bcb0b92b32e16f4744b3d29b39e62772b9b8e23fb2a6e9abf7b9"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/include/quad-pixel-communication.h",
+      "copy": "third_party\\graphics\\shaders\\include\\quad-pixel-communication.h",
+      "sha256": "08689237488dfc009f5dd18afcfff9d208b24731383f2264984926a46af130ee"
+    },
+    {
+      "source": "libretro/slang-shaders@2345ee91602a7404d3a1a6a5df6108d7305fdad4/include/special-functions.h",
+      "copy": "third_party\\graphics\\shaders\\include\\special-functions.h",
+      "sha256": "01e45dcd26c6e811288f74917ac4276ef6c8fed7908e9c69bb34ce601fe1b04d"
+    }
+  ],
+  "adaptations": [
+    {
+      "path": "third_party\\graphics\\runtime\\post\\post_chain.h",
+      "upstream_copy": "third_party\\graphics\\runtime\\post\\post_chain.h.upstream",
+      "current_sha256": "5baf7bd68833a6c1151d24b67ef773cfcc07fc733274d9f688e23bbb9f2a80fd",
+      "change": "Expose read-only preset_frame_succeeded so Smash can report runtime shader failure instead of silent native fallback."
+    },
+    {
+      "path": "third_party\\graphics\\runtime\\post\\post_chain.cpp",
+      "upstream_copy": "third_party\\graphics\\runtime\\post\\post_chain.cpp.upstream",
+      "current_sha256": "bc1830d89d10b5c09e6a257a08b304c4d1d9cc0e4ce726f896e315d1a1630bd8",
+      "change": "Expose read-only preset_frame_succeeded so Smash can report runtime shader failure instead of silent native fallback."
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "stv-open-source-adaptation-v1",
+  "module": "Native Windows PC frontend menu, local settings and presentation",
+  "upstream": {
+    "repository": "https://github.com/cheviman/tmnt-port",
+    "commit": "401c3694e5f89fa5844c384cfd82512803202cf9",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2026, Sebastian Toyos",
+    "files": [
+      {
+        "path": "console/menu.c",
+        "git_blob": "b09d3260e635b5139c9edf43fab3f14c051bc4c6",
+        "bytes": 57795,
+        "sha256": "0f0d07dfae2f9ed169c3c31af75279dda7a49995f47145782f9347dd18fd13c8",
+        "adapted": "Flat page/row navigation, bounded wraparound, selection/adjustment/accept/back actions, pause menu, controller-editable player-name flow."
+      },
+      {
+        "path": "ports/sdl2/main.c",
+        "git_blob": "4962d1ecc6d07e916b63b156afd0ffe413a27943",
+        "bytes": 68209,
+        "sha256": "a887191c1598f736adbc83b662e2e3d535f62220c6541e9548a3ab203b8c289a",
+        "adapted": "PC preferences and bounded player-name handling (1242-1311), output-side volume intent (648-674), nearest/linear/sharp presentation (468-529), CRT mask shape and constants (131-179)."
+      },
+      {
+        "path": "LICENSE",
+        "git_blob": "ffae523b4d1e6953ae3e7d0137c3d50c208d7140",
+        "bytes": 1502,
+        "sha256": "be8dde8917c5919f4abb69f65ba04c36529bace36677a560170c31710ce90170",
+        "adapted": "Unmodified full upstream license retained at third_party/tmnt-port/LICENSE."
+      }
+    ]
+  },
+  "local_files": [
+    "include/stv/host/pc_menu.hpp",
+    "src/host/pc_menu.cpp",
+    "include/stv/host/pc_settings.hpp",
+    "src/host/pc_settings.cpp",
+    "include/stv/host/video_filter.hpp",
+    "src/host/video_filter.cpp",
+    "src/host/win_main.cpp",
+    "src/host/wasapi.hpp"
+  ],
+  "adaptation": {
+    "menu": "Pure C++ page/action model; existing Win32 and XInput frontend owns rendering, effects and gameplay suppression. Original operator-menu action supplies the game sound test.",
+    "settings": "Versioned bounded parser with all-or-default validation and atomic replacement, separate from original arcade CMOS and input binding data. Local name limited to 10 normalized characters. Scripted captures do not save local preferences.",
+    "video": "Bounded CPU filter buffers replace SDL texture passes. Independent axes preserve Smash TV geometry; presentation filters do not alter source pixels. Player release remains fixed shared 16:9.",
+    "audio": "New device-copy gain/mute control follows donor output-side volume pattern; original emulated sound commands, mixer stream and timing remain under the existing coupled sound owner.",
+    "not_imported": [
+      "SDL runtime or renderer",
+      "TMNT game code, addresses, ROMs or assets",
+      "TMNT four-player model",
+      "TMNT arbitrary widescreen choices",
+      "TMNT interpreter or code-generation runtime",
+      "Donor gameplay networking or rollback core"
+    ],
+    "related_lobby": "The separate arcade-lan-lobby adaptation and exact submodule provenance are recorded in third_party/arcade-lan-lobby/PROVENANCE.json."
+  },
+  "distribution": "Retain the full upstream license with authorized binaries as licenses/tmnt-port-LICENSE.txt and preserve source attribution. These upstream permissions do not grant rights to redistribute original Smash TV material."
+}

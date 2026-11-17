@@ -1,0 +1,8 @@
+{
+  "source": "https://github.com/SnowflakePowered/librashader/releases/tag/librashader-v0.12.0",
+  "archive": "librashader-x86_64-windows-v0.12.0-optimized.zip",
+  "archive_sha256": "521fe0f364bfa705883f9e99fb1733a3a24f0f403bcc5591b6b78f6cff289183",
+  "dll_sha256": "1890f647c7fbe52d4cc591526db24367caca284996855c4565c6003c7e46f8cc",
+  "rename": "librashader.dll -> librashader_d3d11.dll; bytes unchanged",
+  "licenses": "../third_party/librashader/LICENSE.md and LICENSE-GPL.md; existing shipped notices retained"
+}

@@ -1,0 +1,64 @@
+{
+  "schema": "stv-open-source-adaptation-v1",
+  "module": "Two-player LAN room discovery and reliable handoff",
+  "upstream": {
+    "parent_repository": "https://github.com/cheviman/tmnt-port",
+    "parent_commit": "401c3694e5f89fa5844c384cfd82512803202cf9",
+    "repository": "https://github.com/cheviman/arcade-lan",
+    "commit": "a7a15483521d59fec74177d26f6bd438ac8dcaa4",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright (c) 2026, Sebastian Toyos",
+    "files": [
+      {
+        "path": "src/lan.c",
+        "git_blob": "13f2b16943040c3e02227d5e47406c77cf2ca9ef",
+        "adapted": "Explicit byte writer/reader, bounded names and room cache, beacon/join/roster validation, member lifecycle and timeout/retry design."
+      },
+      {
+        "path": "src/lan_udp.c",
+        "git_blob": "4a9cc6ce5bc4c28fd3c91b6af0a3222393373eca",
+        "adapted": "Nonblocking UDP broadcast socket boundary and transport-independent core separation."
+      },
+      {
+        "path": "src/lan_udp.h",
+        "git_blob": "b3ef6fdc25ea3649c7e566904c1ac8e56f60adbe",
+        "adapted": "Socket ownership/API design."
+      },
+      {
+        "path": "include/arcade_lan.h",
+        "git_blob": "5ec3460a2694d4758f506a375d4b60a03f0a8fab",
+        "adapted": "Room/member view and lifecycle API design."
+      },
+      {
+        "path": "tests/lan_test.c",
+        "git_blob": "1b3ca64f40296a2d23b37dd0b8054131c020edec",
+        "adapted": "In-memory datagram routing and packet-loss test approach; Smash assertions and fixtures are new."
+      },
+      {
+        "path": "LICENSE",
+        "git_blob": "ffae523b4d1e6953ae3e7d0137c3d50c208d7140",
+        "adapted": "Unmodified upstream license retained at third_party/arcade-lan-lobby/LICENSE."
+      }
+    ]
+  },
+  "local_files": [
+    "include/stv/net/lobby.hpp",
+    "src/net/lobby.cpp",
+    "tests/test_lobby.cpp"
+  ],
+  "adaptation": {
+    "language": "C++17",
+    "maximum_players": 2,
+    "clock": "Caller-supplied monotonic milliseconds, independent of gameplay frame rate.",
+    "wire": "Separate versioned STVL control datagrams with explicit little-endian fields, exact length validation, per-room identity and per-join membership counter; delayed control packets from an earlier membership cannot act on a rejoin. Not compatible with donor gameplay protocol.",
+    "start": "START -> READY -> COMMIT -> ACK, token/endpoint-bound retries and exactly-once handoff to the existing Smash Handshake. The real game owner calls established after its authoritative handshake.",
+    "ownership": "LobbyUdp owns only separate control/discovery sockets. The frontend owns and reserves UdpTransport, binds peer endpoints and preserves existing rollback, inputs, CMOS, game state, sound and authoritative handshake.",
+    "not_imported": [
+      "Donor gameplay input transport",
+      "Donor lockstep/frame-hash implementation",
+      "Four-player slots",
+      "SDL or console menu renderer"
+    ]
+  },
+  "distribution": "Retain this provenance and reproduce the BSD notice with any authorized binary distribution. This adaptation does not authorize distributing ROMs or private generated sources."
+}

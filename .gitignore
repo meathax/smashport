@@ -1,0 +1,12 @@
+# Source only. Never commit ROMs, generated code, builds or binaries.
+build/
+generated/
+*.zip
+*.exe
+*.dll
+*.lib
+*.o
+*.obj
+*.pdb
+eos-client.ini
+__pycache__/

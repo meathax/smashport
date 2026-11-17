@@ -1,0 +1,180 @@
+{
+  "note": "Ordinary enemy motion is scaled exactly once by 9/8 at NDSP1.DVEL. Boss face/skull acceleration uses 5/4; Cobra acceleration uses 19/16 to retain a difficult, bounded finishing phase. Existing player, threshold and lifecycle ownership policies remain.",
+  "hooks": [
+    {
+      "pc": "0xffef86d0",
+      "instruction": "MOVE *A13({W1}),A8,1",
+      "operands": [["DISP", "A13", 256], ["R", "A8", null], ["K", null, 1]],
+      "policy": "mutoid_lineup_parent",
+      "role": "Explosion loop: restore the caller and continue its effects when MUTPTR no longer owns the original Mutoid body. Classic retains the retail path."
+    },
+    {
+      "pc": "0xffee1500",
+      "instruction": "MOVE *A9({W1}),A0,0",
+      "operands": [["DISP", "A9", 304], ["R", "A0", null], ["K", null, 0]],
+      "policy": "tank_reaction_parent",
+      "role": "MODS wake: retire a delayed tank helper when its parent slot or object has been released or reused. Classic retains the retail path."
+    },
+    {
+      "pc": "0xfff3cfd0",
+      "instruction": "MOVE @{L1},A1,0",
+      "operands": [["ABS", null, 17687360], ["R", "A1", null], ["K", null, 0]],
+      "policy": "coop_cobra_threshold",
+      "role": "COBBULHD source-owned COBRAKIL read. Live Widescreen circuit 3 room 7 with STATUS3 uses seven eighths of the operator-adjusted finishing threshold; preserve the required head hit, solo path and Classic."
+    },
+    {
+      "pc": "0xfff3d060",
+      "instruction": "SUBI {~W1},A1",
+      "operands": [["IMM", null, 250], ["R", "A1", null]],
+      "policy": "solo_cobra_threshold",
+      "role": "COBBULHD solo branch, after the retail player-count offset. Preserve finishing head-hit requirement and operator difficulty."
+    },
+    {
+      "pc": "0xffe11e40",
+      "instruction": "MOVB *A0,A0",
+      "operands": [["IND", "A0", null], ["R", "A0", null]],
+      "policy": "room16_coop_robot_limit",
+      "role": "ROBO SETMAX circuit 3 room 16. Two active players use base 26; solo retains the widescreen base 36. Retail difficulty and wave budgets still apply."
+    },
+    {
+      "pc": "0xfff1df50",
+      "instruction": "MOVE *A13({W1}),A2,0",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          320
+        ],
+        [
+          "R",
+          "A2",
+          null
+        ],
+        [
+          "K",
+          null,
+          0
+        ]
+      ],
+      "register": 2,
+      "phase": "after"
+    },
+    {
+      "pc": "0xfff1df70",
+      "instruction": "MOVE *A13({W1}),A3,0",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          336
+        ],
+        [
+          "R",
+          "A3",
+          null
+        ],
+        [
+          "K",
+          null,
+          0
+        ]
+      ],
+      "register": 3,
+      "phase": "after"
+    },
+    {
+      "pc": "0xfff1edc0",
+      "instruction": "MOVE *A13({W1}),A2,0",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          320
+        ],
+        [
+          "R",
+          "A2",
+          null
+        ],
+        [
+          "K",
+          null,
+          0
+        ]
+      ],
+      "register": 2,
+      "phase": "after"
+    },
+    {
+      "pc": "0xfff1ede0",
+      "instruction": "MOVE *A13({W1}),A3,0",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          336
+        ],
+        [
+          "R",
+          "A3",
+          null
+        ],
+        [
+          "K",
+          null,
+          0
+        ]
+      ],
+      "register": 3,
+      "phase": "after"
+    },
+    {
+      "pc": "0xfff39850",
+      "instruction": "MOVE *A13({W1}),A2,1",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          320
+        ],
+        [
+          "R",
+          "A2",
+          null
+        ],
+        [
+          "K",
+          null,
+          1
+        ]
+      ],
+      "motion_ratio": [19, 16],
+      "register": 2,
+      "phase": "after"
+    },
+    {
+      "pc": "0xfff39870",
+      "instruction": "MOVE *A13({W1}),A3,1",
+      "operands": [
+        [
+          "DISP",
+          "A13",
+          352
+        ],
+        [
+          "R",
+          "A3",
+          null
+        ],
+        [
+          "K",
+          null,
+          1
+        ]
+      ],
+      "motion_ratio": [19, 16],
+      "register": 3,
+      "phase": "after"
+    }
+  ]
+}

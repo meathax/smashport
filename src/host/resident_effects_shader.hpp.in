@@ -1,0 +1,1 @@
+static const char* effectsShader=R"FX(@STV_EFFECTS_HLSL@)FX";
