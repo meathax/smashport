@@ -1,5 +1,7 @@
 # SmashPort: Smash TV for Windows
 
+![Widescreen 16:9 arena with persistent blood and debris](screenshots/gameplay.webp)
+
 A native Windows x64 version of the retail L8 *Smash T.V.* arcade game. Play in the original 4:3 arena or in shared-screen 16:9.
 
 The download contains no game data. On first launch it asks for **your own** retail L8 ROM ZIP and builds the game on your PC from that ROM's main and sound programs. Nothing is emulated at run time.
@@ -39,7 +41,7 @@ The release is built by `tools/release/installer/build.py`, which produces the s
 python tools/release/installer/build.py --output C:\out\SmashTV.exe --llvm <toolchain> --eos <EOS SDK> --config <eos-client.ini> --dxc <dxc.exe>
 ```
 
-This repository holds source code only. ROMs, translated game code and binaries are never committed.
+This repository holds source code and one README screenshot. ROMs, translated game code and binaries are never committed.
 
 ## Credits and licenses
 
