@@ -12,6 +12,9 @@ struct PcSettings {
     int scaling = 1;       // matches ScaleMode: IntegerExact, IntegerFill, Smooth
     int filter = 0;        // matches VideoFilterMode: Nearest, Linear, Sharp, CRT
     int glow = 0, sharpen = 0, curvature = 0; // optional GPU effects: off/low/medium/high
+    int crt_beam = 0;       // 0 off, 1 rolling scan, 2 global refresh
+    int beam_brightness = 0; // 0 automatic, 1 crisp, 2 balanced, 3 bright
+    bool beam_anti_retention = true;
     bool enhance = false;
     bool particles = true, blood = true, debris = true, smoke = true, fire = true, lighting = true;
     bool hardware_rt = false;
@@ -23,7 +26,7 @@ struct PcSettings {
     int run_ahead = 0; // offline speculative video frames, 0..3
     bool fullscreen = false;
     bool vsync = false;    // existing QPC/audio pacing remains the default
-    bool sync_presentation() const noexcept { return vsync || smooth_motion; }
+    bool sync_presentation() const noexcept { return vsync || smooth_motion || crt_beam != 0; }
     bool show_fps = false;
     int volume = 100;
     bool muted = false;

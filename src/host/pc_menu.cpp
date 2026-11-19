@@ -130,6 +130,9 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::WindowScale, "Window size", Kind::Adjustment);
         add(Item::Fullscreen, "Fullscreen", Kind::Adjustment);
         add(Item::PixelFilter, "Picture mode", Kind::Adjustment);
+        add(Item::CrtBeam, "CRT beam simulation", Kind::Adjustment, context.beam_effects, "Choose a GPU picture mode");
+        add(Item::BeamBrightness, "Beam brightness", Kind::Adjustment, context.beam_options, "Enable CRT beam simulation");
+        add(Item::BeamAntiRetention, "LCD anti-retention", Kind::Adjustment, context.beam_options, "Enable CRT beam simulation");
         add(Item::Scaling, "Scaling", Kind::Adjustment);
         add(Item::Vsync, "VSync", Kind::Adjustment);
         add(Item::ShowFps, "Show FPS", Kind::Adjustment);

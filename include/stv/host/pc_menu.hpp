@@ -46,7 +46,7 @@ enum class PcMenuItem : std::uint8_t {
     None,
     Resume, LocalCoop, MainMenu, RestartGame, Video, Audio, Controls, Multiplayer, OperatorMenu, Quit,
     WindowScale, Fullscreen, Scaling, PixelFilter, Vsync, ShowFps, PlayfieldProfile,
-    Glow, Sharpen, Curvature,
+    Glow, Sharpen, Curvature, CrtBeam, BeamBrightness, BeamAntiRetention,
     MasterVolume, Mute, SoundTest,
     KeyboardBindings, PadBindings, SwapPads, StickDeadzone, ResetControls,
     PlayerName, HostGame, DirectHost, FindRooms, DirectJoin, Disconnect,
@@ -65,6 +65,8 @@ constexpr std::size_t PcMenuItemCount = static_cast<std::size_t>(PcMenuItem::Cou
 struct PcMenuContext {
     bool title_options = false;
     bool gpu_effects = false;
+    bool beam_effects = false;
+    bool beam_options = false;
     bool online = false;
     bool public_host = false;
     bool development_profile_chooser = false;  // false for the fixed 16:9 player build

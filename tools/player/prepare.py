@@ -12,6 +12,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "docs/reference-rom-profile.json"
 LOCATIONS = ROOT / "tools/player/l8_locations.json"
+sys.path.insert(0, str(ROOT / "tools/gsp2cpp"))
+import compare
+from codemap import unresolved_transfers
+from decode import Decoder
 
 
 def digest(path):
@@ -88,10 +92,32 @@ def prepare(selected, cache, generated):
         for source, rows in json.loads(LOCATIONS.read_bytes()).items():
             for offset, line in rows:
                 locations[f"{0xffe00000 + offset:08x}"] = [0, 0, f"{source}:{line}" if source else line]
+        compare.ZIP = str(cache)
+        rom = compare.retail("l8")
+        words = [rom[index] | (rom[index + 1] << 8) for index in range(0, len(rom), 2)]
+        decoder = Decoder()
+        decoded = {}
+        for address, annotation in locations.items():
+            pc = int(address, 16)
+            instruction = decoder.decode(words, (pc - 0xffe00000) // 16, pc)
+            if instruction is None:
+                raise ValueError(f"Invalid translated instruction location: {address}")
+            decoded[pc] = instruction
+            annotation[:2] = [instruction.words, instruction.op]
         codemap = root / "locations.json"
-        codemap.write_text(json.dumps({"instructions": locations}), encoding="utf-8")
+        codemap.write_text(json.dumps({
+            "rev": "l8",
+            "note": "derived from the user-selected ROM; private",
+            "instructions": locations,
+            "vectors": [],
+            "indirect_sites": [f"{pc:08x}" for pc in
+                               sorted(set(unresolved_transfers(decoded)))],
+            "conflicts": [],
+        }), encoding="utf-8")
         subprocess.run([sys.executable, ROOT / "tools/gsp2cpp/emit.py", "--rom", cache,
                         "--codemap", codemap, "--out", output / "l8"], check=True)
+        (output / "l8_codemap.json").write_text(codemap.read_text(encoding="utf-8"),
+                                                encoding="utf-8")
         index = (output / "l8/l8_translation_index.csv").read_text().splitlines()[1:]
         if len(index) != len(locations) or any(not row.endswith(",translated") for row in index):
             raise ValueError("Incomplete main program translation")

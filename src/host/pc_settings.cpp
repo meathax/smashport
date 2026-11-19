@@ -35,7 +35,9 @@ std::string pc_player_name(std::string_view text) {
 namespace {
 bool valid(const PcSettings& s) {
     return s.run_ahead >= 0 && s.run_ahead <= 3 && s.window_scale >= 0 && s.window_scale <= 6 && s.scaling >= 0 && s.scaling <= 2 &&
-           s.filter >= 0 && s.filter <= 7 && s.glow >= 0 && s.glow <= 3 && s.sharpen >= 0 && s.sharpen <= 3 && s.curvature >= 0 && s.curvature <= 3 && s.volume >= 0 && s.volume <= 100 && s.reverb >= 0 && s.reverb <= 2 &&
+           s.filter >= 0 && s.filter <= 7 && s.glow >= 0 && s.glow <= 3 && s.sharpen >= 0 && s.sharpen <= 3 && s.curvature >= 0 && s.curvature <= 3 &&
+           s.crt_beam >= 0 && s.crt_beam <= 2 && s.beam_brightness >= 0 && s.beam_brightness <= 3 &&
+           s.volume >= 0 && s.volume <= 100 && s.reverb >= 0 && s.reverb <= 2 &&
            s.player_name == pc_player_name(s.player_name);
 }
 bool number(std::string_view value, int& result) {
@@ -83,6 +85,8 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
         else if (key == "glow") candidate.glow = n;
         else if (key == "sharpen") candidate.sharpen = n;
         else if (key == "curvature") candidate.curvature = n;
+        else if (key == "crt_beam") candidate.crt_beam = n;
+        else if (key == "beam_brightness") candidate.beam_brightness = n;
         else if (key == "volume") candidate.volume = n;
         else if (key == "hardware_rt" || key == "explosive_debris" || key == "enhance" || key == "particles" || key == "blood" || key == "debris" || key == "smoke" || key == "fire" || key == "lighting" || key == "ray_tracing" || key == "voxels" || key == "shockwaves" || key == "tracers" || key == "brass" || key == "muzzle_flash" || key == "room_lights" || key == "persistent_gore" || key == "materials" || key == "destruction" || key == "studio" || key == "weapon_impacts" || key == "fluid_smoke") {
             if (n != 0 && n != 1) return invalid();
@@ -117,7 +121,8 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "audio_wide") candidate.audio_wide = n != 0;
             if (key == "audio_hifi") candidate.audio_hifi = n != 0;
         }
-        else if (key == "smooth_motion" || key == "fullscreen" || key == "vsync" || key == "fps" || key == "muted" || key == "swap_pads") {
+        else if (key == "smooth_motion" || key == "fullscreen" || key == "vsync" || key == "fps" || key == "muted" || key == "swap_pads" ||
+                 key == "beam_anti_retention") {
             if (n != 0 && n != 1) return invalid();
             if (key == "smooth_motion") candidate.smooth_motion = n != 0;
             if (key == "fullscreen") candidate.fullscreen = n != 0;
@@ -125,6 +130,7 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "fps") candidate.show_fps = n != 0;
             if (key == "muted") candidate.muted = n != 0;
             if (key == "swap_pads") candidate.swap_pads = n != 0;
+            if (key == "beam_anti_retention") candidate.beam_anti_retention = n != 0;
         } else return invalid();
     }
     if (!version || !valid(candidate)) { error = "PC settings version or range is invalid"; return SettingsLoad::Invalid; }
@@ -142,6 +148,8 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
     if (!output) { error = "PC settings could not be saved"; return false; }
     output << "version=1\nwindow_scale=" << settings.window_scale << "\nscaling=" << settings.scaling
            << "\nglow=" << settings.glow << "\nsharpen=" << settings.sharpen << "\ncurvature=" << settings.curvature
+           << "\ncrt_beam=" << settings.crt_beam << "\nbeam_brightness=" << settings.beam_brightness
+           << "\nbeam_anti_retention=" << int(settings.beam_anti_retention)
            << "\nenhance=" << int(settings.enhance)
            << "\nparticles=" << int(settings.particles)
            << "\nblood=" << int(settings.blood)

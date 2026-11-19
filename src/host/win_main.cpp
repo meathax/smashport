@@ -1549,7 +1549,10 @@ stv::host::PcMenuContext menu_context() {
     context.development_profile_chooser = false;
 #endif
     context.gpu_effects = g_settings.filter >= 4;
-    context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
+    context.beam_effects = context.gpu_effects;
+    context.beam_options = context.gpu_effects && g_settings.crt_beam != 0;
+    context.set_available(stv::host::PcMenuItem::Vsync,
+        g_dwm_flush != nullptr && !g_settings.smooth_motion && g_settings.crt_beam == 0);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
                          g_lobby->state() != stv::net::LobbyState::Searching;
@@ -2319,6 +2322,21 @@ std::string menu_value(stv::host::PcMenuItem item) {
         const char* levels[]={"off","low","medium","high"};
         return levels[item==I::Glow ? g_settings.glow : item==I::Sharpen ? g_settings.sharpen : g_settings.curvature];
     }
+    case I::CrtBeam: {
+        const char* modes[]={"off","rolling scan","global refresh"};
+        std::string value=modes[g_settings.crt_beam];
+        const double hz=g_resident_effects.display_refresh_hz();
+        if(g_settings.crt_beam && hz>=2.0*8000000.0/146234.0)
+            value += " / " + std::to_string(int(std::lround(hz))) + " Hz";
+        else if(g_settings.crt_beam && hz>0)
+            value += " / needs 2x display Hz";
+        return value;
+    }
+    case I::BeamBrightness: {
+        const char* levels[]={"automatic","crisp / dim","balanced","bright / softer"};
+        return levels[g_settings.beam_brightness];
+    }
+    case I::BeamAntiRetention: return g_settings.beam_anti_retention ? "on" : "off";
     case I::EnhanceAll: return g_settings.enhance ? "on" : "off";
     case I::Particles: return g_settings.particles ? "on" : "off";
     case I::Blood: return g_settings.blood ? "on" : "off";
@@ -2342,7 +2360,8 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::PixelFilter: return stv::host::video_filter_name(static_cast<stv::host::VideoFilterMode>(g_settings.filter));
     case I::Motion: return g_settings.smooth_motion ? "SMOOTH MOTION" : "Arcade exact";
     case I::RunAhead: return g_settings.run_ahead ? std::to_string(g_settings.run_ahead) + (g_settings.run_ahead == 1 ? " frame" : " frames") : "Off";
-    case I::Vsync: if (g_settings.smooth_motion) return "on (Smooth Motion)";
+    case I::Vsync: if (g_settings.crt_beam) return "required (CRT beam)";
+                   if (g_settings.smooth_motion) return "on (Smooth Motion)";
                    return g_settings.vsync ? "on (desktop sync)" : "off";
     case I::ShowFps: return g_settings.show_fps ? "on" : "off";
     case I::HostMode: return stv::host::game_mode_label(g_host_mode.value_or(g_enhanced));
@@ -2407,7 +2426,17 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::Motion: return "SMOOTH CAMERA PANS BETWEEN ARCADE FRAMES";
     case I::RunAhead: return "PREDICT LOCAL VIDEO / HIGHER VALUES USE MORE CPU";
     case I::Vsync: return "DISPLAY SYNC ONLY / GAME SPEED STAYS EXACT";
-    case I::PixelFilter: return "GUEST: ARCADE / ROYALE: FINE MASK / LOTTES: FAST";
+    case I::PixelFilter:
+        switch (g_settings.filter) {
+        case 4: return "BEAM-ONLY / ROLLING / NO CRT MASK";
+        case 5: return "RICH PICK: GUEST + ROLLING + BALANCED";
+        case 6: return "4K PICK: ROYALE + ROLLING / FAST GPU";
+        case 7: return "BEST START: LOTTES + ROLLING / AUTO";
+        default: return "CRT BEAM: CHOOSE MODERN, GUEST, ROYALE OR LOTTES";
+        }
+    case I::CrtBeam: return "BEST START: ROLLING + LOTTES / DISABLE VRR";
+    case I::BeamBrightness: return "BEST START: AUTO / FIXED VALUES TRADE CLARITY";
+    case I::BeamAntiRetention: return "DRIFTS EVEN-RATIO LCD TIMING SLIGHTLY TO REDUCE STATIC BANDING";
     case I::Glow: return "BRIGHT-PIXEL LIGHT SPILL / NOT OBJECT LIGHTING";
     case I::Sharpen: return "CONTRAST-ADAPTIVE DETAIL / ZERO CHANGES NO PIXELS";
     case I::Curvature: return "OPTIONAL TUBE SHAPE / OFF KEEPS STRAIGHT EDGES";
@@ -2469,10 +2498,12 @@ void paint(HWND wnd) {
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     // A paused player may only receive this one WM_PAINT until the next input.
-    const bool one_shot = !g_net.on && (g_menu || g_paused || g_m.stop || g_connecting);
+    const bool one_shot = g_menu || g_paused || g_m.stop || g_connecting;
     bool overlay=g_menu||g_paused||g_m.stop||g_connecting||!g_status.empty()||(!g_toast.empty()&&GetTickCount64()<g_toast_until)||g_settings.show_fps;
-    const float phase = g_settings.smooth_motion && !g_menu && !g_paused && !g_connecting ? g_camera_phase : 1.0f;
-    bool direct=g_resident_ready&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,g_camera.offset(g_camera.dx,phase),g_camera.offset(g_camera.dy,phase));
+    const float phase = (g_settings.smooth_motion || g_settings.crt_beam) &&
+                        !g_menu && !g_paused && !g_connecting ? g_camera_phase : 1.0f;
+    bool direct=g_resident_ready&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,
+        g_camera.offset(g_camera.dx,phase),g_camera.offset(g_camera.dy,phase),phase);
     static MenuPaintSurface menu_surface;
     const HDC window_dc = dc;
     HDC buffered = nullptr;
@@ -2501,32 +2532,29 @@ void paint(HWND wnd) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(255, 255, 255));
     if (g_menu || (g_connecting && g_lobby)) {
-        if (g_mode_menu || g_title_submenu || g_connecting) {
+        RECT menu_background{0,0,cw,ch};
+        SetDCBrushColor(dc,RGB(0,0,0));
+        FillRect(dc,&menu_background,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        if (g_mode_menu) {
             BITMAPINFO art = bi;
             art.bmiHeader.biWidth = 547; art.bmiHeader.biHeight = -256;
-            SetStretchBltMode(dc, COLORONCOLOR);
             // The release ships no game artwork. Menus show the frame the
-            // player's own ROM last drew, or a plain studio backdrop before
-            // the game has drawn anything.
+            // player's own ROM last drew in the main-menu artwork pane. Every
+            // menu otherwise keeps a plain black background.
             const auto backdrop = menu_backdrop(g_net.on && g_net.mr ? *g_net.mr : g_m);
-            if (backdrop.empty()) {
-                RECT all{0, 0, cw, ch};
-                SetDCBrushColor(dc, RGB(4, 18, 22));
-                FillRect(dc, &all, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-            } else {
-                std::vector<u32> dimmed(backdrop.size());
-                std::transform(backdrop.begin(), backdrop.end(), dimmed.begin(),
-                               [](u32 color){ return (color >> 2) & 0x003f3f3fu; });
-                StretchDIBits(dc,0,0,cw,ch,0,0,547,256,dimmed.data(),&art,DIB_RGB_COLORS,SRCCOPY);
-                if (g_mode_menu && g_menu_font_ready) {
-                    const int left=cw/40, right=cw*48/100;
-                    const int hero_h=std::min(ch*78/100,(right-left)*256/245);
-                    const int hero_w=hero_h*245/256;
-                    const int hx=(left+right-hero_w)/2, hy=(ch-hero_h)/2;
-                    RECT rim{hx-2,hy-2,hx+hero_w+2,hy+hero_h+2};
-                    SetDCBrushColor(dc,RGB(84,159,158)); FillRect(dc,&rim,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-                    StretchDIBits(dc,hx,hy,hero_w,hero_h,151,0,245,256,backdrop.data(),&art,DIB_RGB_COLORS,SRCCOPY);
-                }
+            if (!backdrop.empty() && g_mode_menu && g_menu_font_ready) {
+                const auto layout=stv::host::arcade_title_layout(cw,ch);
+                SetDCBrushColor(dc,RGB(84,159,158));
+                FillRect(dc,&layout.artwork_pane,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                RECT inner=layout.artwork_pane;
+                const int rim=std::max(1,std::min(3,ch/240));
+                InflateRect(&inner,-rim,-rim);
+                SetDCBrushColor(dc,RGB(4,18,22));
+                FillRect(dc,&inner,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                StretchDIBits(dc,layout.artwork.left,layout.artwork.top,
+                              layout.artwork.right-layout.artwork.left,
+                              layout.artwork.bottom-layout.artwork.top,
+                              68,0,410,256,backdrop.data(),&art,DIB_RGB_COLORS,SRCCOPY);
             }
         }
         std::vector<std::string> lines;
@@ -2617,7 +2645,8 @@ void paint(HWND wnd) {
                 }
                 std::string label = std::string(row.selected ? "> " : "  ") + row.label;
                 const auto value = menu_value(row.item);
-                if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
+                if (row.item == I::Vsync && g_settings.crt_beam) label += " - required (CRT beam)";
+                else if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
                 else if (!row.enabled) label += std::string(" - ") + row.unavailable_reason;
                 else if (!value.empty()) label += " - " + value;
                 else if (row.kind == stv::host::PcMenuRowKind::Submenu) label += " - >>";
@@ -2876,6 +2905,9 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
                 g_scale_mode = static_cast<stv::host::ScaleMode>((int(g_scale_mode) + event.delta + 3) % 3); break;
             case I::Fullscreen: toggle_fullscreen(); break;
             case I::PixelFilter: g_settings.filter = (g_settings.filter + event.delta + 8) % 8; g_menu_status.clear(); break;
+            case I::CrtBeam: g_settings.crt_beam = (g_settings.crt_beam + event.delta + 3) % 3; g_menu_status.clear(); break;
+            case I::BeamBrightness: g_settings.beam_brightness = (g_settings.beam_brightness + event.delta + 4) % 4; break;
+            case I::BeamAntiRetention: g_settings.beam_anti_retention = !g_settings.beam_anti_retention; break;
             case I::Glow: g_settings.glow = (g_settings.glow + event.delta + 4) % 4; break;
             case I::Sharpen: g_settings.sharpen = (g_settings.sharpen + event.delta + 4) % 4; break;
             case I::Curvature: g_settings.curvature = (g_settings.curvature + event.delta + 4) % 4; break;
@@ -3059,16 +3091,57 @@ void poll_pad_controls() {
     sync_menu_input();
 }
 
+// Losing the foreground (Alt+Tab, another window, minimize) never pauses or
+// otherwise changes the game; it keeps running. Only input is protected: keys
+// and pad buttons held while away are ignored until released after returning,
+// and the window repaints on return so no stale frame is left on screen. The
+// main loop re-checks every iteration, so a missed message cannot skip this.
+bool g_window_inactive = false;
+bool window_inactive() {
+    return g_wnd && (GetForegroundWindow() != g_wnd || IsIconic(g_wnd) || !IsWindowVisible(g_wnd));
+}
+void drop_held_input() {
+    g_keyboard_blocked = true;
+    g_pad_router.suppress_until_neutral();
+}
+void window_left() {
+    if (g_window_inactive) return;
+    g_window_inactive = true;
+    drop_held_input();
+}
+void window_reactivated() {
+    if (!g_window_inactive) return;
+    g_window_inactive = false;
+    drop_held_input();
+    if (g_wnd) InvalidateRect(g_wnd, nullptr, FALSE);
+}
+void service_window_focus() {
+    if (window_inactive()) window_left();
+    else window_reactivated();
+}
+
 LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_APP + 12: InvalidateRect(wnd, nullptr, FALSE); return 0;
     case WM_PAINT: paint(wnd); return 0;
     case WM_ERASEBKGND: return 1;
     case WM_KILLFOCUS:
-        g_keyboard_blocked = true;
-        g_pad_router.suppress_until_neutral();
-        if (!GetEnvironmentVariableW(L"STV_HOST_NOPAUSE", nullptr, 0)) g_paused = true;   // automated captures opt out
+        window_left();
         return 0;
+    case WM_SETFOCUS:
+        if (!window_inactive()) window_reactivated();
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE) window_left();
+        else if (!window_inactive()) window_reactivated();
+        break;
+    case WM_ACTIVATEAPP:
+        if (!wp) window_left();
+        break;
+    case WM_SYSCOMMAND:
+        // A bare Alt tap would open the system menu's modal loop and freeze the game loop.
+        if ((wp & 0xfff0) == SC_KEYMENU && lp == 0) return 0;
+        break;
     case WM_SYSKEYDOWN:
         if (wp == VK_RETURN) { if (!(lp & (LPARAM(1) << 30))) toggle_fullscreen(); return 0; }
         break;
@@ -3486,6 +3559,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        service_window_focus();
         poll_pad_controls();
         service_lobby();
         const bool frontend_reset = service_frontend_requests();

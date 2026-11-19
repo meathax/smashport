@@ -302,7 +302,16 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         bool ui=(oid&0x1f00)==0x0700 || oid==1 || lifePanel;
         const bool tvMonitor=oid==0x070f || oid==0x0710; // TVMNTR map and announcer parts
         const bool overhead=oid==2 || oid==3; // SCROLL_WAVE changes SUBUP to SUBUP2 while moving it
-        if((overhead || (ui && (tvMonitor || lifePanel || y+h<=56 || oid==1))) && w>0 && h>0 && x<width && x+w>0 && y<height && y+h>0){
+        if(lifePanel && x<width && x+w>0){
+            // The 52x56 backplate is drawn over the room wall: its outer five
+            // columns on the screen edge and six top rows are rim wall art that
+            // must light like the neighbouring wall. Only the monitor itself and the
+            // score bezel hanging below it (106x33, measured against the retail
+            // frames in both layouts) are screen overlay.
+            const bool left=x+w*.5f<width*.5f;
+            s.hud.push_back({{left?x+5:x,y+6,w-5,h-6},-1});
+            s.hud.push_back({{left?x+25:x-77,46,106,33},-1});
+        }else if((overhead || (ui && (tvMonitor || y+h<=56 || oid==1))) && w>0 && h>0 && x<width && x+w>0 && y<height && y+h>0){
             const auto pal=word(node+0x110);
             const int bank=(pal&0xf00)|((pal>>8)&0xc0);
             s.hud.push_back({{x,y,w,h},(tvMonitor || overhead || oid==1)?bank:-1});

@@ -17,10 +17,13 @@ public:
                     std::span<const uint32_t> pens,bool widescreen,bool title,
                     const EffectPacket&,const PcSettings&,bool pixelCoverage=false);
  bool recompose(const EffectPacket&,const PcSettings&);
- bool draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings&,bool overlay=false,bool one_shot=false,float camera_dx=0,float camera_dy=0);
+ bool draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings&,bool overlay=false,bool one_shot=false,
+           float camera_dx=0,float camera_dy=0,float beam_phase=0,float display_hz_override=0);
  void* overlay_dc();
  bool present();
  bool filter_ready(int mode) const;
+ bool beam_active() const;
+ double display_refresh_hz() const;
  bool finish(); // diagnostic GPU-completion fence; never used by the player
  bool capture(std::vector<uint32_t>&,bool display=false); // diagnostic only, explicit pixel readback
  const std::string& error() const;

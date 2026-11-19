@@ -77,10 +77,47 @@ inline const char* game_mode_label(bool enhanced) {
     return enhanced ? "CUSTOM WIDESCREEN 16:9" : "ORIGINAL ARCADE 4:3";
 }
 
+struct ArcadeTitleLayout {
+    RECT artwork_pane{};
+    RECT artwork{};
+    RECT controls{};
+};
+
+inline RECT aspect_fit_rect(RECT bounds, int source_width, int source_height) {
+    const int width = std::max(0, int(bounds.right - bounds.left));
+    const int height = std::max(0, int(bounds.bottom - bounds.top));
+    if (source_width <= 0 || source_height <= 0 || width == 0 || height == 0) return {};
+    const int fitted_width = std::min(width, int(std::int64_t(height) * source_width / source_height));
+    const int fitted_height = std::min(height, int(std::int64_t(width) * source_height / source_width));
+    return {bounds.left + (width - fitted_width) / 2,
+            bounds.top + (height - fitted_height) / 2,
+            bounds.left + (width + fitted_width) / 2,
+            bounds.top + (height + fitted_height) / 2};
+}
+
+inline ArcadeTitleLayout arcade_title_layout(int client_width, int client_height) {
+    ArcadeTitleLayout layout;
+    const int margin = std::max(8, client_width / 40);
+    const int gutter = std::max(12, client_width / 50);
+    const int controls_left = client_width * 48 / 100;
+    const int controls_width = std::max(1, client_width - margin - controls_left);
+    const int pane_height = std::max(1, std::min(client_height * 78 / 100, controls_width * 9 / 8));
+    const int pane_top = (client_height - pane_height) / 2;
+    const int artwork_right = std::max(margin, controls_left - gutter);
+    layout.controls = {controls_left, pane_top, controls_left + controls_width, pane_top + pane_height};
+    layout.artwork_pane = {margin, pane_top, artwork_right, pane_top + pane_height};
+    RECT artwork_bounds = layout.artwork_pane;
+    const int padding = std::max(4, std::min(12, pane_height / 40));
+    InflateRect(&artwork_bounds, -padding, -padding);
+    layout.artwork = aspect_fit_rect(artwork_bounds, 410, 256);
+    return layout;
+}
+
 inline void arcade_title_controls(HDC dc,int cw,int ch,const ArcadeMenuFont& font,int selection,bool enhanced) {
-    // Keep the artwork's logo on the left and the contestant controls on the right.
-    const int x=cw*48/100,w=cw-x-cw/32;
-    const int h=std::min(ch*78/100,w*9/8),y=(ch-h)/2,unit=std::max(1,h/130);
+    const auto layout=arcade_title_layout(cw,ch);
+    const int x=layout.controls.left,w=layout.controls.right-layout.controls.left;
+    const int h=layout.controls.bottom-layout.controls.top,y=layout.controls.top;
+    const int unit=std::max(1,h/130);
     auto fill=[&](int l,int t,int r,int b,COLORREF c) {
         RECT box{l,t,r,b};SetDCBrushColor(dc,c);FillRect(dc,&box,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
     };

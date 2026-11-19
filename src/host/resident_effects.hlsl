@@ -188,7 +188,7 @@ float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1
  }
  float3 sceneTint=dxrOn?min(groundLight,1.6):1;
  uint tile=(id.y/16)*tileWidth+id.x/16;
- if((visibleSprite && (!(mask&(1u<<20)) || !tiles[tile*55+54])) || mask==0||id.x<4||id.x>=width-4||id.y<25||id.y>=height-4||(!pixelCoverage && hudCount && (shadows[id.xy]&8))){
+ if((visibleSprite && (!(mask&(1u<<20)) || !tiles[tile*55+54])) || mask==0||id.x<4||id.x>=width-4||id.y<25||id.y>=height-4||(hudCount && (shadows[id.xy]&8))){
   if(dxrOn && !visibleSprite){
    float3 lit=lightShoulder(float3((original>>16)&255,(original>>8)&255,original&255)/255.*groundLight+groundSpec*.42);
    uint3 c8=(uint3)(saturate(lit)*255+.5);original=(c8.x<<16)|(c8.y<<8)|c8.z;

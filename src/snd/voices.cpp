@@ -21,6 +21,11 @@ Atto add_as(const Atto& t, int64_t as) {
 }
 Atto min_atto(const Atto& a, const Atto& b) { return b < a ? b : a; }
 Atto max_atto(const Atto& a, const Atto& b) { return a < b ? b : a; }
+// A voice keyed by channel only (no accepted sequence seen yet). Real keys are
+// the sequence tables' addresses, which all lie high in memory (0xFFE6xxxx), so
+// only this exact range is a fallback, not "bit 31 set".
+constexpr uint32_t kFallbackKey = 0x80000000u;
+bool is_fallback_key(uint32_t key) { return key >= kFallbackKey && key <= kFallbackKey + 3; }
 bool is_volume(uint8_t code) { return (code >= 0x20 && code <= 0x2f) || (code >= 0x60 && code <= 0x6f) || code == 0x7f; }
 }  // namespace
 
@@ -214,7 +219,7 @@ void VoiceBank::sound_write(const Atto& t, int channel, uint16_t data) {
     last_broadcast_ = code == 0x00 || (channel == 3 && is_volume(code));
     if (last_broadcast_) { broadcast(t, data, true); return; }
     if (channel == 3) { last_route_ = voices_[kMusic].get(); send(*last_route_, t, data); return; }
-    const uint32_t key = channel_key_[channel] ? channel_key_[channel] : 0x80000000u | uint32_t(channel);
+    const uint32_t key = channel_key_[channel] ? channel_key_[channel] : kFallbackKey | uint32_t(channel);
     last_route_ = voice_for(key, channel, t);
     if (last_route_) send(*last_route_, t, data);
 }
@@ -264,7 +269,7 @@ void VoiceBank::tick(const Atto& t) {
         if (!v.playing) continue;
         ++v.frames_since_command;
         if (v.seq_on && v.timer && --v.timer == 0) sequence(v, t);
-        const bool current = v.key == channel_key_[v.channel & 3] && !(v.key & 0x80000000u);
+        const bool current = v.key == channel_key_[v.channel & 3] && !is_fallback_key(v.key);
         if (!v.seq_on && !current && v.frames_since_command > kSupersededFrames) {
             send(v, t, 0xfd00);                       // stop a loop the arcade would have replaced
             send(v, t, 0xff00);

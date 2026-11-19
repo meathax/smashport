@@ -163,7 +163,11 @@ void surfaceAt(float2 px, out float3 P, out float3 N) {
         P = float3(px.x, px.y + 30, 30.4);
         return;
     }
-    if (px.x >= f.x - 8 && px.x < f.x + f.z + 8 && px.y >= f.y + f.w - 14 && px.y < f.y + f.w - 8)
+    // Front wall: the art's wall face, its shading strip and the border below start at
+    // the floor edge. The lip proxy box is solid there, so a ground receiver would sit
+    // inside it and every shadow and occlusion ray would hit it at once (black bar).
+    // Light it as a wall top, as the side walls are. Rows above the edge are floor art.
+    if (px.x >= f.x - 8 && px.x < f.x + f.z + 8 && px.y >= f.y + f.w)
         P = float3(px.x, px.y + 14, 14.4);
 }
 [numthreads(8, 8, 1)]

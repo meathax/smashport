@@ -1,0 +1,66 @@
+{
+  "format": "STV_NATIVE_DEPENDENCIES_4",
+  "source_pins_complete": false,
+  "original_source": {
+    "repository": "https://github.com/historicalsource/smashtv",
+    "commit": null,
+    "status": "USER_ARCHIVE_CONTENT_PINNED; GIT_COMMIT_UNKNOWN",
+    "archive_sha256": "4fd5238e513734df67481cf8eba6d399f176e7eea3650d1a024fd04a39aef369"
+  },
+  "mame_reference": {
+    "repository": "https://github.com/mamedev/mame",
+    "release_tag": "mame0289",
+    "commit": "f34f02505e32c1993c6a782b6814232cbfc74e36",
+    "path": "src/mame/williams/midyunit.cpp",
+    "scope": "Pinned development oracle for L8 comparison. Historical long lockstep results require renewal after the scheduler change; see PLAN C1/C2. MAME is never part of the shipping runtime.",
+    "executable_sha256": "af6966108d9b52c22465c6d50f4e5d50cc371b50f2d27dc443935f287aad37a3",
+    "executable_path": "D:\\Arcade\\AI\\mameexe\\mame.exe (development-only; tools/mame_run.ps1 refuses any other hash)",
+    "verifyroms": "smashtv, smashtv5, smashtv6 good (2026-09-24)"
+  },
+  "sdl3": {
+    "version": null,
+    "status": "NOT LINKED; native Win32/GDI/XInput/WASAPI host"
+  },
+  "observed_tools": {
+    "python": "3.14.6 (main, Jul 31 2026, 07:41:16)  [MINGW GCC UCRT 16.1.0 64 bit (AMD64)]",
+    "python_executable": "D:\\vibes\\fpga\\toolchains\\msys64\\ucrt64\\bin\\python.exe",
+    "cmake": "cmake version 4.3.3",
+    "ninja": "1.13.2",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "msvc": "14.51.36231 (CMake cache, Visual Studio 18 Community)"
+  },
+  "shipping_dependencies": {
+    "static_dlls": [
+      "kernel32.dll",
+      "user32.dll",
+      "gdi32.dll",
+      "comdlg32.dll",
+      "ole32.dll",
+      "shell32.dll",
+      "ws2_32.dll"
+    ],
+    "optional_system_dll": "xinput1_4.dll",
+    "bundled_crt": false,
+    "bundled_emulator": false
+  },
+  "windows_execution": "Current staged native MSVC execution/checks are indexed by evidence/readiness-2026-10-01.json; hardware/listening/full-game/release certification remains open.",
+  "msvc_and_powershell_route": "MSVC x64 Ninja and PowerShell build route; see current evidence for executed checks",
+  "user_reference_rom_archive": {
+    "sha256": "7bced2e7e177e9e01005c00d7c56b6daf8d9471faf4fd604096c03d340e2b757",
+    "path": "original/user-supplied-roms/smashtv.zip",
+    "import_profile": "retail L8 production data; reference_l8 validation and enhanced geometry",
+    "source_compatibility": "SOURCE_LABEL_5.00; PARTIAL_L8_ALIGNMENT_DOCUMENTED; NOT_WHOLE_SOURCE_IDENTITY"
+  },
+  "ymfm": {
+    "origin": "MAME mame0289 / 3rdparty/ymfm",
+    "license": "BSD-3-Clause",
+    "files": {
+      "LICENSE": "2d2e9213c170a9866c616fa85b6da993a6724e10befc61f468ed9bfb84c4691c",
+      "ymfm.h": "947eab9c4c32488ad9e532ec61bccce118aa148293d521e5607d5be74db55bbe",
+      "ymfm_fm.h": "1b27bfb7fa4963d7c54cb06fd9bf659450362d8ed496c6af7d487b068cac45c9",
+      "ymfm_fm.ipp": "4fb7fe59d4494a19e9f9c7888eb644a63d86e109fdefb27a8117bf6a5f6ab4b9",
+      "ymfm_opm.cpp": "2235d57101d26cdd70d4021fd1f3b8116faeba6fd5efb2ca83ba3be1298b22dc",
+      "ymfm_opm.h": "cab750257fe757cdab52fcf01917777c2b926ffa4c0aa2c8c9c714784e9aee7b"
+    }
+  }
+}

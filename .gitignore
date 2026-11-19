@@ -1,12 +1,9 @@
-# Source only. Never commit ROMs, generated code, builds or binaries.
 build/
-generated/
-*.zip
-*.exe
-*.dll
-*.lib
-*.o
-*.obj
-*.pdb
-eos-client.ini
 __pycache__/
+*.pyc
+original/smashtv/
+*.stvdata
+*.rom
+generated/private/
+release/Windows-x64/
+debug.log

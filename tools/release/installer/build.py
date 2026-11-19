@@ -17,7 +17,8 @@ net/rollback net/udp net/lobby net/epic_rooms host/pc_menu host/pc_settings host
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
 host/win_main host/wasapi host/audio_fx""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
-tools/gsp2cpp/decode.py tools/gsp2cpp/retail_tables.py tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
+tools/gsp2cpp/codemap.py tools/gsp2cpp/decode.py tools/gsp2cpp/retail_tables.py
+tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
 tools/m6809_aot/codemap6809.py tools/m6809_aot/decode6809.py tools/m6809_aot/emit6809.py
 docs/reference-rom-profile.json src/gsp/enhanced.cpp src/net/handshake.cpp""".split()
 GRAPHICS = ROOT / "third_party/graphics"
