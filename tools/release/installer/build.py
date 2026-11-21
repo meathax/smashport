@@ -13,7 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
 HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio snd/voices game/cosched
-net/rollback net/udp net/lobby net/epic_rooms host/pc_menu host/pc_settings host/video_filter
+net/rollback net/udp net/lobby host/pc_menu host/pc_settings host/video_filter
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
 host/win_main host/wasapi host/audio_fx""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
@@ -61,7 +61,7 @@ def project_metadata(stage):
         write(stage / name, json.dumps(sanitize(json.loads((ROOT / name).read_bytes()))))
 
 
-def host_objects(stage, temp, tc, eos, dxc):
+def host_objects(stage, temp, tc, eos, dxc, sdl):
     cpp = tc / "bin/clang++.exe"
     gen = temp / "shaders"
     gen.mkdir()
@@ -71,18 +71,60 @@ def host_objects(stage, temp, tc, eos, dxc):
     subprocess.run([dxc, "-T", "cs_6_5", "-E", "main", "-O3", "-Fh", gen / "dxr_shader.hpp",
                     "-Vn", "stv_dxr_shader", ROOT / "src/host/dxr_lighting.hlsl"], check=True)
     includes = [ROOT / "include", ROOT / "third_party/ymfm", GRAPHICS / "runtime/post",
-                GRAPHICS / "third_party/librashader/include", eos / "SDK/Include", gen]
+                GRAPHICS / "third_party/librashader/include", gen]
+    achievements = ROOT / "third_party/recomp_achievements"
+    includes.append(achievements / "include")
+    if sdl:
+        includes.append(sdl / "include")
+    if eos:
+        includes.append(eos / "SDK/Include")
+    # The MinGW Windows headers stop before D3D11.4 even though current Windows
+    # DXR hosts use ID3D11Device5 fencing. Prefer MinGW's compatible base
+    # declarations, then fall through to the installed SDK for newer headers.
+    sdk_after = []
+    resolved_dxc = dxc.resolve()
+    if (resolved_dxc.name.lower() == "dxc.exe" and
+            len(resolved_dxc.parents) >= 4 and
+            resolved_dxc.parents[0].name.lower() in ("x64", "x86", "arm64")):
+        sdk_root = resolved_dxc.parents[3] / "Include" / resolved_dxc.parents[1].name
+        sdk_after = [sdk_root / name for name in ("um", "shared") if (sdk_root / name).is_dir()]
     flags = ["-std=c++20", "-O2", "-DNDEBUG", "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN", "-DUNICODE",
-             "-D_UNICODE", "-DWINVER=0x0a00", "-D_WIN32_WINNT=0x0a00", "-DSTV_HAS_EOS=1", "-DSTV_PLAYER_RELEASE=1"]
-    sources = [ROOT / "src" / (n + ".cpp") for n in HOST] + [
+             "-D_UNICODE", "-DWINVER=0x0a00", "-D_WIN32_WINNT=0x0a00",
+             "-DSTV_HAS_EOS=" + ("1" if eos else "0"), "-DSTV_PLAYER_RELEASE=1",
+             "-DSTV_RECOMP_ACHIEVEMENTS"]
+    if sdl:
+        flags.append("-DSTV_SDL_PADS")
+    owners = HOST + (["net/epic_rooms"] if eos else [])
+    sources = [ROOT / "src" / (n + ".cpp") for n in owners] + [
         ROOT / "third_party/ymfm/ymfm_opm.cpp", GRAPHICS / "runtime/post/post_chain.cpp"]
     (stage / "host").mkdir()
     def compile_one(src):
-        subprocess.run([cpp, *flags, *["-I" + str(p) for p in includes], "-c", src,
+        subprocess.run([cpp, *flags, *["-I" + str(p) for p in includes],
+                        *["-idirafter" + str(p) for p in sdk_after], "-c", src,
                         "-o", stage / "host" / (src.stem + ".o")], check=True)
     with concurrent.futures.ThreadPoolExecutor(4) as pool:
         list(pool.map(compile_one, sources))
-    copy(eos / "SDK/Lib/EOSSDK-Win64-Shipping.lib", stage / "host/eos.lib")
+    rc = achievements / "third_party/rcheevos"
+    cjson = achievements / "third_party/cjson"
+    c_sources = [achievements / "src/rl_achievements.c", cjson / "cJSON.c",
+                 *sorted((rc / "src/runtime").glob("*.c")), *sorted((rc / "src/util").glob("*.c"))]
+    for source in c_sources:
+        subprocess.run([cpp, "-x", "c", "-std=gnu99",
+                        "-O2", "-DRC_DISABLE_LUA", "-I", achievements / "include",
+                        "-I", rc / "include", "-I", rc / "src", "-I", cjson,
+                        "-c", source, "-o", stage / "host" / ("ach_" + source.stem + ".o")], check=True)
+    copy(achievements / "LICENSE", stage / "runtime/licenses/RecompAchievements.txt")
+    copy(rc / "LICENSE", stage / "runtime/licenses/rcheevos.txt")
+    copy(cjson / "LICENSE", stage / "runtime/licenses/cJSON.txt")
+    if sdl:
+        copy(sdl / "lib/libSDL3.dll.a", stage / "host/sdl.lib")
+        copy(sdl / "bin/SDL3.dll", stage / "runtime/SDL3.dll")
+        sdl_license = sdl / "LICENSE.txt"
+        if not sdl_license.is_file():
+            sdl_license = sdl.parent / "LICENSE.txt"
+        copy(sdl_license, stage / "runtime/licenses/SDL3.txt")
+    if eos:
+        copy(eos / "SDK/Lib/EOSSDK-Win64-Shipping.lib", stage / "host/eos.lib")
 
 
 def toolchain(stage, tc):
@@ -91,22 +133,31 @@ def toolchain(stage, tc):
     # MinGW target. Without them clang searches for GNU libstdc++ headers and
     # the end user's first setup cannot compile the translated game.
     for name in ("clang++.exe", "clang-22.exe", "ld.lld.exe", "libLLVM-22.dll", "libclang-cpp.dll",
-                 "libc++.dll", "libunwind.dll", "libwinpthread-1.dll",
+                 "libc++.dll", "libunwind.dll",
                  "x86_64-w64-windows-gnu.cfg", "mingw32-common.cfg"):
         copy(tc / "bin" / name, llvm / "bin" / name)
+    pthread = tc / "bin/libwinpthread-1.dll"
+    if pthread.is_file():
+        copy(pthread, llvm / "bin/libwinpthread-1.dll")
     for name in ("include", "lib/clang/22/include", "lib/clang/22/lib/windows",
                  "x86_64-w64-mingw32/lib", "x86_64-w64-mingw32/share/mingw32"):
         shutil.copytree(tc / name, llvm / name)
     copy(tc / "LICENSE.TXT", llvm / "LICENSE.TXT")
     py = tc / "python"
-    for name in ("python.exe", "python312.dll", "python3.dll", "vcruntime140.dll", "vcruntime140_1.dll", "LICENSE.txt"):
-        copy(py / name, stage / "python" / name)
+    for name in ("python.exe", "python312.dll", "python3.dll", "vcruntime140.dll",
+                 "vcruntime140_1.dll", "LICENSE.txt"):
+        source = py / name
+        if not source.is_file() and name in ("python3.dll", "vcruntime140_1.dll"):
+            continue
+        copy(source, stage / "python" / name)
     for name in ("libcrypto-3-x64.dll", "_hashlib.pyd", "_bz2.pyd", "_lzma.pyd", "select.pyd", "_socket.pyd"):
-        copy(py / "DLLs" / name, stage / "python/DLLs" / name)
+        source = py / "DLLs" / name
+        if source.is_file():
+            copy(source, stage / "DLLs" / name)
     for src in (py / "Lib").rglob("*.py"):
         rel = src.relative_to(py)
         if not set(rel.parts) & {"site-packages", "__pycache__", "test", "tests", "idlelib", "tkinter", "ensurepip", "venv"}:
-            copy(src, stage / "python" / rel)
+            copy(src, stage / rel)
 
 
 def runtime(stage, eos, config):
@@ -128,31 +179,40 @@ def runtime(stage, eos, config):
         if sha(src) != row["sha256"]:
             raise ValueError("Graphics inventory mismatch: " + n)
         copy(src, rt / n)
-    keys = dict(line.split("=", 1) for line in config.read_text().splitlines() if "=" in line)
-    required = {"ProductId", "SandboxId", "DeploymentId", "ClientId", "ClientSecret"}
-    if set(keys) != required or not all(keys.values()):
-        raise ValueError("Expected only the five EOS game-client settings")
-    copy(config, rt / "eos-client.ini")
-    copy(eos / "SDK/Bin/EOSSDK-Win64-Shipping.dll", rt / "EOSSDK-Win64-Shipping.dll")
-    copy(eos / "ThirdPartyNotices/ThirdPartySoftwareNotice.txt", rt / "licenses/EOS.txt")
+    if eos:
+        keys = dict(line.split("=", 1) for line in config.read_text().splitlines() if "=" in line)
+        required = {"ProductId", "SandboxId", "DeploymentId", "ClientId", "ClientSecret"}
+        if set(keys) != required or not all(keys.values()):
+            raise ValueError("Expected only the five EOS game-client settings")
+        copy(config, rt / "eos-client.ini")
+        copy(eos / "SDK/Bin/EOSSDK-Win64-Shipping.dll", rt / "EOSSDK-Win64-Shipping.dll")
+        copy(eos / "ThirdPartyNotices/ThirdPartySoftwareNotice.txt", rt / "licenses/EOS.txt")
     for lib in ("ymfm", "tmnt-port", "arcade-lan-lobby"):
         copy(ROOT / "third_party" / lib / "LICENSE", rt / "licenses" / (lib + ".txt"))
     copy(ROOT / "THIRD_PARTY_NOTICES.md", rt / "licenses/THIRD_PARTY_NOTICES.md")
 
 
-def check_host_sources():
+def check_host_sources(eos):
     """Every player host/net source must be precompiled into the kit; a new file
     left out of HOST would only fail at the end user's first-run link."""
     compiled = set(HOST) | {"net/handshake"}  # handshake is compiled during setup
+    if eos:
+        compiled.add("net/epic_rooms")
     present = {p.relative_to(ROOT / "src").with_suffix("").as_posix()
                for d in ("host", "net") for p in (ROOT / "src" / d).glob("*.cpp")}
+    if not eos:
+        present.discard("net/epic_rooms")
+    # The Windows kit always uses win_main. SDL can supply pad input there.
+    present.discard("host/sdl_main")
     missing = sorted(present - compiled)
     if missing:
         raise ValueError("Installer HOST list is missing player sources: " + ", ".join(missing))
 
 
 def assemble(args):
-    check_host_sources()
+    if bool(args.eos) != bool(args.config):
+        raise ValueError("EOS SDK and client config must be supplied together")
+    check_host_sources(args.eos is not None)
     out = args.output.resolve()
     if out.is_relative_to(ROOT):
         raise ValueError("Installer output must be outside the private checkout")
@@ -182,7 +242,7 @@ def assemble(args):
             copy(src, stage / src.relative_to(ROOT))
         project_metadata(stage)
         runtime(stage,args.eos,args.config)
-        host_objects(stage,temp,args.llvm,args.eos,args.dxc)
+        host_objects(stage,temp,args.llvm,args.eos,args.dxc,args.sdl)
         toolchain(stage,args.llvm)
         copy(HERE / "player_setup.py", stage / "player_setup.py")
         files = sorted(p for p in stage.rglob("*") if p.is_file())
@@ -199,8 +259,10 @@ def assemble(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    for opt in ("output", "llvm", "eos", "config", "dxc"):
+    for opt in ("output", "llvm", "dxc"):
         parser.add_argument("--" + opt, type=Path, required=True)
+    for opt in ("eos", "config", "sdl"):
+        parser.add_argument("--" + opt, type=Path)
     assemble(parser.parse_args())
 
 

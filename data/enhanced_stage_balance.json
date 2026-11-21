@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "source": "Retail L8 ROBO GET_WVADDR, root FFE13790; reconstruction build/audit-20261112-population-inventory-pinned.json",
-  "note": "Widescreen crowd revision requested 16 November. Ordinary budgets 150%, long waves and orbs 135%. Concurrent crowd caps 175%, other caps 150%. Initial counts, release clocks and native random speed differences retained.",
+  "note": "Ordinary waves ramp by circuit and room. Long waves and orbs use a smaller increase. Preserve authored boss, specialist and secret-access populations.",
   "stages": [
     {
       "circuit": 0,
       "wave": 1,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe137f0",
@@ -19,7 +19,7 @@
             4,
             30
           ],
-          "budget": 150
+          "budget": 135
         },
         {
           "address": "0xffe13850",
@@ -39,7 +39,7 @@
       "circuit": 0,
       "wave": 2,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe138c0",
@@ -51,7 +51,7 @@
             0,
             1
           ],
-          "budget": 292
+          "budget": 263
         },
         {
           "address": "0xffe13920",
@@ -95,7 +95,7 @@
       "circuit": 0,
       "wave": 3,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe13a50",
@@ -107,7 +107,7 @@
             16,
             1
           ],
-          "budget": 502
+          "budget": 452
         },
         {
           "address": "0xffe13ab0",
@@ -163,7 +163,7 @@
       "circuit": 0,
       "wave": 4,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe13c40",
@@ -231,7 +231,7 @@
       "circuit": 0,
       "wave": 5,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe13e30",
@@ -243,7 +243,7 @@
             0,
             120
           ],
-          "budget": 682
+          "budget": 614
         },
         {
           "address": "0xffe13e90",
@@ -287,7 +287,7 @@
       "circuit": 0,
       "wave": 6,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 135%; long waves and orbs 120%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe13fc0",
@@ -299,7 +299,7 @@
             16,
             500
           ],
-          "budget": 52
+          "budget": 47
         },
         {
           "address": "0xffe14020",
@@ -355,7 +355,7 @@
       "circuit": 0,
       "wave": 7,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 140%; long waves and orbs 125%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe141b0",
@@ -367,7 +367,7 @@
             16,
             1
           ],
-          "budget": 592
+          "budget": 553
         },
         {
           "address": "0xffe14210",
@@ -423,7 +423,7 @@
       "circuit": 0,
       "wave": 8,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 140%; long waves and orbs 125%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe143a0",
@@ -435,7 +435,7 @@
             0,
             160
           ],
-          "budget": 442
+          "budget": 413
         },
         {
           "address": "0xffe14400",
@@ -503,7 +503,7 @@
       "circuit": 0,
       "wave": 9,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 140%; long waves and orbs 125%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe145f0",
@@ -515,7 +515,7 @@
             0,
             1
           ],
-          "budget": 487
+          "budget": 455
         },
         {
           "address": "0xffe14650",
@@ -627,7 +627,7 @@
       "circuit": 1,
       "wave": 1,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe14970",
@@ -639,7 +639,7 @@
             1,
             1
           ],
-          "budget": 132
+          "budget": 127
         }
       ]
     },
@@ -647,7 +647,7 @@
       "circuit": 1,
       "wave": 2,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe149e0",
@@ -659,7 +659,7 @@
             0,
             1
           ],
-          "budget": 570
+          "budget": 551
         },
         {
           "address": "0xffe14a40",
@@ -679,7 +679,7 @@
       "circuit": 1,
       "wave": 3,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe14ab0",
@@ -691,7 +691,7 @@
             3,
             850
           ],
-          "budget": 405
+          "budget": 391
         },
         {
           "address": "0xffe14b10",
@@ -735,7 +735,7 @@
       "circuit": 1,
       "wave": 4,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe14c40",
@@ -759,7 +759,7 @@
             0,
             800
           ],
-          "budget": 360
+          "budget": 348
         },
         {
           "address": "0xffe14d00",
@@ -791,7 +791,7 @@
       "circuit": 1,
       "wave": 5,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe14dd0",
@@ -803,7 +803,7 @@
             0,
             720
           ],
-          "budget": 495
+          "budget": 478
         },
         {
           "address": "0xffe14e30",
@@ -871,7 +871,7 @@
       "circuit": 1,
       "wave": 6,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 145%; long waves and orbs 130%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15020",
@@ -883,7 +883,7 @@
             1,
             400
           ],
-          "budget": 121
+          "budget": 117
         },
         {
           "address": "0xffe15080",
@@ -959,7 +959,7 @@
       "circuit": 1,
       "wave": 8,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 150%; long waves and orbs 135%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15280",
@@ -1003,7 +1003,7 @@
       "circuit": 1,
       "wave": 9,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 150%; long waves and orbs 135%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe153b0",
@@ -1047,7 +1047,7 @@
       "circuit": 1,
       "wave": 11,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 150%; long waves and orbs 135%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15550",
@@ -1079,7 +1079,7 @@
       "circuit": 1,
       "wave": 12,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 150%; long waves and orbs 135%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15620",
@@ -1123,7 +1123,7 @@
       "circuit": 1,
       "wave": 13,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15750",
@@ -1147,7 +1147,7 @@
             0,
             350
           ],
-          "budget": 525
+          "budget": 542
         },
         {
           "address": "0xffe15810",
@@ -1167,7 +1167,7 @@
       "circuit": 1,
       "wave": 14,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15880",
@@ -1179,7 +1179,7 @@
             0,
             150
           ],
-          "budget": 570
+          "budget": 589
         },
         {
           "address": "0xffe158e0",
@@ -1235,7 +1235,7 @@
       "circuit": 1,
       "wave": 15,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15a70",
@@ -1247,7 +1247,7 @@
             1,
             1
           ],
-          "budget": 121
+          "budget": 126
         },
         {
           "address": "0xffe15ad0",
@@ -1279,7 +1279,7 @@
       "circuit": 1,
       "wave": 16,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15ba0",
@@ -1291,7 +1291,7 @@
             0,
             720
           ],
-          "budget": 525
+          "budget": 542
         },
         {
           "address": "0xffe15c00",
@@ -1359,7 +1359,7 @@
       "circuit": 1,
       "wave": 17,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15df0",
@@ -1371,7 +1371,7 @@
             0,
             1
           ],
-          "budget": 825
+          "budget": 852
         }
       ]
     },
@@ -1379,7 +1379,7 @@
       "circuit": 1,
       "wave": 18,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe15e60",
@@ -1391,7 +1391,7 @@
             0,
             1200
           ],
-          "budget": 931
+          "budget": 966
         },
         {
           "address": "0xffe15ec0",
@@ -1447,7 +1447,7 @@
       "circuit": 2,
       "wave": 1,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe16050",
@@ -1503,7 +1503,7 @@
       "circuit": 2,
       "wave": 2,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe161e0",
@@ -1515,7 +1515,7 @@
             3,
             350
           ],
-          "budget": 472
+          "budget": 488
         },
         {
           "address": "0xffe16240",
@@ -1571,7 +1571,7 @@
       "circuit": 2,
       "wave": 3,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe163d0",
@@ -1583,7 +1583,7 @@
             5,
             1
           ],
-          "budget": 945
+          "budget": 980
         },
         {
           "address": "0xffe16430",
@@ -1639,7 +1639,7 @@
       "circuit": 2,
       "wave": 4,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe165c0",
@@ -1651,7 +1651,7 @@
             5,
             1
           ],
-          "budget": 877
+          "budget": 910
         },
         {
           "address": "0xffe16620",
@@ -1683,7 +1683,7 @@
       "circuit": 2,
       "wave": 5,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe166f0",
@@ -1695,7 +1695,7 @@
             0,
             1
           ],
-          "budget": 600
+          "budget": 620
         },
         {
           "address": "0xffe16750",
@@ -1715,7 +1715,7 @@
       "circuit": 2,
       "wave": 6,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 155%; long waves and orbs 140%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe167c0",
@@ -1727,7 +1727,7 @@
             1,
             800
           ],
-          "budget": 1404
+          "budget": 1456
         },
         {
           "address": "0xffe16820",
@@ -1791,7 +1791,7 @@
       "circuit": 2,
       "wave": 8,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 160%; long waves and orbs 145%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe169c0",
@@ -1803,7 +1803,7 @@
             5,
             1
           ],
-          "budget": 945
+          "budget": 1015
         },
         {
           "address": "0xffe16a20",
@@ -1835,7 +1835,7 @@
       "circuit": 2,
       "wave": 9,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 160%; long waves and orbs 145%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe16af0",
@@ -1847,7 +1847,7 @@
             0,
             1200
           ],
-          "budget": 877
+          "budget": 942
         },
         {
           "address": "0xffe16b50",
@@ -1891,7 +1891,7 @@
       "circuit": 2,
       "wave": 11,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 160%; long waves and orbs 145%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe16cf0",
@@ -1935,7 +1935,7 @@
       "circuit": 2,
       "wave": 12,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 160%; long waves and orbs 145%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe16e20",
@@ -1947,7 +1947,7 @@
             0,
             350
           ],
-          "budget": 810
+          "budget": 870
         },
         {
           "address": "0xffe16e80",
@@ -2003,7 +2003,7 @@
       "circuit": 2,
       "wave": 13,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17010",
@@ -2015,7 +2015,7 @@
             10,
             1
           ],
-          "budget": 600
+          "budget": 660
         },
         {
           "address": "0xffe17070",
@@ -2083,7 +2083,7 @@
       "circuit": 2,
       "wave": 14,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17260",
@@ -2095,7 +2095,7 @@
             0,
             150
           ],
-          "budget": 832
+          "budget": 915
         },
         {
           "address": "0xffe172c0",
@@ -2139,7 +2139,7 @@
       "circuit": 2,
       "wave": 15,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe173f0",
@@ -2151,7 +2151,7 @@
             0,
             1300
           ],
-          "budget": 1215
+          "budget": 1350
         },
         {
           "address": "0xffe17450",
@@ -2195,7 +2195,7 @@
       "circuit": 2,
       "wave": 16,
       "role": "combat",
-      "policy": "More ordinary enemies; +12.5% grunts/robots (+6.25% for budgets >=600), +10% orbs; formations, grouped enemies, timers and hazards retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17580",
@@ -2207,7 +2207,7 @@
             0,
             1
           ],
-          "budget": 3294
+          "budget": 3660
         },
         {
           "address": "0xffe175e0",
@@ -2239,7 +2239,7 @@
       "circuit": 2,
       "wave": 17,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe176b0",
@@ -2251,7 +2251,7 @@
             1,
             1000
           ],
-          "budget": 877
+          "budget": 975
         },
         {
           "address": "0xffe17710",
@@ -2295,7 +2295,7 @@
       "circuit": 2,
       "wave": 18,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 165%; long waves and orbs 150%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17840",
@@ -2307,7 +2307,7 @@
             5,
             1
           ],
-          "budget": 1012
+          "budget": 1125
         },
         {
           "address": "0xffe178a0",
@@ -2363,7 +2363,7 @@
       "circuit": 2,
       "wave": 19,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 170%; long waves and orbs 155%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17a30",
@@ -2375,7 +2375,7 @@
             1,
             400
           ],
-          "budget": 324
+          "budget": 372
         },
         {
           "address": "0xffe17a90",
@@ -2431,7 +2431,7 @@
       "circuit": 2,
       "wave": 20,
       "role": "combat",
-      "policy": "Ordinary enemies at 150% budget, long waves (>=600) at 135%, orbs at 135%. Specialist formations and boss phase owners retained.",
+      "policy": "Ordinary budget 170%; long waves and orbs 155%. Retain specialist formations.",
       "rows": [
         {
           "address": "0xffe17c20",
@@ -2443,7 +2443,7 @@
             5,
             80
           ],
-          "budget": 3429
+          "budget": 3937
         },
         {
           "address": "0xffe17c80",

@@ -22,6 +22,12 @@
 #include "stv/host/audio_telemetry.hpp"
 #include "stv/host/compositor_wait.hpp"
 #include "stv/host/pad.hpp"
+#include "stv/host/recomp_achievements.hpp"
+#ifdef STV_SDL_PADS
+#include "stv/host/sdl_pads.hpp"
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+#endif
 #include "stv/host/net_audio_audit.hpp"
 #include "stv/host/net_fault.hpp"
 #include "stv/host/pc_menu.hpp"
@@ -44,6 +50,7 @@
 #include "stv/host/firing_point.hpp"
 #include "stv/host/drop_player.hpp"
 #include "stv/host/audio_fx.hpp"
+#include "stv/host/room_cinema.hpp"
 #include "stv/snd/voices.hpp"
 #include <algorithm>
 #include <array>
@@ -74,6 +81,7 @@ std::unique_ptr<stv::snd::Mixer> g_mixer;
 stv::host::AudioOut g_audio;
 stv::host::AudioTelemetry g_audio_telemetry;
 std::vector<float> g_pcm;
+stv::host::AudioPeakObserver g_audio_peaks;
 // Enhanced sound output (presentation only; g_pcm stays the retail board PCM).
 stv::snd::VoiceBank g_voices;
 stv::host::AudioFx g_fx;
@@ -151,6 +159,7 @@ bool lobby_menu_lines(std::vector<std::string>& lines);
 bool reset_coupled_game(bool keep_cmos = true);
 bool scripted_run();
 void poll_pad_controls();
+void write_player_log(std::string_view text);
 void frontend_event(const char* event, std::uint64_t value = 0, const std::string& detail = "");
 int vis_w() { return VIS_W + int(g_m.vis_extra); }
 const char* scale_name() {
@@ -175,6 +184,10 @@ std::string g_toast;           // short notice (pad connected), shown for 3 s
 ULONGLONG g_toast_until = 0;
 using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 XInputGetStateFn g_xinput = nullptr;
+stv::host::RecompAchievements g_achievements;
+#ifdef STV_SDL_PADS
+std::unique_ptr<stv::host::SdlPads> g_sdl_pads;
+#endif
 
 // Remappable keyboard actions (PC menu > Controls); saved in keys.cfg.
 enum Action { P1_UP, P1_DOWN, P1_LEFT, P1_RIGHT, P1_FUP, P1_FDOWN, P1_FLEFT, P1_FRIGHT,
@@ -257,6 +270,11 @@ std::string g_room_guest;
 std::string g_room_notice;
 ULONGLONG g_room_notice_until = 0;
 int g_launch_mode = -1;
+std::wstring g_requested_data_dir;
+bool g_recomp_launcher = false;
+bool g_launcher_big_picture = false;
+bool g_launcher_playstation = false;
+bool g_transient_fullscreen = false;
 // Retail TITLPAGE selects TITLE (FFEA56D0). Let the background renderer and
 // colour cycler settle for 320 native frames before exposing the intro image.
 // Merely seeing an attract background would stop on CHAMPS, the scoreboard.
@@ -522,7 +540,8 @@ void present_frame(const Machine& m) {
     const bool wide = m.enhanced && width == VIS_W;
     const bool title = wide && game_scene_state(m)==0x30 && scene_background(m)==0xffea56d0u;
     g_frame_width = wide ? 547 : width;
-    auto scene = stv::host::observe_effect_scene(m.ram, m.frame_number, g_frame_width, VIS_H, g_settings.enhance || g_settings.hardware_rt);
+    auto scene = stv::host::observe_effect_scene(m.ram, m.frame_number, g_frame_width, VIS_H,
+                                                g_settings.enhance || g_settings.hardware_rt || g_settings.room_cinema);
     g_camera.observe(scene);
     for (auto& obj : scene.objects) {
         if (obj.kind != stv::host::EffectKind::Projectile && obj.kind != stv::host::EffectKind::EnemyShot) continue;
@@ -534,7 +553,7 @@ void present_frame(const Machine& m) {
     }
     scene.remains=g_enemy_remains.take(scene.room);
     scene.impacts=g_enemy_remains.take_impacts(scene.room);
-    g_enhance_effects.advance(scene, g_settings);
+    g_enhance_effects.advance(scene, g_settings, g_audio_peaks.pulse());
     const auto visible = std::span<const u16>(m.presentation_frame.empty()?m.frame:m.presentation_frame).subspan(std::size_t(VIS_MINY)*m.vram_w + VIS_MINX);
     g_resident_ready = g_wnd && g_resident_effects.update_arcade(visible, m.vram_w, width, VIS_H, m.pens,
                                                                 wide, title, g_enhance_effects.packet(), g_settings,!m.presentation_frame.empty());
@@ -838,9 +857,12 @@ void connect_machine_callbacks() {
     g_m.enable_sprite_coverage();
     g_camera = {};
     g_enemy_remains={};
+    g_audio_peaks.reset();
+    g_enhance_effects.reset_room_cinema();
     // In online play this coupled machine executes confirmed inputs only.
     g_m.on_object=[](stv::gsp::ObjectEvent event,u32 node,u32 partner){
-        if(g_settings.enhance && (g_settings.explosive_debris || g_settings.persistent_gore || g_settings.destruction || g_settings.blood || g_settings.particles))
+        if((g_settings.enhance && (g_settings.explosive_debris || g_settings.persistent_gore ||
+            g_settings.destruction || g_settings.blood || g_settings.particles)) || g_settings.room_cinema)
             g_enemy_remains.observe(g_m.ram,event,node,g_m.c.cyc,g_m.gfx,g_m.pens,partner);
     };
     g_sched->on_base = [](const stv::snd::Atto& base) {
@@ -855,6 +877,7 @@ void connect_machine_callbacks() {
     };
     g_m.on_vblank = [] {
         if (!g_script1.empty()) apply_script(g_m.frame_number);
+        g_achievements.frame(g_m, g_net.on);
         g_frame_done = true;
         g_sched->request_stop();
     };
@@ -1022,6 +1045,8 @@ void connect_confirmed_sound() {
 // is exactly the retail mono path. Otherwise the extra sound boards and the
 // output chain shape a stereo copy; g_pcm (audits, hashes) is never changed.
 void deliver_audio(bool to_device) {
+    if (g_settings.room_cinema) g_audio_peaks.observe(g_pcm);
+    else g_audio_peaks.reset();
     const stv::host::AudioFxSettings want{g_settings.audio_hifi, g_settings.audio_wide, g_settings.reverb};
     const bool extended = g_settings.extended_sound && g_mixer && g_sched;
     if (extended && g_voices.running()) {
@@ -1534,7 +1559,7 @@ void load_preferences() {
 void save_preferences() {
     if (g_data_dir.empty() || scripted_run()) return;
     g_settings.scaling = int(g_scale_mode);
-    g_settings.fullscreen = g_fullscreen;
+    if (!g_transient_fullscreen) g_settings.fullscreen = g_fullscreen;
     g_settings.swap_pads = g_swap_pads;
     std::string error;
     if (!stv::host::save_pc_settings(preferences_path(), g_settings, error)) g_menu_status = error;
@@ -1549,10 +1574,11 @@ stv::host::PcMenuContext menu_context() {
     context.development_profile_chooser = false;
 #endif
     context.gpu_effects = g_settings.filter >= 4;
-    context.beam_effects = context.gpu_effects;
-    context.beam_options = context.gpu_effects && g_settings.crt_beam != 0;
-    context.set_available(stv::host::PcMenuItem::Vsync,
-        g_dwm_flush != nullptr && !g_settings.smooth_motion && g_settings.crt_beam == 0);
+    context.combat_feedback = g_settings.combat_feedback != 0;
+    context.reduce_shake = g_settings.reduce_shake;
+    context.reduce_flashing = g_settings.reduce_flashing;
+    context.reduce_motion = g_settings.reduce_motion;
+    context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
                          g_lobby->state() != stv::net::LobbyState::Searching;
@@ -1772,7 +1798,8 @@ std::string key_name(int vk) {
     return name;
 }
 
-void toggle_fullscreen() {
+void toggle_fullscreen(bool persist = true) {
+    if (persist) g_transient_fullscreen = false;
     const DWORD style = DWORD(GetWindowLongW(g_wnd, GWL_STYLE));
     if (!g_fullscreen) {
         MONITORINFO mi{sizeof(mi)};
@@ -1788,10 +1815,19 @@ void toggle_fullscreen() {
         SetWindowPos(g_wnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
         g_fullscreen = false;
     }
-    save_preferences();
+    if (persist) save_preferences();
 }
 
 const char* pad_button_name(std::uint32_t b) {
+    if (g_launcher_playstation) {
+        switch (b) {
+        case stv::host::PadA: return "Cross";
+        case stv::host::PadB: return "Circle";
+        case stv::host::PadX: return "Square";
+        case stv::host::PadY: return "Triangle";
+        default: break;
+        }
+    }
     switch (b) {
     case 0: return "unassigned";
     case stv::host::PadUp: return "D-pad up";
@@ -2318,26 +2354,23 @@ bool needs_arcade_start(int player) {
 std::string menu_value(stv::host::PcMenuItem item) {
     using I = stv::host::PcMenuItem;
     switch (item) {
-    case I::Glow: case I::Sharpen: case I::Curvature: {
+    case I::Glow: case I::Sharpen: case I::Curvature:
+    case I::Atmosphere: case I::SpriteRim: case I::ContactShadows: case I::WetMaterials:
+    case I::HeatDistortion: case I::EmissiveSpill: case I::CinematicGrade: {
         const char* levels[]={"off","low","medium","high"};
-        return levels[item==I::Glow ? g_settings.glow : item==I::Sharpen ? g_settings.sharpen : g_settings.curvature];
+        if(item==I::Glow) return levels[g_settings.glow];
+        if(item==I::Sharpen) return levels[g_settings.sharpen];
+        if(item==I::Curvature) return levels[g_settings.curvature];
+        if(item==I::Atmosphere) return levels[g_settings.atmosphere];
+        if(item==I::SpriteRim) return levels[g_settings.sprite_rim];
+        if(item==I::ContactShadows) return levels[g_settings.contact_shadows];
+        if(item==I::WetMaterials) return levels[g_settings.wet_materials];
+        if(item==I::HeatDistortion) return levels[g_settings.heat_distortion];
+        if(item==I::EmissiveSpill) return levels[g_settings.emissive_spill];
+        return levels[g_settings.cinematic_grade];
     }
-    case I::CrtBeam: {
-        const char* modes[]={"off","rolling scan","global refresh"};
-        std::string value=modes[g_settings.crt_beam];
-        const double hz=g_resident_effects.display_refresh_hz();
-        if(g_settings.crt_beam && hz>=2.0*8000000.0/146234.0)
-            value += " / " + std::to_string(int(std::lround(hz))) + " Hz";
-        else if(g_settings.crt_beam && hz>0)
-            value += " / needs 2x display Hz";
-        return value;
-    }
-    case I::BeamBrightness: {
-        const char* levels[]={"automatic","crisp / dim","balanced","bright / softer"};
-        return levels[g_settings.beam_brightness];
-    }
-    case I::BeamAntiRetention: return g_settings.beam_anti_retention ? "on" : "off";
     case I::EnhanceAll: return g_settings.enhance ? "on" : "off";
+    case I::RoomCinema: return stv::host::room_cinema_quality_name(unsigned(g_settings.room_cinema));
     case I::Particles: return g_settings.particles ? "on" : "off";
     case I::Blood: return g_settings.blood ? "on" : "off";
     case I::Debris: return g_settings.debris ? "on" : "off";
@@ -2354,14 +2387,28 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::Tracers: return g_settings.tracers ? "on" : "off";
     case I::Brass: return g_settings.brass ? "on" : "off";
     case I::Voxels: return g_settings.voxels ? "on" : "off";
+    case I::CombatFeedback: case I::CameraShake: case I::ZoomPunch:
+    case I::HitFlash: case I::EdgeEffects: case I::WeaponSignatures:
+    case I::TemporalTrails: {
+        const char* levels[]={"off","low","medium","high"};
+        const int value=item==I::CombatFeedback?g_settings.combat_feedback:
+            item==I::CameraShake?g_settings.camera_shake:
+            item==I::ZoomPunch?g_settings.zoom_punch:
+            item==I::HitFlash?g_settings.hit_flash:
+            item==I::EdgeEffects?g_settings.edge_effects:
+            item==I::WeaponSignatures?g_settings.weapon_signatures:g_settings.temporal_trails;
+        return levels[value];
+    }
+    case I::ReduceShake: return g_settings.reduce_shake ? "on" : "off";
+    case I::ReduceFlashing: return g_settings.reduce_flashing ? "on" : "off";
+    case I::ReduceMotion: return g_settings.reduce_motion ? "on" : "off";
     case I::WindowScale: return g_settings.window_scale ? std::to_string(g_settings.window_scale) + "x" : "automatic";
     case I::Fullscreen: return g_fullscreen ? "on" : "off";
     case I::Scaling: return scale_name();
     case I::PixelFilter: return stv::host::video_filter_name(static_cast<stv::host::VideoFilterMode>(g_settings.filter));
     case I::Motion: return g_settings.smooth_motion ? "SMOOTH MOTION" : "Arcade exact";
     case I::RunAhead: return g_settings.run_ahead ? std::to_string(g_settings.run_ahead) + (g_settings.run_ahead == 1 ? " frame" : " frames") : "Off";
-    case I::Vsync: if (g_settings.crt_beam) return "required (CRT beam)";
-                   if (g_settings.smooth_motion) return "on (Smooth Motion)";
+    case I::Vsync: if (g_settings.smooth_motion) return "on (Smooth Motion)";
                    return g_settings.vsync ? "on (desktop sync)" : "off";
     case I::ShowFps: return g_settings.show_fps ? "on" : "off";
     case I::HostMode: return stv::host::game_mode_label(g_host_mode.value_or(g_enhanced));
@@ -2404,11 +2451,29 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::WeaponImpacts: return "BALLISTIC, GRENADE AND ENERGY IMPACTS";
     case I::FluidSmoke: return "LIT SMOKE ROLLS AROUND WALLS AND RESPONDS TO SHOTS";
     case I::HardwareRT: return "DXR 1.1 / ROOM MOODS, LIVE LIGHTS AND SPRITE SHADOWS";
+    case I::Atmosphere: return "SUBTLE ROOM HAZE / LIGHT CONES / DRIFTING DUST";
+    case I::SpriteRim: return "PIXEL-EDGE RIM LIGHT / ORIGINAL SPRITE ART PRESERVED";
+    case I::ContactShadows: return "CHEAP 2.5D GROUND CONTACT / HUD EXCLUDED";
+    case I::WetMaterials: return "BLOOD / OIL SHEENS / RIPPLES AT SMOKE EDGES";
+    case I::HeatDistortion: return "SHORT LOCAL WARP AROUND FIRE / NO FULL-SCREEN REFRACTION";
+    case I::EmissiveSpill: return "DIRECTIONAL COLOR LEAK FROM BRIGHT SPRITES AND LAMPS";
+    case I::CinematicGrade: return "SUBTLE PER-ROOM LUT-LIKE COLOR GRADE / HUD UNCHANGED";
+    case I::RoomCinema: return "OFF / LOW / MEDIUM / HIGH / BOSS + AUDIO ROOM PRESENTATION";
     case I::ExplosiveDebris: return "BLASTS THROW FLESH AND STEEL / PERSISTENT GORE KEEPS THE MARKS";
     case I::MuzzleFlash: return "DIRECTIONAL FLASH AT WEAPON DISCHARGE";
     case I::Tracers: return "SHORT AMBER TRAILS FOLLOW ENEMY SHOTS";
     case I::Brass: return "SPINNING CASINGS BOUNCE AND SETTLE";
     case I::Voxels: return "3D CUBE FRAGMENTS / COSMETIC PHYSICS";
+    case I::CombatFeedback: return "MASTER LEVEL / PRESENTATION ONLY / LOW SAVES GPU WORK";
+    case I::CameraShake: return "IMPACT TRAUMA / FINAL CAMERA ONLY / GAMEPLAY UNCHANGED";
+    case I::ZoomPunch: return "BRIEF CROP-ZOOM ON LARGE IMPACTS / NO TIMING CHANGE";
+    case I::HitFlash: return "CONTROLLED IMPACT FLASH / REDUCED BY ACCESSIBILITY OPTION";
+    case I::EdgeEffects: return "VIGNETTE + CHROMATIC EDGE SPLIT / COSMETIC POST ONLY";
+    case I::WeaponSignatures: return "SIX WEAPON FAMILIES / MUZZLE, WAKE, IMPACT, RICOCHET";
+    case I::TemporalTrails: return "GPU PROJECTILE HISTORY / LOW 2, MEDIUM 4, HIGH 6 FRAMES";
+    case I::ReduceShake: return "SUPPRESSES IMPACT CAMERA SHAKE";
+    case I::ReduceFlashing: return "SUPPRESSES HIT FLASH AND EDGE PULSES";
+    case I::ReduceMotion: return "SUPPRESSES ZOOM AND TEMPORAL TRAILS";
     case I::Blood: return "BLOOD DROPLETS / COSMETIC GRAVITY AND SPLATS";
     case I::Audio: return "VOLUME / SOUND CHANNELS / REVERB / STEREO / HI-FI";
     case I::SoundChannels: return g_settings.extended_sound ? "EXTRA SOUND BOARDS / SPEECH NO LONGER CUTS GUNFIRE"
@@ -2426,17 +2491,7 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::Motion: return "SMOOTH CAMERA PANS BETWEEN ARCADE FRAMES";
     case I::RunAhead: return "PREDICT LOCAL VIDEO / HIGHER VALUES USE MORE CPU";
     case I::Vsync: return "DISPLAY SYNC ONLY / GAME SPEED STAYS EXACT";
-    case I::PixelFilter:
-        switch (g_settings.filter) {
-        case 4: return "BEAM-ONLY / ROLLING / NO CRT MASK";
-        case 5: return "RICH PICK: GUEST + ROLLING + BALANCED";
-        case 6: return "4K PICK: ROYALE + ROLLING / FAST GPU";
-        case 7: return "BEST START: LOTTES + ROLLING / AUTO";
-        default: return "CRT BEAM: CHOOSE MODERN, GUEST, ROYALE OR LOTTES";
-        }
-    case I::CrtBeam: return "BEST START: ROLLING + LOTTES / DISABLE VRR";
-    case I::BeamBrightness: return "BEST START: AUTO / FIXED VALUES TRADE CLARITY";
-    case I::BeamAntiRetention: return "DRIFTS EVEN-RATIO LCD TIMING SLIGHTLY TO REDUCE STATIC BANDING";
+    case I::PixelFilter: return "GUEST: ARCADE / ROYALE: FINE MASK / LOTTES: FAST";
     case I::Glow: return "BRIGHT-PIXEL LIGHT SPILL / NOT OBJECT LIGHTING";
     case I::Sharpen: return "CONTRAST-ADAPTIVE DETAIL / ZERO CHANGES NO PIXELS";
     case I::Curvature: return "OPTIONAL TUBE SHAPE / OFF KEEPS STRAIGHT EDGES";
@@ -2489,8 +2544,25 @@ void paint(HWND wnd) {
     // The odd 137-column extension must not become a rounded 68-column shift.
     const stv::host::Scale sc = stv::host::compute_scale(cw, ch, vis_w(), VIS_H, !g_enhanced && g_scale_mode == stv::host::ScaleMode::IntegerFill
             ? stv::host::ScaleMode::IntegerExact : g_scale_mode);
-    const int w = int((std::int64_t(sc.w) * g_frame_width) / vis_w()), h = sc.h;
-    const int x0 = (cw - w) / 2, y0 = (ch - h) / 2;
+    int w = int((std::int64_t(sc.w) * g_frame_width) / vis_w()), h = sc.h;
+    int x0 = (cw - w) / 2, y0 = (ch - h) / 2;
+    const auto& director=g_enhance_effects.packet().weaponFx.director;
+    static constexpr float levels[]{0.f,.45f,.72f,1.f};
+    const float overall=g_settings.enhance&&g_settings.combat_feedback
+        ?levels[std::clamp(g_settings.combat_feedback,0,3)]:0.f;
+    float trauma=overall*levels[std::clamp(g_settings.camera_shake,0,3)]*director.camera_trauma;
+    if(g_settings.reduce_shake || g_settings.reduce_motion || g_menu || g_paused || g_connecting)trauma=0;
+    const float phase = g_settings.smooth_motion &&
+                        !g_menu && !g_paused && !g_connecting ? g_camera_phase : 1.0f;
+    const float frame=float(g_enhance_effects.packet().frame);
+    const float traumaX=std::sin(frame*2.399f)*trauma*3.2f;
+    const float traumaY=std::cos(frame*1.713f)*trauma*2.4f;
+    const float zoom=overall*levels[std::clamp(g_settings.zoom_punch,0,3)]*director.zoom_punch*
+        (g_settings.reduce_motion||g_menu||g_paused||g_connecting?0.f:1.f);
+    if(zoom>0){
+        const int zoomW=std::max(w,int(w*(1.f+zoom))),zoomH=std::max(h,int(h*(1.f+zoom)));
+        x0-=(zoomW-w)/2;y0-=(zoomH-h)/2;w=zoomW;h=zoomH;
+    }
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
     bi.bmiHeader.biWidth = g_frame_width;
@@ -2498,12 +2570,10 @@ void paint(HWND wnd) {
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     // A paused player may only receive this one WM_PAINT until the next input.
-    const bool one_shot = g_menu || g_paused || g_m.stop || g_connecting;
+    const bool one_shot = !g_net.on && (g_menu || g_paused || g_m.stop || g_connecting);
     bool overlay=g_menu||g_paused||g_m.stop||g_connecting||!g_status.empty()||(!g_toast.empty()&&GetTickCount64()<g_toast_until)||g_settings.show_fps;
-    const float phase = (g_settings.smooth_motion || g_settings.crt_beam) &&
-                        !g_menu && !g_paused && !g_connecting ? g_camera_phase : 1.0f;
     bool direct=g_resident_ready&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,
-        g_camera.offset(g_camera.dx,phase),g_camera.offset(g_camera.dy,phase),phase);
+        g_camera.offset(g_camera.dx,phase)+traumaX,g_camera.offset(g_camera.dy,phase)+traumaY);
     static MenuPaintSurface menu_surface;
     const HDC window_dc = dc;
     HDC buffered = nullptr;
@@ -2645,8 +2715,7 @@ void paint(HWND wnd) {
                 }
                 std::string label = std::string(row.selected ? "> " : "  ") + row.label;
                 const auto value = menu_value(row.item);
-                if (row.item == I::Vsync && g_settings.crt_beam) label += " - required (CRT beam)";
-                else if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
+                if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
                 else if (!row.enabled) label += std::string(" - ") + row.unavailable_reason;
                 else if (!value.empty()) label += " - " + value;
                 else if (row.kind == stv::host::PcMenuRowKind::Submenu) label += " - >>";
@@ -2658,9 +2727,13 @@ void paint(HWND wnd) {
             lines.push_back("B / ESC   BACK");
         }
         if (!g_menu_status.empty()) { lines.push_back(""); lines.push_back(g_menu_status); }
-        if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_font_ready && g_menu_status.empty())
-            stv::host::arcade_title_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced);
-        else stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),g_menu_font_ready?&g_menu_font:nullptr);
+        if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_status.empty()) {
+            const auto layout=stv::host::arcade_title_layout(cw,ch);
+            if(g_menu_font_ready)
+                stv::host::arcade_title_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced);
+            else
+                stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),nullptr,&layout.controls);
+        } else stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),g_menu_font_ready?&g_menu_font:nullptr);
     } else if (g_paused || g_m.stop || !g_status.empty()) {
         const char* msg = !g_status.empty() ? g_status.c_str() : "PAUSED (P)   START / F1: pause menu";
         TextOutA(dc, 8, 8, msg, int(std::strlen(msg)));
@@ -2905,17 +2978,12 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
                 g_scale_mode = static_cast<stv::host::ScaleMode>((int(g_scale_mode) + event.delta + 3) % 3); break;
             case I::Fullscreen: toggle_fullscreen(); break;
             case I::PixelFilter: g_settings.filter = (g_settings.filter + event.delta + 8) % 8; g_menu_status.clear(); break;
-            case I::CrtBeam: g_settings.crt_beam = (g_settings.crt_beam + event.delta + 3) % 3; g_menu_status.clear(); break;
-            case I::BeamBrightness: g_settings.beam_brightness = (g_settings.beam_brightness + event.delta + 4) % 4; break;
-            case I::BeamAntiRetention: g_settings.beam_anti_retention = !g_settings.beam_anti_retention; break;
             case I::Glow: g_settings.glow = (g_settings.glow + event.delta + 4) % 4; break;
             case I::Sharpen: g_settings.sharpen = (g_settings.sharpen + event.delta + 4) % 4; break;
             case I::Curvature: g_settings.curvature = (g_settings.curvature + event.delta + 4) % 4; break;
             case I::EnableAllEffects:
-                g_settings.enhance = g_settings.particles = g_settings.blood = g_settings.debris =
-                    g_settings.smoke = g_settings.fire =
-                    g_settings.voxels = g_settings.shockwaves = g_settings.tracers = g_settings.brass = g_settings.muzzle_flash = true;
-                g_settings.persistent_gore = g_settings.destruction = g_settings.weapon_impacts = g_settings.fluid_smoke = g_settings.explosive_debris = true; break;
+                stv::host::enable_all_visual_effects(g_settings);
+                save = true; break;
             case I::EnhanceAll: g_settings.enhance = !g_settings.enhance; break;
             case I::Particles: g_settings.particles = !g_settings.particles; break;
             case I::Blood: g_settings.blood = !g_settings.blood; break;
@@ -2937,6 +3005,27 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::Tracers: g_settings.tracers = !g_settings.tracers; break;
             case I::Brass: g_settings.brass = !g_settings.brass; break;
             case I::Voxels: g_settings.voxels = !g_settings.voxels; break;
+            case I::Atmosphere: g_settings.atmosphere = (g_settings.atmosphere + event.delta + 4) % 4; break;
+            case I::SpriteRim: g_settings.sprite_rim = (g_settings.sprite_rim + event.delta + 4) % 4; break;
+            case I::ContactShadows: g_settings.contact_shadows = (g_settings.contact_shadows + event.delta + 4) % 4; break;
+            case I::WetMaterials: g_settings.wet_materials = (g_settings.wet_materials + event.delta + 4) % 4; break;
+            case I::HeatDistortion: g_settings.heat_distortion = (g_settings.heat_distortion + event.delta + 4) % 4; break;
+            case I::EmissiveSpill: g_settings.emissive_spill = (g_settings.emissive_spill + event.delta + 4) % 4; break;
+            case I::CinematicGrade: g_settings.cinematic_grade = (g_settings.cinematic_grade + event.delta + 4) % 4; break;
+            case I::RoomCinema:
+                g_settings.room_cinema = (g_settings.room_cinema + event.delta + 4) % 4;
+                if (!g_settings.room_cinema) g_audio_peaks.reset();
+                break;
+            case I::CombatFeedback: g_settings.combat_feedback=(g_settings.combat_feedback+event.delta+4)%4;break;
+            case I::CameraShake: g_settings.camera_shake=(g_settings.camera_shake+event.delta+4)%4;break;
+            case I::ZoomPunch: g_settings.zoom_punch=(g_settings.zoom_punch+event.delta+4)%4;break;
+            case I::HitFlash: g_settings.hit_flash=(g_settings.hit_flash+event.delta+4)%4;break;
+            case I::EdgeEffects: g_settings.edge_effects=(g_settings.edge_effects+event.delta+4)%4;break;
+            case I::WeaponSignatures: g_settings.weapon_signatures=(g_settings.weapon_signatures+event.delta+4)%4;break;
+            case I::TemporalTrails: g_settings.temporal_trails=(g_settings.temporal_trails+event.delta+4)%4;break;
+            case I::ReduceShake: g_settings.reduce_shake=!g_settings.reduce_shake;break;
+            case I::ReduceFlashing: g_settings.reduce_flashing=!g_settings.reduce_flashing;break;
+            case I::ReduceMotion: g_settings.reduce_motion=!g_settings.reduce_motion;break;
             case I::Motion: g_settings.smooth_motion = !g_settings.smooth_motion; break;
             case I::RunAhead: g_settings.run_ahead = (g_settings.run_ahead + event.delta + 4) % 4; break;
             case I::Vsync: g_settings.vsync = !g_settings.vsync; break;
@@ -2966,7 +3055,11 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
 #endif
             default: break;
             }
-            if (((event.item >= I::EnhanceAll && event.item <= I::ExplosiveDebris) || event.item==I::HardwareRT) && g_frame_ready && g_resident_ready) {
+            if (((event.item >= I::EnhanceAll && event.item <= I::ExplosiveDebris) ||
+                 event.item==I::RoomCinema || event.item==I::HardwareRT ||
+                 (event.item >= I::Atmosphere && event.item <= I::CinematicGrade) ||
+                 (event.item>=I::CombatFeedback && event.item<=I::ReduceMotion)) &&
+                g_frame_ready && g_resident_ready) {
                 g_resident_ready = g_resident_effects.recompose(g_enhance_effects.packet(), g_settings);
                 if (!g_resident_ready) build_software_frame(g_net.on && g_net.mr ? *g_net.mr : g_m);
                 ++g_pixel_revision;
@@ -2988,12 +3081,24 @@ void poll_pad_controls() {
     previous = now;
     sync_menu_input();
     stv::host::PadEvent event = stv::host::PadEvent::None;
+#ifdef STV_SDL_PADS
+    if (g_sdl_pads && g_sdl_pads->ready()) g_sdl_pads->refresh();
+#endif
     for (int slot = 0; slot < 2; ++slot) {
         static std::array<bool,2> firing{};
         XINPUT_STATE x{};
         stv::host::PadSnapshot state{};
-        state.connected = pad_state(DWORD(slot), x);
-        if (state.connected) {
+#ifdef STV_SDL_PADS
+        if (g_sdl_pads && g_sdl_pads->ready()) {
+            const auto sample = g_sdl_pads->read(slot);
+            state = sample.state;
+            x.Gamepad.sThumbLX = SHORT(sample.lx);
+            x.Gamepad.sThumbLY = SHORT(std::clamp(sample.ly, -32768, 32767));
+            x.Gamepad.sThumbRX = SHORT(sample.rx);
+            x.Gamepad.sThumbRY = SHORT(std::clamp(sample.ry, -32768, 32767));
+        } else
+#endif
+        if ((state.connected = pad_state(DWORD(slot), x))) {
             state.buttons = x.Gamepad.wButtons;
             if (x.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) state.buttons |= stv::host::PadLT;
             if (x.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) state.buttons |= stv::host::PadRT;
@@ -3195,6 +3300,7 @@ LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == VK_F9) { cycle_scale(); save_preferences(); InvalidateRect(wnd, nullptr, FALSE); return 0; }
         break;
     case WM_CLOSE:
+        write_player_log("Session closed normally.");
         retain_room_scores();
         close_lobby();
         save_preferences(); save_cmos(); DestroyWindow(wnd); return 0;
@@ -3239,14 +3345,88 @@ std::string narrow(const std::wstring& w) {
     return s;
 }
 
+void parse_launcher_args() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    for (int i = 1; argv && i < argc; ++i) {
+        const std::wstring arg(argv[i]);
+        if (arg == L"--classic") g_launch_mode = 0;
+        else if (arg == L"--widescreen") g_launch_mode = 1;
+        else if (arg.rfind(L"--data=", 0) == 0) g_requested_data_dir = arg.substr(7);
+        else if (arg == L"--data" && i + 1 < argc) g_requested_data_dir = argv[++i];
+    }
+    if (argv) LocalFree(argv);
+
+    wchar_t value[32768]{};
+    if (!GetEnvironmentVariableW(L"RECOMPLAUNCHER", value, DWORD(std::size(value)))) g_recomp_launcher = false;
+    else g_recomp_launcher = value[0] == L'1' && value[1] == L'\0';
+    if (!g_recomp_launcher) return;
+    if (g_requested_data_dir.empty() &&
+        GetEnvironmentVariableW(L"RECOMPLAUNCHER_DATA", value, DWORD(std::size(value))) &&
+        value[0]) {
+        g_requested_data_dir = value;
+    }
+    if (GetEnvironmentVariableW(L"RECOMPLAUNCHER_MODE", value, DWORD(std::size(value))) &&
+        std::wcscmp(value, L"bigpicture") == 0) {
+        g_launcher_big_picture = true;
+    }
+    if (GetEnvironmentVariableW(L"RECOMPLAUNCHER_PAD", value, DWORD(std::size(value))) &&
+        std::wcscmp(value, L"playstation") == 0) {
+        g_launcher_playstation = true;
+    }
+}
+
+void write_player_log(std::string_view text) {
+    if (g_data_dir.empty()) return;
+    const auto directory = std::filesystem::path(g_data_dir) / L"logs";
+    std::error_code ec;
+    std::filesystem::create_directories(directory, ec);
+    if (ec) return;
+    FILE* file = nullptr;
+    const auto path = (directory / L"SmashTV.log").wstring();
+    if (_wfopen_s(&file, path.c_str(), L"a") != 0 || !file) return;
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    std::fprintf(file, "%04u-%02u-%02u %02u:%02u:%02u  %.*s\n",
+                 now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+                 int(text.size()), text.data());
+    std::fclose(file);
+}
+
 bool find_roms(std::filesystem::path& cache) {
-    wchar_t app[32768];
-    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", app, DWORD(std::size(app)));
-    g_data_dir = n && n < std::size(app) ? std::wstring(app) + L"\\SmashTV" : exe_dir();
-    CreateDirectoryW(g_data_dir.c_str(), nullptr);
-    cache = std::filesystem::path(g_data_dir) / L"retail-l8.dat";
+    if (!g_requested_data_dir.empty()) {
+        g_data_dir = g_requested_data_dir;
+    } else {
+        wchar_t app[32768];
+        const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", app, DWORD(std::size(app)));
+        g_data_dir = n && n < std::size(app) ? std::wstring(app) + L"\\SmashTV" : exe_dir();
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(g_data_dir, ec);
+    if (ec) {
+        MessageBoxW(nullptr, L"Could not create the SmashTV data folder.", L"Smash T.V. setup", MB_ICONERROR);
+        return false;
+    }
+    const auto log = std::filesystem::path(g_data_dir) / L"logs" / L"SmashTV.log";
+    const auto log2 = std::filesystem::path(g_data_dir) / L"logs" / L"SmashTV.previous.log";
+    const auto log3 = std::filesystem::path(g_data_dir) / L"logs" / L"SmashTV.older.log";
+    MoveFileExW(log2.c_str(), log3.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    MoveFileExW(log.c_str(), log2.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    DeleteFileW(log.c_str());
+    write_player_log(g_recomp_launcher ? "Launcher session starting." : "Standalone session starting.");
+    cache = std::filesystem::path(g_data_dir) /
+            (g_recomp_launcher ? std::filesystem::path(L"cache") / L"retail-l8.dat"
+                                : std::filesystem::path(L"retail-l8.dat"));
+    std::filesystem::create_directories(cache.parent_path(), ec);
+    if (ec) {
+        write_player_log("The data cache folder could not be created.");
+        return false;
+    }
     std::string error;
-    if (stv::gsp::load_imported_roms(g_m, cache, error)) return true;
+    if (stv::gsp::load_imported_roms(g_m, cache, error)) {
+        write_player_log("Private retail L8 cache loaded.");
+        return true;
+    }
 
     wchar_t selected[32768]{};
     const DWORD selected_length = GetEnvironmentVariableW(L"STV_HOST_ROM_ZIP", selected, DWORD(std::size(selected)));
@@ -3266,14 +3446,19 @@ bool find_roms(std::filesystem::path& cache) {
         }
         wchar_t temp[MAX_PATH]{};
         if (!GetTempFileNameW(g_data_dir.c_str(), L"stv", 0, temp)) {
+            write_player_log("The temporary import file could not be created.");
             MessageBoxW(nullptr, L"Could not create a file in the SmashTV data folder.", L"Smash T.V. setup", MB_ICONERROR);
             return false;
         }
         if (stv::gsp::import_rom_set(source, temp, error) && stv::gsp::load_imported_roms(g_m, temp, error)) {
-            if (MoveFileExW(temp, cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+            if (MoveFileExW(temp, cache.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+                write_player_log("Private retail L8 ROM import completed.");
+                return true;
+            }
             error = "Could not finish saving the imported data in the SmashTV data folder.";
         }
         DeleteFileW(temp);
+        write_player_log("ROM import failed: " + error);
         if (MessageBoxA(nullptr, error.c_str(), "Smash T.V. setup", MB_ICONWARNING | MB_RETRYCANCEL) != IDRETRY)
             return false;
         source.clear();
@@ -3284,20 +3469,13 @@ bool find_roms(std::filesystem::path& cache) {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // per-monitor DPI aware: Windows must not bitmap-stretch the window (4K integer scaling)
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    parse_launcher_args();
     std::filesystem::path zip;
     if (!find_roms(zip)) return 1;
     std::string err;
     g_rom_path = zip;
     capture_menu_title(g_rom_path);
     g_menu_font_ready = g_menu_font.bind(g_m,[](u32 addr){return stv::gsp::rlong(g_m,addr);});
-    {
-        int argc = 0; auto args = CommandLineToArgvW(GetCommandLineW(), &argc);
-        for (int i = 1; args && i < argc; ++i) {
-            if (std::wcscmp(args[i], L"--classic") == 0) g_launch_mode = 0;
-            if (std::wcscmp(args[i], L"--widescreen") == 0) g_launch_mode = 1;
-        }
-        if (args) LocalFree(args);
-    }
     g_enhanced = load_profile();
     if (g_enhanced) {
         g_m.enhanced = true;
@@ -3332,6 +3510,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     g_sched = std::make_unique<stv::game::CoScheduler>(g_m, g_snd);
     connect_confirmed_sound();
     connect_machine_callbacks();
+#ifdef STV_SDL_PADS
+    SDL_SetMainReady();
+    g_sdl_pads = std::make_unique<stv::host::SdlPads>();
+    if (g_sdl_pads->ready()) {
+        SDL_SetGamepadEventsEnabled(false);
+        SDL_SetJoystickEventsEnabled(false);
+    }
+#endif
+    g_achievements.start(scripted_run() || GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0) != 0);
     if (HMODULE x = LoadLibraryExW(L"xinput1_4.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         g_xinput = reinterpret_cast<XInputGetStateFn>(reinterpret_cast<void*>(GetProcAddress(x, "XInputGetState")));
 
@@ -3362,7 +3549,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     }
     ShowWindow(g_wnd, show);
     if (g_settings.window_scale) resize_pc_window();
-    if (g_settings.fullscreen) toggle_fullscreen();
+    if (g_launcher_big_picture && !g_settings.fullscreen) g_transient_fullscreen = true;
+    if (g_settings.fullscreen || g_launcher_big_picture) toggle_fullscreen(false);
     if (launch_online && !net_connect(zip)) return 3;
 
     LARGE_INTEGER freq{}, now{};

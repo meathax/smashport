@@ -14,36 +14,31 @@
 #include <stdexcept>
 #include <cstring>
 #include <array>
-#include <algorithm>
-#include <cmath>
-#include <string_view>
 #include "resident_effects_shader.hpp"
 #include "dxr_lighting.hpp"
 #include "title_background.hpp"
 using Microsoft::WRL::ComPtr;
 namespace stv::host {
 namespace {
-constexpr double kArcadeHz = 8000000.0 / 146234.0;
-void check(HRESULT h,const char* message){if(FAILED(h))throw std::runtime_error(std::string(message)+": "+std::to_string(uint32_t(h)));}
-double monitor_refresh_hz(HWND window){
- if(!window)return 0;
- MONITORINFOEXW info{};info.cbSize=sizeof(info);
- if(!GetMonitorInfoW(MonitorFromWindow(window,MONITOR_DEFAULTTONEAREST),&info))return 0;
- DEVMODEW mode{};mode.dmSize=sizeof(mode);
- if(!EnumDisplaySettingsExW(info.szDevice,ENUM_CURRENT_SETTINGS,&mode,0)||mode.dmDisplayFrequency<=1)return 0;
- return double(mode.dmDisplayFrequency);
+constexpr unsigned kCombatGlyphCapacity = 336;
+constexpr unsigned kCombatTileCapacity = 32;
+constexpr unsigned kCombatTileMax = ((1024+15)/16)*((512+15)/16);
+float effect_level(int level){
+ static constexpr float levels[]{0.f,.45f,.72f,1.f};
+ return levels[std::clamp(level,0,3)];
 }
+void check(HRESULT h,const char* message){if(FAILED(h))throw std::runtime_error(std::string(message)+": "+std::to_string(uint32_t(h)));}
 const char* displayShader=R"DISPLAY(
 Texture2D<uint> image:register(t0);Texture2D<float4> overlay:register(t1);Texture2D<float4> filteredImage:register(t2);
-Texture2D<float4> beamPrev1:register(t3);Texture2D<float4> beamPrev2:register(t4);
-SamplerState linearSampler:register(s0);SamplerState pointSampler:register(s1);
-cbuffer Display:register(b1){float sw,sh,dw,dh;uint mode;float glow,sharpen,curvature;float2 pan;
- float beamPhase,beamRatio;float beamGain;uint beamMode;float2 padding;};
+Texture2D<uint> arcadePixels:register(t3);Texture2D<uint> protectionMap:register(t4);
+SamplerState linearSampler:register(s0);
+cbuffer Display:register(b1){float sw,sh,dw,dh;uint mode;float glow,sharpen,curvature;float2 pan,padding;
+ float hitFlash,vignette,chromatic,padding2;uint sourceMode;float3 padding3;};
 struct V{float4 p:SV_Position;float2 uv:TEXCOORD0;};
 V vs(uint i:SV_VertexID){V v;v.uv=float2((i<<1)&2,i&2);v.p=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);return v;}
 float3 pixel(int2 xy){uint c=image.Load(int3(clamp(xy,int2(0,0),int2(sw-1,sh-1)),0));return float3((c>>16)&255,(c>>8)&255,c&255)/255.;}
 float3 sampleImage(float2 uv){
- if(mode==9||mode==10)return filteredImage.Load(int3(clamp(int2(uv*float2(sw,sh)),int2(0,0),int2(sw-1,sh-1)),0)).rgb;
+ if(mode==9)return filteredImage.Load(int3(clamp(int2(uv*float2(sw,sh)),int2(0,0),int2(sw-1,sh-1)),0)).rgb;
  if(mode==8)return filteredImage.SampleLevel(linearSampler,uv,0).rgb;
  float2 xy=uv*float2(sw,sh)-.5;
  if(mode==0||mode==4||mode>=5)return pixel(int2(floor(xy+.5)));
@@ -52,51 +47,56 @@ float3 sampleImage(float2 uv){
  int2 p=int2(floor(xy));float2 f=frac(xy);
  return lerp(lerp(pixel(p),pixel(p+int2(1,0)),f.x),lerp(pixel(p+int2(0,1)),pixel(p+1),f.x),f.y);
 }
+bool protectedPixel(float2 uv){
+ int2 p=clamp(int2(uv*float2(sw,sh)),int2(0,0),int2(sw-1,sh-1));
+ if((protectionMap.Load(int3(p,0))&8)!=0)return true;
+ if(sourceMode==0)return false;
+ if(sourceMode==2){p.x-=68;if(p.x<0||p.x>=410)return false;}
+ return (arcadePixels.Load(int3(p,0))&4096)!=0;
+}
 float4 ps(V v):SV_Target{
+ float2 originalUv=saturate(v.uv+pan/float2(sw,sh));
+ bool protect=protectedPixel(originalUv);
  float2 uv=v.uv;if(mode>=4&&curvature>0){float2 p=uv*2-1;p*=1+curvature*.04*dot(p,p);uv=p*.5+.5;if(any(uv<0)||any(uv>1))return float4(0,0,0,1);}
  uv=saturate(uv+pan/float2(sw,sh));
  float3 rgb=sampleImage(uv);
+ if(!protect && chromatic>0){
+  float edge=smoothstep(.26,.70,length(v.uv-.5));
+  float shift=chromatic*1.45*edge/max(sw,1);
+  rgb.r=sampleImage(saturate(uv+float2(shift,0))).r;
+  rgb.b=sampleImage(saturate(uv-float2(shift,0))).b;
+ }
  if(mode>=4&&mode<=7){
   float3 neighbors=(sampleImage(uv+float2(1/sw,0))+sampleImage(uv-float2(1/sw,0))+sampleImage(uv+float2(0,1/sh))+sampleImage(uv-float2(0,1/sh)))*.25;
   rgb=saturate(rgb+(rgb-neighbors)*sharpen*.2);
   if(glow>0){float3 bloom=0;[unroll]for(int y=-2;y<=2;y++)[unroll]for(int x=-2;x<=2;x++){float3 c=sampleImage(uv+float2(x/sw,y/sh));bloom+=max(0,c-.55);}rgb+=bloom*glow*.018;}
  }
  if(mode==3){float scan=1-.45*(1-sin(3.14159265*frac(uv.y*sh)));int phosphor=int(v.p.x)%3;rgb*=scan*float3(phosphor==0?1:.8,phosphor==1?1:.8,phosphor==2?1:.8);}
+ float edgeDistance=min(min(v.uv.x,v.uv.y),min(1-v.uv.x,1-v.uv.y));
+ if(!protect){
+  rgb*=1-vignette*.42*(1-smoothstep(0,.24,edgeDistance));
+  rgb=lerp(rgb,float3(1,.96,.82),hitFlash*.22);
+ }
  return float4(saturate(rgb),1);
-}
-float3 beamDec(float3 c){return lerp(c/12.92,pow((c+.055)/1.055,2.4),step(.04045,c));}
-float3 beamEnc(float3 c){return saturate(lerp(c*12.92,1.055*pow(c,1./2.4)-.055,step(.0031308,c)));}
-float3 overlap(float start,float3 len,float fStart){return max(0,min(start+len,fStart+1)-max(start,fStart));}
-// Adapted from blurbusters/crt-beam-simulator@734786a6, MIT. The source
-// provenance and complete notice are retained in third_party/graphics.
-float4 beamPS(V v):SV_Target{
- float2 uv=v.uv;
- float brightnessScale=beamRatio*beamGain;
- float3 scale=float3(brightnessScale,brightnessScale,brightnessScale);
- float3 current=beamDec(filteredImage.SampleLevel(pointSampler,uv,0).rgb)*scale;
- float3 previous=beamDec(beamPrev1.SampleLevel(pointSampler,uv,0).rgb)*scale;
- float3 oldest=beamDec(beamPrev2.SampleLevel(pointSampler,uv,0).rgb)*scale;
- float tubePos=beamMode==2?0:uv.y;
- float tube=tubePos*beamRatio;
- float start=beamPhase*beamRatio;
- float3 result=overlap(tube-beamRatio,oldest,start)+overlap(tube,previous,start)+overlap(tube+beamRatio,current,start);
- return float4(beamEnc(result),1);
 }
 float4 overlayPS(V v):SV_Target {float3 c=overlay.Load(int3(int2(v.p.xy),0)).rgb;if(all(abs(c-float3(1,0,1))<.001))discard;return float4(c,1);}
 )DISPLAY";
 struct F4{float x,y,z,w;};
 struct Params{uint32_t width,height,casterCount,fixtureCount,tracing,tileWidth,sourceMode,pad;float dt;uint32_t reset,mask,spawns;EffectSpawn commands[256];
  int floorX,floorY,panX,panY;float brassDt;unsigned clearBrass,foregroundCount,hudCount;
- F4 foreground[96]; RoomLamp fixtures[6]; ShadowCaster casters[420];HudRect hud[420];F4 bounds,gates;HudRect solids[420];unsigned tick,flowCount,padFlow[2];F4 vent,flowEvents[64];HudRect floorRect;int hudBanks[420];};
-struct Display{float sw,sh,dw,dh;uint32_t mode;float glow,sharpen,curvature,dx,dy,beamPhase,beamRatio,beamGain;uint32_t beamMode;float padding[2];};
+ F4 foreground[96]; RoomLamp fixtures[6]; ShadowCaster casters[420];HudRect hud[420];F4 bounds,gates;HudRect solids[420];unsigned tick,flowCount,visualLevels,roomMood;F4 vent,flowEvents[64];HudRect floorRect;int hudBanks[420];
+ F4 cinemaGrade,cinemaAudio,cinemaBoss,cinemaDeath;unsigned cinemaFlags[4];};
+struct Display{float sw,sh,dw,dh;uint32_t mode;float glow,sharpen,curvature,dx,dy,pad[2];float hitFlash,vignette,chromatic,padding2;uint32_t sourceMode,pad3[3];};
+struct CombatGlyphGpu {float x,y,dx,dy,strength;uint32_t kind,family,color;};
+struct CombatParamsGpu {uint32_t count,tileWidth,tileCapacity,padding;};
 }
 struct ResidentEffects::Impl {
  ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> ctx;
  DxrLighting hardware;
  std::array<ComPtr<ID3D11ComputeShader>,8> cs;
- ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps,overlayPS,beamPS;
- ComPtr<ID3D11Buffer> constants,displayConstants,pool,tiles,lights,cursors;
- ComPtr<ID3D11ShaderResourceView> poolSRV,tileSRV,lightSRV,inputSRV,outputSRV,illumSRV,overlaySRV;
+ ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps,overlayPS;
+ ComPtr<ID3D11Buffer> constants,displayConstants,combatConstants,pool,tiles,lights,cursors,combatGlyphs,combatTiles;
+ ComPtr<ID3D11ShaderResourceView> poolSRV,tileSRV,lightSRV,inputSRV,outputSRV,illumSRV,overlaySRV,combatGlyphSRV,combatTileSRV;
  ComPtr<ID3D11UnorderedAccessView> poolUAV,tileUAV,lightUAV,cursorUAV,outputUAV,illumUAV;
  ComPtr<ID3D11Texture2D> indices,palette;
  ComPtr<ID3D11ShaderResourceView> shadowSRV,dynamicShadowSRV,receiverSRV;
@@ -122,15 +122,16 @@ struct ResidentEffects::Impl {
  uint32_t floorRoom{};uint64_t floorFrame{};bool inArena{};
  bool syncMotion{};
  unsigned sourceMode{};bool pixelCoverage{};
- ComPtr<ID3D11Texture2D> input,output,illum,screen,overlayTexture,postInput,beamPrev1Texture,beamPrev2Texture,beamTexture;
- ComPtr<ID3D11ShaderResourceView> postSRV,beamPrev1SRV,beamPrev2SRV,beamSRV;
- ComPtr<ID3D11RenderTargetView> target,postRTV,beamRTV;
- ComPtr<ID3D11RasterizerState> raster;ComPtr<ID3D11SamplerState> sampler,pointSampler;
+ ComPtr<ID3D11Texture2D> input,output,illum,screen,overlayTexture,postInput;
+ ComPtr<ID3D11ShaderResourceView> postSRV;
+ ComPtr<ID3D11RenderTargetView> target,postRTV;
+ ComPtr<ID3D11RasterizerState> raster;ComPtr<ID3D11SamplerState> sampler;
  ComPtr<ID3D11Texture2D> filteredTexture;ComPtr<ID3D11RenderTargetView> filteredRTV;ComPtr<ID3D11ShaderResourceView> filteredSRV;int fw{},fh{};
  ComPtr<IDXGISwapChain1> swap;
  bool supportsTearing{},useTearing{},retryPresent{},lastOverlay{},oneShot{};
- uint64_t postFrame=~uint64_t(0),beamInputSerial=~uint64_t(0);int postGlow=-1,postSharpen=-1;
- bool beamHistory=false,beamRunning=false;double beamDisplayHz=0;uint64_t beamRefreshChecked=0;HMONITOR beamMonitor{};int presetBeamMode=-1;
+ uint64_t postFrame=~uint64_t(0);int postGlow=-1,postSharpen=-1;
+ ImpactDirectorState director{};
+ std::array<uint32_t,kCombatTileMax*kCombatTileCapacity> combatTileIndices{};
  int sw{},sh{},cw{},ch{};HWND window{};uint64_t serial=~uint64_t(0),reads{},frame{};
  bool initialized{},overlayPending{};std::string failure,name;
  HDC uiDC{};HBITMAP uiBitmap{};HGDIOBJ uiOld{};void* uiPixels{};
@@ -138,7 +139,6 @@ struct ResidentEffects::Impl {
  PFN_libra_preset_create presetCreate{};PFN_libra_preset_free presetFree{};
  PFN_libra_d3d11_filter_chain_create_deferred chainCreate{};
  PFN_libra_d3d11_filter_chain_free chainFree{};PFN_libra_d3d11_filter_chain_frame chainFrame{};
- PFN_libra_d3d11_filter_chain_set_param chainSetParam{};
  PFN_libra_error_free errorFree{};
  struct Prepared {libra_d3d11_filter_chain_t chain{};ComPtr<ID3D11CommandList> commands;int mode{};std::string error;};
  libra_d3d11_filter_chain_t chain{};int requested{},active{};std::future<Prepared> preparing;
@@ -155,22 +155,24 @@ struct ResidentEffects::Impl {
   ComPtr<IDXGIDevice> dx;device.As(&dx);ComPtr<IDXGIAdapter> ad;dx->GetAdapter(&ad);DXGI_ADAPTER_DESC desc{};ad->GetDesc(&desc);char text[256];WideCharToMultiByte(CP_UTF8,0,desc.Description,-1,text,sizeof(text),nullptr,nullptr);name=text;
   const char* entries[]={"integrate","spawn","binParticles","composite","markHud","markReceiver","stepSmoke","stampBodies"};
   for(int i=0;i<cs.size();i++){ComPtr<ID3DBlob> code,errors;HRESULT h=D3DCompile(effectsShader,strlen(effectsShader),"resident_effects",nullptr,nullptr,entries[i],"cs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);if(FAILED(h))throw std::runtime_error(errors?std::string((char*)errors->GetBufferPointer(),errors->GetBufferSize()):entries[i]);check(device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&cs[i]),entries[i]);}
-  for(auto entry:{"vs","ps","overlayPS","beamPS"}){ComPtr<ID3DBlob> code,errors;HRESULT h=D3DCompile(displayShader,strlen(displayShader),"display",nullptr,nullptr,entry,entry[0]=='v'?"vs_5_0":"ps_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);if(FAILED(h))throw std::runtime_error((char*)errors->GetBufferPointer());
+  for(auto entry:{"vs","ps","overlayPS"}){ComPtr<ID3DBlob> code,errors;HRESULT h=D3DCompile(displayShader,strlen(displayShader),"display",nullptr,nullptr,entry,entry[0]=='v'?"vs_5_0":"ps_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);if(FAILED(h))throw std::runtime_error((char*)errors->GetBufferPointer());
    if(entry[0]=='v')check(device->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&vs),entry);
-   else check(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,
-       std::string_view(entry)=="beamPS"?&beamPS:entry[0]=='p'?&ps:&overlayPS),entry);}
-  D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(Params);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&constants),"params");b.ByteWidth=sizeof(Display);check(device->CreateBuffer(&b,nullptr,&displayConstants),"display params");
+   else check(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,entry[0]=='p'?&ps:&overlayPS),entry);}
+  D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(Params);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&constants),"params");b.ByteWidth=sizeof(Display);check(device->CreateBuffer(&b,nullptr,&displayConstants),"display params");b.ByteWidth=sizeof(CombatParamsGpu);check(device->CreateBuffer(&b,nullptr,&combatConstants),"combat params");
   structured(1696,64,pool,poolSRV,poolUAV);structured(65,16,lights,lightSRV,lightUAV);
+  {ComPtr<ID3D11UnorderedAccessView> unused;
+   structured(kCombatGlyphCapacity,sizeof(CombatGlyphGpu),combatGlyphs,combatGlyphSRV,unused);
+   structured(kCombatTileMax*kCombatTileCapacity,4,combatTiles,combatTileSRV,unused);
+  }
   b.ByteWidth=sizeof(EffectSpawn)*256;check(device->CreateBuffer(&b,nullptr,&bodyConstants),"enemy body batch");
   ComPtr<ID3D11ShaderResourceView> unused;structured(9,4,cursors,unused,cursorUAV);
-  D3D11_RASTERIZER_DESC rd{};rd.FillMode=D3D11_FILL_SOLID;rd.CullMode=D3D11_CULL_NONE;rd.DepthClipEnable=TRUE;check(device->CreateRasterizerState(&rd,&raster),"raster");D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;check(device->CreateSamplerState(&sd,&sampler),"linear sampler");
-  sd.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;check(device->CreateSamplerState(&sd,&pointSampler),"point sampler");initialized=true;
+  D3D11_RASTERIZER_DESC rd{};rd.FillMode=D3D11_FILL_SOLID;rd.CullMode=D3D11_CULL_NONE;rd.DepthClipEnable=TRUE;check(device->CreateRasterizerState(&rd,&raster),"raster");D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;check(device->CreateSamplerState(&sd,&sampler),"linear sampler");initialized=true;
  }
  void structured(unsigned n,unsigned stride,ComPtr<ID3D11Buffer>& buffer,ComPtr<ID3D11ShaderResourceView>& srv,ComPtr<ID3D11UnorderedAccessView>& uav){
   D3D11_BUFFER_DESC d{};d.ByteWidth=n*stride;d.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;d.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;d.StructureByteStride=stride;
   std::vector<uint8_t> zero(d.ByteWidth);D3D11_SUBRESOURCE_DATA data{zero.data(),0,0};check(device->CreateBuffer(&d,&data,buffer.ReleaseAndGetAddressOf()),"structured buffer");check(device->CreateShaderResourceView(buffer.Get(),nullptr,srv.ReleaseAndGetAddressOf()),"structured SRV");check(device->CreateUnorderedAccessView(buffer.Get(),nullptr,uav.ReleaseAndGetAddressOf()),"structured UAV");
  }
- void unbind(){ID3D11ShaderResourceView* s[16]{};ID3D11UnorderedAccessView* u[8]{};ctx->CSSetShaderResources(0,16,s);ctx->CSSetUnorderedAccessViews(0,8,u,nullptr);ctx->PSSetShaderResources(0,8,s);ctx->OMSetRenderTargets(0,nullptr,nullptr);}
+ void unbind(){ID3D11ShaderResourceView* s[16]{};ID3D11UnorderedAccessView* u[8]{};ctx->CSSetShaderResources(0,16,s);ctx->CSSetUnorderedAccessViews(0,8,u,nullptr);ctx->PSSetShaderResources(0,4,s);ctx->OMSetRenderTargets(0,nullptr,nullptr);}
  void texture(int w,int h,DXGI_FORMAT format,unsigned bind,ComPtr<ID3D11Texture2D>& tex){D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=d.ArraySize=1;d.Format=format;d.SampleDesc.Count=1;d.BindFlags=bind;check(device->CreateTexture2D(&d,nullptr,tex.ReleaseAndGetAddressOf()),"texture");}
  void resizeSource(int w,int h){if(w==sw&&h==sh)return;unbind();flowActive=false;for(int i=0;i<2;i++){flowSRV[i].Reset();flowUAV[i].Reset();}
   texture(w,h,DXGI_FORMAT_R32_UINT,D3D11_BIND_SHADER_RESOURCE,input);check(device->CreateShaderResourceView(input.Get(),nullptr,inputSRV.ReleaseAndGetAddressOf()),"input SRV");
@@ -183,11 +185,7 @@ struct ResidentEffects::Impl {
   };
   maskTexture(shadowSRV,shadowUAV);maskTexture(receiverSRV,receiverUAV);
   texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET,postInput);check(device->CreateShaderResourceView(postInput.Get(),nullptr,postSRV.ReleaseAndGetAddressOf()),"post SRV");check(device->CreateRenderTargetView(postInput.Get(),nullptr,postRTV.ReleaseAndGetAddressOf()),"post RTV");
-  texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE,beamPrev1Texture);check(device->CreateShaderResourceView(beamPrev1Texture.Get(),nullptr,beamPrev1SRV.ReleaseAndGetAddressOf()),"beam history SRV");
-  texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE,beamPrev2Texture);check(device->CreateShaderResourceView(beamPrev2Texture.Get(),nullptr,beamPrev2SRV.ReleaseAndGetAddressOf()),"beam history SRV");
-  texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET,beamTexture);check(device->CreateShaderResourceView(beamTexture.Get(),nullptr,beamSRV.ReleaseAndGetAddressOf()),"beam SRV");check(device->CreateRenderTargetView(beamTexture.Get(),nullptr,beamRTV.ReleaseAndGetAddressOf()),"beam RTV");
   structured(((w+15)/16)*((h+15)/16)*55,4,tiles,tileSRV,tileUAV);sw=w;sh=h;serial=~uint64_t(0);
-  beamHistory=false;beamInputSerial=~uint64_t(0);beamRunning=false;
  }
  void createSource(int w,int h,DXGI_FORMAT format,ComPtr<ID3D11Texture2D>& tex,ComPtr<ID3D11ShaderResourceView>& view){
   texture(w,h,format,D3D11_BIND_SHADER_RESOURCE,tex);
@@ -210,9 +208,14 @@ struct ResidentEffects::Impl {
   if(!paletteSRV)createSource(4096,1,DXGI_FORMAT_R32_UINT,palette,paletteSRV);
   coverageValid=coverage && s.hardware_rt;
   if(coverageValid){
-   const int shift=padded?68:0;coverageBits.assign(size_t(h)*32,0);
+   // Bit coverage followed by packed displayed palette owners (four bytes per
+   // word). A neighbouring sprite must not borrow another object's silhouette.
+   const int shift=padded?68:0;coverageBits.assign(size_t(h)*(32+256),0);
    for(int y=0;y<h;++y){const uint16_t* row=pixels.data()+size_t(y)*stride;uint32_t* bits=coverageBits.data()+size_t(y)*32;
-    for(int x=0;x<w;++x)if(row[x]&4096){const int at=x+shift;if(at<1024)bits[at>>5]|=1u<<(at&31);}}
+    uint32_t* owners=coverageBits.data()+size_t(h)*32+size_t(y)*256;
+    for(int x=0;x<w;++x)if(row[x]&4096){const int at=x+shift;if(at<1024){
+     bits[at>>5]|=1u<<(at&31);owners[at>>2]|=(1u+((row[x]&4032u)>>6))<<((at&3)*8);
+    }}}
   }
   ctx->UpdateSubresource(indices.Get(),0,nullptr,pixels.data(),stride*2,0);
   ctx->UpdateSubresource(palette.Get(),0,nullptr,pens.data(),4096*4,0);
@@ -296,28 +299,52 @@ struct ResidentEffects::Impl {
   if(!output)throw std::runtime_error("No captured frame");
   const int w=sw,h=sh;
   bool fresh=serial!=packet.serial;Params p{};p.width=w;p.height=h;p.sourceMode=sourceMode;p.pad=pixelCoverage;p.tileWidth=(w+15)/16;
-  p.dt=fresh?packet.dt:0;p.reset=fresh&&packet.reset;p.mask=s.enhance?((s.particles?1:0)|(s.blood?2:0)|(s.debris?4:0)|(s.smoke?8:0)|(s.fire?16:0)|(s.voxels?32:0)|arena_effect_mask(s)):0;
-  if(p.reset)beamHistory=false;
+  p.dt=fresh?packet.dt:0;p.reset=fresh&&packet.reset;p.mask=s.enhance?((s.particles?1:0)|(s.blood?2:0)|(s.debris?4:0)|(s.smoke?8:0)|(s.fire?16:0)|(s.voxels?32:0)|arena_effect_mask(s)|environment_effect_mask(s)):0;
+  p.visualLevels=s.enhance?environment_levels(s):0;
+  p.roomMood=unsigned(room_theme(packet.room))|((packet.room&0xffffu)<<8);
+  if(packet.cinema.quality && packet.in_arena)p.mask|=RoomCinemaEffectMask;
+  const unsigned cinemaQuality=std::min(packet.cinema.quality,RoomCinemaQualityHigh);
+  p.cinemaFlags[0]=cinemaQuality;
+  const auto tint=room_cinema_tint(packet.room);
+  const float tintStrength=float(cinemaQuality)*.025f+
+      std::max(std::max(packet.cinema.bossIntro,packet.cinema.bossPower),packet.cinema.deathPower)*
+      .06f*float(cinemaQuality);
+  p.cinemaGrade={1.f+(tint[0]-1.f)*tintStrength,
+                 1.f+(tint[1]-1.f)*tintStrength,
+                 1.f+(tint[2]-1.f)*tintStrength,
+                 tintStrength};
+  p.cinemaAudio={packet.cinema.audioPulse,float(cinemaQuality),0,0};
+  const float cinemaOffset=sourceMode==2?68.f:0.f;
+  const float bossX=packet.cinema.bossX ? packet.cinema.bossX :
+      packet.geometry.floor.x+packet.geometry.floor.w*.5f;
+  const float bossY=packet.cinema.bossY ? packet.cinema.bossY :
+      packet.geometry.floor.y+packet.geometry.floor.h*.35f;
+  p.cinemaBoss={bossX+cinemaOffset,bossY,
+                packet.cinema.bossIntro+packet.cinema.bossPower,packet.cinema.bossPhase};
+  p.cinemaDeath={packet.cinema.deathX+cinemaOffset,packet.cinema.deathY,
+                 packet.cinema.deathPower,packet.cinema.deathRadius};
   ID3D11ShaderResourceView* dxr=nullptr;
   // Every arena room, its entry pan and room-to-room scrolls (room_lighting.cpp).
   if(s.hardware_rt && packet.in_arena && packet.geometry.floor.w>0 &&
      hardware.prepare(device.Get(),ctx.Get())){
       dxr=hardware.render(packet,w,h,sourceMode==2?68:0,
                           coverageValid?std::span<const uint32_t>(coverageBits):std::span<const uint32_t>());
-      if(dxr)p.mask|=1u<<21;
+      if(dxr)p.mask|=HardwareRayTracingEffectMask;
   }
   p.spawns=fresh&&s.enhance?unsigned(std::min(packet.spawns.size(),size_t(256))):0;
   std::copy_n(packet.spawns.begin(),p.spawns,p.commands);
   p.tick=unsigned(packet.frame);
   if(packet.in_arena && packet.studio.mountY!=0)p.vent={packet.studio.mountX-sw*.5f+66+(sourceMode==2?68.f:0.f),packet.studio.mountY+155,1,0};
-  if(p.mask&(2048|32768|65536)){
+  if(p.mask&(2048|32768|65536|(1u<<24))){
    p.casterCount=unsigned(std::min(packet.casters.size(),std::size(p.casters)));
    std::copy_n(packet.casters.begin(),p.casterCount,p.casters);
   }
   if(p.mask){
    p.hudCount=unsigned(std::min(packet.hud.size(),std::size(p.hud)));
    for(unsigned i=0;i<p.hudCount;++i){
-    p.hud[i]=packet.hud[i];p.hudBanks[i]=packet.hud[i].paletteBank;
+    p.hud[i]=packet.hud[i];
+    const auto& hud=packet.hud[i];
+    p.hudBanks[i]=hud.backdrop && hud.paletteBank>=0 ? -2-hud.paletteBank : hud.paletteBank;
    }
   }
   const auto& geo=packet.geometry;
@@ -333,15 +360,77 @@ struct ResidentEffects::Impl {
   }
   prepareBrass(packet,p);
   ctx->UpdateSubresource(constants.Get(),0,nullptr,&p,0,0);auto cb=constants.Get();ctx->CSSetConstantBuffers(0,1,&cb);
+  director=packet.weaponFx.director;
+  std::array<CombatGlyphGpu,kCombatGlyphCapacity> glyphs{};
+  CombatParamsGpu combat{0,unsigned((w+15)/16),kCombatTileCapacity,0};
+  const unsigned combatTileCount=unsigned((h+15)/16)*combat.tileWidth;
+  std::fill_n(combatTileIndices.begin(),combatTileCount*kCombatTileCapacity,~uint32_t(0));
+  const auto addGlyph=[&](float x,float y,float dx,float dy,float strength,uint32_t kind,uint32_t family){
+   if(combat.count>=glyphs.size())return;
+   const auto index=combat.count;
+   glyphs[combat.count++]={x,y,dx,dy,strength,kind,family,weapon_fx_signatures[family].color};
+   const float minX=std::max(0.f,std::min(x,kind==4?x+dx:x)-10.f);
+   const float minY=std::max(0.f,std::min(y,kind==4?y+dy:y)-10.f);
+   const float maxX=std::min(float(w-1),std::max(x,kind==4?x+dx:x)+10.f);
+   const float maxY=std::min(float(h-1),std::max(y,kind==4?y+dy:y)+10.f);
+   if(minX>maxX||minY>maxY)return;
+   const unsigned left=unsigned(minX)/16,right=unsigned(maxX)/16;
+   const unsigned top=unsigned(minY)/16,bottom=unsigned(maxY)/16;
+   for(unsigned ty=top;ty<=bottom;++ty)for(unsigned tx=left;tx<=right;++tx){
+    const auto tile=(ty*combat.tileWidth+tx)*kCombatTileCapacity;
+    for(unsigned slot=0;slot<kCombatTileCapacity;++slot){
+     if(combatTileIndices[tile+slot]!=~uint32_t(0))continue;
+     combatTileIndices[tile+slot]=index;
+     break;
+    }
+   }
+  };
+  const float combatLevel=s.enhance?effect_level(s.combat_feedback):0.f;
+  const float signatureLevel=combatLevel*effect_level(s.weapon_signatures);
+  if(signatureLevel>0){
+   for(unsigned i=0;i<packet.weaponFx.event_count;++i){
+    const auto& event=packet.weaponFx.events[i];
+    const auto family=std::min<unsigned>(uint8_t(event.family),5);
+    const auto& signature=weapon_fx_signatures[family];
+    const float kindScale=event.kind==WeaponFxKind::Muzzle?signature.muzzle:
+                          event.kind==WeaponFxKind::Wake?signature.wake:
+                          event.kind==WeaponFxKind::Impact?signature.impact:signature.ricochet;
+    addGlyph(event.x,event.y,event.dx,event.dy,event.strength*kindScale*signatureLevel,
+             uint32_t(event.kind),family);
+   }
+  }
+  const float trailLevel=combatLevel*effect_level(s.temporal_trails)*(s.reduce_motion?0.f:1.f);
+  const unsigned historyFrames=s.temporal_trails==1?2:s.temporal_trails==2?4:s.temporal_trails==3?6:0;
+  if(trailLevel>0){
+   const unsigned frames=std::min(historyFrames,uint32_t(packet.weaponFx.history_count));
+   for(unsigned i=0;i+1<frames;++i){
+    const auto& newer=packet.weaponFx.history[i],&older=packet.weaponFx.history[i+1];
+    for(unsigned n=0;n<newer.sample_count;++n){
+     const auto& now=newer.samples[n];
+     const auto before=std::find_if(older.samples.begin(),older.samples.begin()+older.sample_count,
+       [&](const ProjectileHistorySample& value){return value.slot==now.slot && value.family==now.family;});
+     if(before==older.samples.begin()+older.sample_count)continue;
+     const float fade=(1.f-float(i)/std::max(1u,frames-1))*(.48f+.10f*uint8_t(now.family));
+     addGlyph(before->x,before->y,now.x-before->x,now.y-before->y,fade*trailLevel,4,uint32_t(now.family));
+    }
+   }
+  }
+  if(combat.count){
+   ctx->UpdateSubresource(combatGlyphs.Get(),0,nullptr,glyphs.data(),0,0);
+   D3D11_BOX range{0,0,0,combatTileCount*kCombatTileCapacity*4,1,1};
+   ctx->UpdateSubresource(combatTiles.Get(),0,&range,combatTileIndices.data(),0,0);
+  }
+  ctx->UpdateSubresource(combatConstants.Get(),0,nullptr,&combat,0,0);
   ID3D11UnorderedAccessView* u[]={bodyUAV.Get(),nullptr,poolUAV.Get(),tileUAV.Get(),lightUAV.Get(),cursorUAV.Get(),floorUAV.Get(),stainUAV.Get()};ctx->CSSetUnorderedAccessViews(0,8,u,nullptr);
   if((p.mask&2048) && packet.in_arena){stampBodies(packet,fresh);auto debris=bodyUAV.Get();ctx->CSSetUnorderedAccessViews(0,1,&debris,nullptr);}
   if(flowActive && (p.mask&65536) && packet.in_arena && !p.reset && !p.clearBrass){
    auto flow=flowSRV[flowRead].Get();auto linear=sampler.Get();
    ctx->CSSetShaderResources(13,1,&flow);ctx->CSSetSamplers(0,1,&linear);
   }
-  ctx->CSSetShader(cs[0].Get(),nullptr,0);ctx->Dispatch(27,1,1);ctx->CSSetShader(cs[1].Get(),nullptr,0);ctx->Dispatch(1,1,1);if(p.mask){
-   constexpr UINT empty[4]{};
-   ctx->ClearUnorderedAccessViewUint(tileUAV.Get(),empty);
+  ctx->CSSetShader(cs[0].Get(),nullptr,0);ctx->Dispatch(27,1,1);ctx->CSSetShader(cs[1].Get(),nullptr,0);ctx->Dispatch(1,1,1);
+  constexpr UINT emptyTiles[4]{};
+  ctx->ClearUnorderedAccessViewUint(tileUAV.Get(),emptyTiles);
+  if(p.mask & ((1u<<21)-1)){
    ctx->CSSetShader(cs[2].Get(),nullptr,0);ctx->Dispatch((p.mask&(1u<<18))?26:(p.mask&512u)?18:16,1,1);
   }
   unbind();
@@ -373,6 +462,9 @@ struct ResidentEffects::Impl {
     unbind();
   }
   ID3D11ShaderResourceView* srvs[]={inputSRV.Get(),nullptr,tileSRV.Get(),poolSRV.Get(),lightSRV.Get(),indicesSRV.Get(),paletteSRV.Get(),nullptr,floorSRV.Get(),shadowSRV.Get(),nullptr,receiverSRV.Get(),stainSRV.Get(),flowActive?flowSRV[flowRead].Get():nullptr};auto linear=sampler.Get();ctx->CSSetSamplers(0,1,&linear);ctx->CSSetShaderResources(0,14,srvs);
+  auto combatSrv=combatGlyphSRV.Get();ctx->CSSetShaderResources(16,1,&combatSrv);
+  auto combatTileSrv=combatTileSRV.Get();ctx->CSSetShaderResources(17,1,&combatTileSrv);
+  auto combatBuffer=combatConstants.Get();ctx->CSSetConstantBuffers(2,1,&combatBuffer);
   ctx->CSSetShaderResources(15,1,&dxr);
   auto bodies=bodySRV.Get();ctx->CSSetShaderResources(14,1,&bodies);
   std::fill(std::begin(u),std::end(u),nullptr);u[1]=outputUAV.Get();ctx->CSSetUnorderedAccessViews(0,6,u,nullptr);ctx->CSSetShaderResources(0,14,srvs);ctx->CSSetShader(cs[3].Get(),nullptr,0);ctx->Dispatch((w+7)/8,(h+7)/8,1);unbind();if(dxr)hardware.consumed();serial=packet.serial;++frame;
@@ -390,16 +482,26 @@ struct ResidentEffects::Impl {
   }else texture(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,D3D11_BIND_RENDER_TARGET,screen);
   check(device->CreateRenderTargetView(screen.Get(),nullptr,&target),"back buffer RTV");cw=w;ch=h;
  }
- void quad(ID3D11RenderTargetView* rtv,int x,int y,int w,int h,const PcSettings& s,float dx=0,float dy=0){
+ void quad(ID3D11RenderTargetView* rtv,int x,int y,int w,int h,const PcSettings& s,float dx=0,float dy=0,
+           bool combatPresentation=true){
   unbind();ctx->OMSetRenderTargets(1,&rtv,nullptr);D3D11_VIEWPORT v{float(x),float(y),float(w),float(h),0,1};ctx->RSSetViewports(1,&v);ctx->RSSetState(raster.Get());
-  Display d{float(sw),float(sh),float(w),float(h),unsigned(s.filter),float(s.glow),float(s.sharpen),float(s.curvature),dx,dy};ctx->UpdateSubresource(displayConstants.Get(),0,nullptr,&d,0,0);auto cb=displayConstants.Get();ctx->PSSetConstantBuffers(1,1,&cb);
-  auto srv=outputSRV.Get();ctx->PSSetShaderResources(0,1,&srv);auto filtered=s.filter==9?postSRV.Get():s.filter==10?beamSRV.Get():filteredSRV.Get();ctx->PSSetShaderResources(2,1,&filtered);auto sam=sampler.Get();ctx->PSSetSamplers(0,1,&sam);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(ps.Get(),nullptr,0);ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);ctx->Draw(3,0);unbind();
+  const float overall=s.enhance?effect_level(s.combat_feedback):0;
+  Display d{float(sw),float(sh),float(w),float(h),unsigned(s.filter),float(s.glow),float(s.sharpen),float(s.curvature),dx,dy};
+  d.hitFlash=!combatPresentation||s.reduce_flashing?0:director.hit_flash*overall*effect_level(s.hit_flash);
+  d.vignette=!combatPresentation||s.reduce_flashing?0:director.vignette*overall*effect_level(s.edge_effects);
+  d.chromatic=!combatPresentation||s.reduce_flashing?0:director.chromatic_split*overall*effect_level(s.edge_effects);
+  d.sourceMode=sourceMode;
+  ctx->UpdateSubresource(displayConstants.Get(),0,nullptr,&d,0,0);auto cb=displayConstants.Get();ctx->PSSetConstantBuffers(1,1,&cb);
+  auto srv=outputSRV.Get();ctx->PSSetShaderResources(0,1,&srv);auto filtered=s.filter==9?postSRV.Get():filteredSRV.Get();ctx->PSSetShaderResources(2,1,&filtered);
+  ID3D11ShaderResourceView* protectedSources[]={indicesSRV.Get(),shadowSRV.Get()};
+  ctx->PSSetShaderResources(3,2,protectedSources);
+  auto sam=sampler.Get();ctx->PSSetSamplers(0,1,&sam);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(ps.Get(),nullptr,0);ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);ctx->Draw(3,0);unbind();
  }
  void ensurePreset(int mode){
   if(mode<5){requested=mode;return;}
   if(!library){wchar_t path[32768];GetModuleFileNameW(nullptr,path,32768);auto dll=std::filesystem::path(path).parent_path()/L"librashader_d3d11.dll";library=LoadLibraryW(dll.c_str());if(!library)throw std::runtime_error("librashader_d3d11.dll unavailable");
-   load(presetCreate,"libra_preset_create");load(presetFree,"libra_preset_free");load(chainCreate,"libra_d3d11_filter_chain_create_deferred");load(chainFree,"libra_d3d11_filter_chain_free");load(chainFrame,"libra_d3d11_filter_chain_frame");load(chainSetParam,"libra_d3d11_filter_chain_set_param");load(errorFree,"libra_error_free");}
-  if(preparing.valid()&&preparing.wait_for(std::chrono::seconds(0))==std::future_status::ready){auto p=preparing.get();if(!p.error.empty())throw std::runtime_error(p.error);if(chain)chainFree(&chain);ctx->ExecuteCommandList(p.commands.Get(),FALSE);chain=p.chain;active=p.mode;presetBeamMode=-1;}
+   load(presetCreate,"libra_preset_create");load(presetFree,"libra_preset_free");load(chainCreate,"libra_d3d11_filter_chain_create_deferred");load(chainFree,"libra_d3d11_filter_chain_free");load(chainFrame,"libra_d3d11_filter_chain_frame");load(errorFree,"libra_error_free");}
+  if(preparing.valid()&&preparing.wait_for(std::chrono::seconds(0))==std::future_status::ready){auto p=preparing.get();if(!p.error.empty())throw std::runtime_error(p.error);if(chain)chainFree(&chain);ctx->ExecuteCommandList(p.commands.Get(),FALSE);chain=p.chain;active=p.mode;}
   if(active==mode||preparing.valid())return;
   requested=mode;
   preparing=std::async(std::launch::async,[this,mode]{Prepared out;out.mode=mode;libra_shader_preset_t preset{};
@@ -411,34 +513,7 @@ struct ResidentEffects::Impl {
    }catch(const std::exception& e){out.error=e.what();if(preset)presetFree(&preset);if(out.chain)chainFree(&out.chain);}
    return out;});
  }
- void configurePreset(bool beam){
-  const int key=active*4+(beam?1:0);
-  if(active<5 || presetBeamMode==key)return;
-  auto set=[&](const char* name,float value){
-   if(auto* error=chainSetParam(&chain,name,value)){
-    std::string reason="CRT preset parameter failed: ";reason+=name;errorFree(&error);
-    throw std::runtime_error(reason);
-   }
-  };
-  if(active==5){set("interm",0);set("AS",beam?0:.2f);}
-  if(active==6)set("interlace_detect_toggle",0);
-  presetBeamMode=key;
- }
- void beamPass(float phase,float ratio,float gain,int mode){
-  unbind();auto* rtv=beamRTV.Get();ctx->OMSetRenderTargets(1,&rtv,nullptr);
-  D3D11_VIEWPORT viewport{0,0,float(sw),float(sh),0,1};ctx->RSSetViewports(1,&viewport);ctx->RSSetState(raster.Get());
-  Display d{float(sw),float(sh),float(sw),float(sh),0,0,0,0,0,0,phase,ratio,gain,uint32_t(mode),{}};
-  ctx->UpdateSubresource(displayConstants.Get(),0,nullptr,&d,0,0);
-  ID3D11Buffer* buffers[]={displayConstants.Get()};ctx->PSSetConstantBuffers(1,1,buffers);
-  ID3D11ShaderResourceView* sources[]={postSRV.Get(),beamPrev1SRV.Get(),beamPrev2SRV.Get()};
-  ctx->PSSetShaderResources(2,3,sources);
-  ID3D11SamplerState* point[]={pointSampler.Get()};ctx->PSSetSamplers(1,1,point);
-  ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(beamPS.Get(),nullptr,0);
-  ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);ctx->Draw(3,0);unbind();
- }
- void draw(HWND hwnd,int width,int height,int x,int y,int w,int h,const PcSettings& s,bool ui,bool one_shot,float dx,float dy,
-           float beamPhase,float displayHzOverride){
+ void draw(HWND hwnd,int width,int height,int x,int y,int w,int h,const PcSettings& s,bool ui,bool one_shot,float dx,float dy){
   if(!device||!output||width<1||height<1||width>16384||height>16384||uint64_t(width)*height>16777216||w<=0||h<=0)throw std::runtime_error("Invalid resident destination");
   // A nonblocking Present can leave the finished image queued in the back
   // buffer. Retry that image without adding another fullscreen draw ahead of it.
@@ -446,40 +521,17 @@ struct ResidentEffects::Impl {
   if(!oneShot && retryPresent && hwnd==window && width==cw && height==ch && ui==lastOverlay)return;
   retryPresent=false;lastOverlay=ui;
   resizeTarget(hwnd,width,height);float black[4]={0,0,0,1};ctx->ClearRenderTargetView(target.Get(),black);ensurePreset(s.filter);
-  const auto now=GetTickCount64();
-  const auto monitor=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);
-  if(hwnd && (monitor!=beamMonitor || now-beamRefreshChecked>1000 || !beamDisplayHz)){
-   beamDisplayHz=monitor_refresh_hz(hwnd);beamMonitor=monitor;beamRefreshChecked=now;
-  }
-  if(displayHzOverride>0)beamDisplayHz=displayHzOverride;
-  double ratio=beamDisplayHz/kArcadeHz;
-  if(s.beam_anti_retention){
-   const double nearest=std::round(ratio);
-   if(std::abs(ratio-nearest)<1e-3 && std::fmod(nearest,2.0)==0)ratio+=.001;
-  }
-  beamRunning=s.crt_beam!=0 && s.filter>=4 && !one_shot && ratio>=2.0 && beamDisplayHz<=1000;
-  const float gain=s.beam_brightness==1?.5f:s.beam_brightness==2?.7f:s.beam_brightness==3?.85f:
-                   std::clamp(float(.35+.1*ratio),.5f,.7f);
-  const double sourcePhase=std::clamp(double(beamPhase),0.0,.999999);
-  const double adjustedPhase=std::fmod((double(serial)+sourcePhase)*beamDisplayHz/kArcadeHz/ratio,1.0);
-  if(!beamRunning)beamHistory=false;
-  syncMotion=s.smooth_motion || beamRunning;
+  syncMotion=s.smooth_motion;
   useTearing=supportsTearing&&!s.sync_presentation();
   if(s.filter>=4&&(postFrame!=frame||postGlow!=s.glow||postSharpen!=s.sharpen)){
-   const bool nextFrame=beamHistory && beamInputSerial!=serial;
-   if(nextFrame){ctx->CopyResource(beamPrev2Texture.Get(),beamPrev1Texture.Get());ctx->CopyResource(beamPrev1Texture.Get(),postInput.Get());}
    PcSettings pre=s;pre.filter=4;pre.curvature=0;
-   quad(postRTV.Get(),0,0,sw,sh,pre);
+   quad(postRTV.Get(),0,0,sw,sh,pre,0,0,false);
    postFrame=frame;postGlow=s.glow;postSharpen=s.sharpen;
-   if(beamRunning)beamInputSerial=serial;
   }
-  if(beamRunning && !beamHistory){ctx->CopyResource(beamPrev1Texture.Get(),postInput.Get());ctx->CopyResource(beamPrev2Texture.Get(),postInput.Get());beamHistory=true;beamInputSerial=serial;}
-  if(beamRunning)beamPass(float(adjustedPhase),float(ratio),gain,s.crt_beam);
-  if(active==s.filter&&chain)configurePreset(beamRunning);
   if(s.filter>=5&&active==s.filter&&chain){
    if(fw!=w||fh!=h){unbind();texture(w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,filteredTexture);check(device->CreateRenderTargetView(filteredTexture.Get(),nullptr,filteredRTV.ReleaseAndGetAddressOf()),"filtered RTV");check(device->CreateShaderResourceView(filteredTexture.Get(),nullptr,filteredSRV.ReleaseAndGetAddressOf()),"filtered SRV");fw=w;fh=h;}
-   libra_viewport_t viewport{0,0,unsigned(w),unsigned(h)};frame_d3d11_opt_t options{};options.version=0;options.frame_direction=1;options.total_subframes=options.current_subframe=1;auto e=chainFrame(&chain,ctx.Get(),size_t(frame),beamRunning?beamSRV.Get():postSRV.Get(),filteredRTV.Get(),&viewport,nullptr,&options);if(e){errorFree(&e);throw std::runtime_error("D3D11 CRT frame failed");}PcSettings final=s;final.filter=8;final.glow=final.sharpen=0;quad(target.Get(),x,y,w,h,final,dx,dy);}
-  else if(s.filter>=4){PcSettings final=s;final.filter=beamRunning?10:9;quad(target.Get(),x,y,w,h,final,dx,dy);}
+   libra_viewport_t viewport{0,0,unsigned(w),unsigned(h)};frame_d3d11_opt_t options{};options.version=0;options.frame_direction=1;options.total_subframes=options.current_subframe=1;auto e=chainFrame(&chain,ctx.Get(),size_t(frame),postSRV.Get(),filteredRTV.Get(),&viewport,nullptr,&options);if(e){errorFree(&e);throw std::runtime_error("D3D11 CRT frame failed");}PcSettings final=s;final.filter=8;final.glow=final.sharpen=0;quad(target.Get(),x,y,w,h,final,dx,dy);}
+  else if(s.filter>=4){PcSettings final=s;final.filter=9;quad(target.Get(),x,y,w,h,final,dx,dy);}
   else quad(target.Get(),x,y,w,h,s,dx,dy);
   overlayPending=ui;
   if(ui){if(!uiDC){BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=cw;info.bmiHeader.biHeight=-ch;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;uiDC=CreateCompatibleDC(nullptr);uiBitmap=CreateDIBSection(uiDC,&info,DIB_RGB_COLORS,&uiPixels,nullptr,0);if(!uiDC||!uiBitmap)throw std::runtime_error("Menu upload bitmap");uiOld=SelectObject(uiDC,uiBitmap);texture(cw,ch,DXGI_FORMAT_B8G8R8A8_UNORM,D3D11_BIND_SHADER_RESOURCE,overlayTexture);check(device->CreateShaderResourceView(overlayTexture.Get(),nullptr,overlaySRV.ReleaseAndGetAddressOf()),"overlay SRV");}
@@ -504,12 +556,10 @@ bool ResidentEffects::update_arcade(std::span<const uint16_t> pixels,int stride,
  STV_RESIDENT_TRY(impl_->updateArcade(pixels,stride,w,h,pens,wide,title,packet,s,coverage))
 }
 bool ResidentEffects::recompose(const EffectPacket& packet,const PcSettings& s){STV_RESIDENT_TRY(impl_->compose(packet,s))}
-bool ResidentEffects::draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings& s,bool overlay,bool one_shot,float dx,float dy,float beam_phase,float display_hz_override){STV_RESIDENT_TRY(impl_->draw((HWND)window,cw,ch,x,y,w,h,s,overlay,one_shot,dx,dy,beam_phase,display_hz_override))}
+bool ResidentEffects::draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings& s,bool overlay,bool one_shot,float dx,float dy){STV_RESIDENT_TRY(impl_->draw((HWND)window,cw,ch,x,y,w,h,s,overlay,one_shot,dx,dy))}
 void* ResidentEffects::overlay_dc(){return impl_->uiDC;}
 bool ResidentEffects::present(){try{impl_->failure.clear();return impl_->present();}catch(const std::exception& e){impl_->failure=e.what();return false;}}
 bool ResidentEffects::filter_ready(int mode)const{return mode<5||impl_->active==mode;}
-bool ResidentEffects::beam_active()const{return impl_->beamRunning;}
-double ResidentEffects::display_refresh_hz()const{return impl_->beamDisplayHz;}
 bool ResidentEffects::finish(){STV_RESIDENT_TRY(impl_->finish())}
 bool ResidentEffects::capture(std::vector<uint32_t>& p,bool display){STV_RESIDENT_TRY(impl_->capture(p,display))}
 const std::string& ResidentEffects::error()const{return impl_->failure;}std::string ResidentEffects::adapter()const{return impl_->name;}uint64_t ResidentEffects::readback_bytes()const{return impl_->reads;}

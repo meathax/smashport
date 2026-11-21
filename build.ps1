@@ -26,6 +26,7 @@ if (!$Lab -and !$Rom) {
         if ($Saved -and $Saved.rom -eq (Get-FileHash -LiteralPath $Cache).Hash) {
             $Rom = $Cache
             if ($Play -and (Test-Path -LiteralPath $Exe) -and $Saved.player -eq (Get-FileHash -LiteralPath $Exe).Hash) {
+                & (Join-Path $Root 'tools\update-ready.ps1') -BuildDirectory $BuildDirectory
                 $env:STV_HOST_ROM_ZIP = $Cache
                 Start-Process -FilePath $Exe -WorkingDirectory $BuildDirectory
                 return
@@ -103,6 +104,7 @@ if ($Mode -eq 'MSVC') {
     if (!$Lab) {
         @{rom=(Get-FileHash -LiteralPath $Cache).Hash; player=(Get-FileHash -LiteralPath $Exe).Hash} |
             ConvertTo-Json | Set-Content -LiteralPath $Selection -Encoding utf8
+        & (Join-Path $Root 'tools\update-ready.ps1') -BuildDirectory $BuildDirectory
         Write-Host "Local game built from your ROM: $Exe"
         if ($Play) {
             $env:STV_HOST_ROM_ZIP = $Cache

@@ -1,0 +1,3 @@
+https://github.com/elripalda/RecompAchievements
+faf094acdf1efb57d8db7c8187b4b47aa1501805
+Unmodified sdk sources and top-level license.

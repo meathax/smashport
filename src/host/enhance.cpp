@@ -148,7 +148,7 @@ void EnemyRemainsTracker::observe(std::span<const uint16_t> ram,gsp::ObjectEvent
                 }
                 impacts_.push_back({px,py,
                     float(int32_t(longword(partner+0x20)))/65536.f,
-                    float(int32_t(longword(partner+0x40)))/65536.f,oid,material,room});
+                    float(int32_t(longword(partner+0x40)))/65536.f,oid,material,room,0,weapon});
             }
         }
         return;
@@ -273,7 +273,9 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         }
         // DISP OSIZE supplies a 2D footprint. Proxy height is an artistic choice.
         unsigned type=(word(node+0x150)>>8)&0x3f;
-        bool actor=type==1||type==3||type==4||type==6||type==8||type==9||type==10||type==14||type==16||type==17||type==18||type==24||type==25;
+        bool actor=type==1||type==3||type==4||type==6||type==8||type==9||type==10||
+                   type==13||type==14||type==16||type==17||type==18||
+                   type==21||type==24||type==25;
         float w=float(word(node+0xf0)),h=float(word(node+0x100));
         float x=float(int16_t(word(node+0x70))-s.camera_x),y=float(int16_t(word(node+0x90))-s.camera_y);
         if(actor && s.blockers.size()<64 && w>=2 && w<=96 && h>=2 && h<=96 && x>-96 && x<width && y>0 && y<height) {
@@ -302,6 +304,8 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         bool ui=(oid&0x1f00)==0x0700 || oid==1 || lifePanel;
         const bool tvMonitor=oid==0x070f || oid==0x0710; // TVMNTR map and announcer parts
         const bool overhead=oid==2 || oid==3; // SCROLL_WAVE changes SUBUP to SUBUP2 while moving it
+        const auto hudPal=word(node+0x110);
+        const int hudBank=(hudPal&0xf00)|((hudPal>>8)&0xc0);
         if(lifePanel && x<width && x+w>0){
             // The 52x56 backplate is drawn over the room wall: its outer five
             // columns on the screen edge and six top rows are rim wall art that
@@ -309,12 +313,11 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
             // score bezel hanging below it (106x33, measured against the retail
             // frames in both layouts) are screen overlay.
             const bool left=x+w*.5f<width*.5f;
-            s.hud.push_back({{left?x+5:x,y+6,w-5,h-6},-1});
-            s.hud.push_back({{left?x+25:x-77,46,106,33},-1});
-        }else if((overhead || (ui && (tvMonitor || y+h<=56 || oid==1))) && w>0 && h>0 && x<width && x+w>0 && y<height && y+h>0){
-            const auto pal=word(node+0x110);
-            const int bank=(pal&0xf00)|((pal>>8)&0xc0);
-            s.hud.push_back({{x,y,w,h},(tvMonitor || overhead || oid==1)?bank:-1});
+            s.hud.push_back({{left?x+5:x,y+6,w-5,h-6},hudBank,true});
+            s.hud.push_back({{left?x+25:x-77,46,106,33},hudBank,true});
+        }else if((overhead || (ui && (tvMonitor || y+h<=56 || oid==1))) &&
+                 w>0 && h>0 && x<width && x+w>0 && y<height && y+h>0){
+            s.hud.push_back({{x,y,w,h},hudBank});
         }
         // Only physical objects occlude light. Neutral animation frames include
         // blood, muzzle sprites and explosions, whose bounds are not bodies.
@@ -322,22 +325,43 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         if(physical && !ui && oid!=6 && w>0 && h>0 && w<=160 && h<=160 && x+w>0 && x<width && y+h>25 && y<height){
             unsigned pal=word(node+0x110);
             float bank=float((pal&0xf00)|((pal>>8)&0xc0));
-            s.casters.push_back({x,y,w,h,y+h,bank,float(player),float(type==26?4:player?1:type==12?3:(type==3||type==4||type==14||type==17)?2:1)});
+            const unsigned material=body_flags(oid);
+            const unsigned response=type==26 ? 4 : player ? 1 : (type==12 || type==13) ? 3 :
+                                    type==21 ? 2 :
+                                    (material&MachinePart) ? 2 : (material&BossPart) ? 5 : 1;
+            s.casters.push_back({x,y,w,h,y+h,bank,float(player),float(response)});
             if(player)playerFeet[player-1]=std::max(playerFeet[player-1],y+h);
         }
         if (((oid&0xc000)==0x8000 || enemy_body(oid)) && w>=2 && w<=160 && h>=2 && h<=160)
             {
                 const unsigned palette=word(node+0x110);
                 s.targets.push_back({node,x,y,w,h,(body_flags(oid)&MachinePart)!=0,oid,int((palette&0xf00)|((palette>>8)&0xc0))});
+                if (body_flags(oid)&BossPart) {
+                    ++s.studio.bossParts;
+                    s.studio.bossX += x+w*.5f;
+                    s.studio.bossY += y+h*.5f;
+                }
             }
         node=longword(node);
+    }
+    if (s.studio.bossParts) {
+        s.studio.bossX /= float(s.studio.bossParts);
+        s.studio.bossY /= float(s.studio.bossParts);
     }
     if(s.studio.exit){s.studio.aimX=prize?prizeX:s.studio.doorX;s.studio.aimY=prize?prizeY:s.studio.doorY;}
     for(auto& caster:s.casters)if(caster.player)caster.foot=playerFeet[int(caster.player)-1];
     s.valid=true; return s;
 }
 size_t EnhanceEffects::voxel_count() const { return size_t(std::count_if(particles_.begin(),particles_.end(),[](const auto& p){return p.kind==Kind::Voxel;})); }
-void EnhanceEffects::reset() { packet_.remains.clear();packet_.spawns.clear();packet_.reset=true;packet_.dt=0;packet_.boxes.clear();packet_.casters.clear();packet_.hud.clear();packet_.lamps={};++packet_.serial; particles_.clear(); contacts_.clear(); gpu_error_.clear(); previous_={}; primed_=false; random_=0x51a7b10du; }
+void EnhanceEffects::reset_weapon_fx() { packet_.weaponFx={}; }
+void EnhanceEffects::reset() {
+    bossSmokeDeath_=false;
+    packet_.remains.clear();packet_.spawns.clear();packet_.reset=true;packet_.dt=0;
+    packet_.boxes.clear();packet_.casters.clear();packet_.hud.clear();packet_.lamps={};packet_.cinema={};
+    reset_weapon_fx();++packet_.serial;particles_.clear();contacts_.clear();
+    gpu_error_.clear();previous_={};primed_=false;weaponFxObjectContinuity_=false;
+    random_=0x51a7b10du;
+}
 float EnhanceEffects::random() { random_^=random_<<13; random_^=random_>>17; random_^=random_<<5; return float(random_&65535)/65535.f; }
 bool EnhanceEffects::enabled(Kind k,const PcSettings& s) const {
     switch(k) { case Kind::Spark:return s.particles; case Kind::Blood:return s.blood;
@@ -362,7 +386,59 @@ void EnhanceEffects::emit(Kind kind,float x,float y,int count,bool inert) {
         p.total=p.life;particles_.push_back(p);
     }
 }
-void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings) {
+void EnhanceEffects::advance_weapon_fx(const EffectScene& scene,float dt,const PcSettings& settings) {
+    auto& fx=packet_.weaponFx;
+    auto& director=fx.director;
+    const float elapsed=std::clamp(dt,0.f,.25f);
+    director.camera_trauma=std::max(0.f,director.camera_trauma-elapsed*1.15f);
+    director.zoom_punch=std::max(0.f,director.zoom_punch-elapsed*.12f);
+    director.hit_flash=std::clamp(director.hit_flash*std::exp(-elapsed*11.f),0.f,1.f);
+    director.vignette=std::clamp(director.vignette*std::exp(-elapsed*3.2f),0.f,1.f);
+    director.chromatic_split=std::clamp(director.chromatic_split*std::exp(-elapsed*5.f),0.f,1.f);
+    director.tier=director.camera_trauma>=.62f?ImpactTier::Large:
+        director.camera_trauma>=.27f?ImpactTier::Medium:
+        director.camera_trauma>0?ImpactTier::Small:ImpactTier::None;
+    if(!settings.combat_feedback){
+        reset_weapon_fx();
+        return;
+    }
+    fx.history_count=0;
+    (void)scene;
+}
+void EnhanceEffects::queue_weapon_fx(WeaponFxKind kind,WeaponFamily family,
+                                     float x,float y,float dx,float dy,float strength) {
+    auto& fx=packet_.weaponFx;
+    const WeaponFxEvent event{x,y,dx,dy,std::clamp(strength,0.f,2.f),family,kind};
+    if(fx.event_count<fx.events.size()){fx.events[fx.event_count++]=event;return;}
+    if(kind==WeaponFxKind::Wake)return;
+    for(unsigned i=0;i<fx.event_count;++i){
+        if(fx.events[i].kind!=WeaponFxKind::Wake)continue;
+        fx.events[i]=event;
+        return;
+    }
+}
+bool EnhanceEffects::has_weapon_fx(WeaponFxKind kind,WeaponFamily family,float x,float y) const {
+    const auto& fx=packet_.weaponFx;
+    for(size_t i=0;i<fx.event_count;++i){
+        const auto& event=fx.events[i];
+        if(event.kind==kind && event.family==family &&
+           std::abs(event.x-x)<=2.f && std::abs(event.y-y)<=2.f)return true;
+    }
+    return false;
+}
+void EnhanceEffects::impact(ImpactTier tier) {
+    auto& director=packet_.weaponFx.director;
+    float trauma=.18f,zoom=.003f,flash=.16f,vignette=.10f,split=.08f;
+    if(tier==ImpactTier::Medium){trauma=.45f;zoom=.007f;flash=.34f;vignette=.22f;split=.26f;}
+    if(tier==ImpactTier::Large){trauma=.82f;zoom=.014f;flash=.72f;vignette=.44f;split=.62f;}
+    director.camera_trauma=std::max(director.camera_trauma,trauma);
+    director.zoom_punch=std::max(director.zoom_punch,zoom);
+    director.hit_flash=std::max(director.hit_flash,flash);
+    director.vignette=std::max(director.vignette,vignette);
+    director.chromatic_split=std::max(director.chromatic_split,split);
+    director.tier=static_cast<uint8_t>(tier)>static_cast<uint8_t>(director.tier)?tier:director.tier;
+}
+void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings,float audioPulse) {
     packet_.remains=scene.remains;
     packet_.in_arena=scene.in_arena || scene.valid;
     packet_.roomIntro=scene.roomIntro;packet_.room=scene.room;packet_.frame=scene.frame;
@@ -371,30 +447,66 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     packet_.roomAge=scene.frame-roomStart_;packet_.studio=scene.studio;
     packet_.foreground=scene.targets;
     packet_.lamps=scene.lamps;packet_.hud=scene.hud;packet_.geometry=scene.geometry;
-    if((settings.hardware_rt || settings.persistent_gore || settings.fluid_smoke || settings.weapon_impacts) && scene.valid)packet_.casters=scene.casters;else packet_.casters.clear();
+    packet_.cinema=roomCinema_.observe({
+        scene.frame,scene.room,unsigned(std::min<std::uint64_t>(packet_.roomAge,1000000)),
+        scene.studio.bossParts,scene.studio.bossX,scene.studio.bossY,
+        scene.in_arena,scene.roomIntro,scene.studio.boss,
+        std::any_of(scene.remains.begin(),scene.remains.end(),[](const auto& body){return (body.flags&BossPart)!=0;})
+    },unsigned(std::max(settings.room_cinema,0)),audioPulse);
+    const auto cinema=packet_.cinema;
+    if((settings.hardware_rt || settings.persistent_gore || settings.fluid_smoke ||
+        settings.weapon_impacts || settings.contact_shadows) && scene.valid)
+        packet_.casters=scene.casters;
+    else
+        packet_.casters.clear();
     packet_.dxrLights.clear();
     if(settings.hardware_rt){
-        // Hardware-RT light sources follow the observed projectile and blast sprites.
-        // Colours are presentation choices per weapon family; nothing feeds back.
+        // Boss-room hostile shots carry encounter-colored spill. This is a room
+        // treatment, not a claim that every hostile shot belongs to the boss.
+        const bool bossRoom=scene.room==10 || scene.room==0x10007 ||
+            scene.room==0x20007 || scene.room==0x20015;
+        const auto tint=boss_attack_tint(scene.room);
         for(const auto& obj:scene.objects){
-            RoomLamp lamp{obj.x,obj.y,14,80,1,.82f,.45f,1.0f};
-            if(obj.kind==EffectKind::Explosion){
-                const float flick=.85f+.15f*float((scene.frame*7+obj.slot)%5)/4.f;
-                lamp={obj.x,obj.y,26,165,1,.55f,.18f,3.2f*flick};
-            }else if(obj.kind==EffectKind::EnemyShot){
-                lamp={obj.x,obj.y,12,74,1,.36f,.12f,1.15f};
-            }else if(obj.kind==EffectKind::Projectile){
-                if(obj.weapon==0x4205)lamp={obj.x,obj.y,14,96,.35f,.8f,1,1.45f};
-                else if(obj.weapon==0x4204||obj.weapon==0x4206)lamp={obj.x,obj.y,16,92,1,.58f,.22f,1.3f};
-                else if(obj.weapon!=0x4201)lamp={obj.x,obj.y,14,82,1,.74f,.36f,1.05f};
-            }else continue;
-            packet_.dxrLights.push_back(lamp);
+            const bool blast=obj.kind==EffectKind::Explosion;
+            const bool shot=bossRoom && scene.in_arena && obj.kind==EffectKind::EnemyShot;
+            if(!blast && !shot)continue;
+            // Smooth, frame-deterministic breathing; no accumulated light energy
+            // or render-rate-dependent flashes on stationary laser objects.
+            const float flick=.9f+.1f*std::sin(float(scene.frame%4096)*.12f+float(obj.slot%31));
+            const auto color=bossRoom?tint:std::array<float,3>{1,.55f,.18f};
+            const RoomLamp lamp{obj.x,obj.y,blast?26.f:14.f,blast?165.f:72.f,
+                color[0],color[1],color[2],(blast?3.2f:1.15f)*flick};
+            if(packet_.dxrLights.size()<MaxGameplayLights){
+                packet_.dxrLights.push_back(lamp);
+                continue;
+            }
+            const auto weakest=std::min_element(packet_.dxrLights.begin(),packet_.dxrLights.end(),
+                [](const auto& a,const auto& b){return a.power*a.radius<b.power*b.radius;});
+            if(weakest!=packet_.dxrLights.end() && lamp.power*lamp.radius>weakest->power*weakest->radius)
+                *weakest=lamp;
+        }
+        if(bossRoom){
+            // A barrage must read as colored pools, not twelve overlapping
+            // full-power explosions bleaching the floor and persistent debris.
+            float power=0;
+            for(const auto& lamp:packet_.dxrLights)power+=lamp.power;
+            const float exposure=std::min(1.f,5.f/std::max(power,.001f));
+            for(auto& lamp:packet_.dxrLights)lamp.power*=exposure;
         }
     }
     packet_.spawns.clear();packet_.dt=0;packet_.reset=false;++packet_.serial;
+    packet_.weaponFx.event_count=0;
     packet_.mask=(settings.particles?1:0)|(settings.blood?2:0)|(settings.debris?4:0)|(settings.smoke?8:0)|(settings.fire?16:0)|(settings.voxels?32:0)|arena_effect_mask(settings);
     packet_.boxes=scene.blockers;
-    if(!settings.enhance || !scene.valid || scene.roomIntro) {reset();if(settings.hardware_rt && scene.valid)packet_.casters=scene.casters;packet_.hud=scene.hud;if(settings.enhance && scene.in_arena)packet_.remains=scene.remains;return;}
+    if(!settings.enhance || !scene.valid || scene.roomIntro) {
+        reset();
+        packet_.cinema=cinema;
+        if((settings.hardware_rt || settings.contact_shadows) && scene.valid)
+            packet_.casters=scene.casters;
+        packet_.hud=scene.hud;
+        if(settings.enhance && scene.in_arena)packet_.remains=scene.remains;
+        return;
+    }
     std::array<EffectSpawn,2> deaths{};
     unsigned deathCount=0;
     if(primed_ && scene.room==previous_.room && scene.frame>previous_.frame &&
@@ -411,6 +523,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         }
     }
     auto emitDeaths=[&]{
+        if(deathCount && settings.combat_feedback)impact(ImpactTier::Large);
         if(resident_ && settings.destruction)for(const auto& hit:scene.impacts){
             if(!(hit.flags&BrokenJoint) || packet_.spawns.size()>=250)continue;
             const bool eye=hit.oid==0x9904 || hit.oid==0x9905;
@@ -438,12 +551,22 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     };
     if(!primed_ || scene.frame<previous_.frame || scene.frame-previous_.frame>8 || scene.room!=previous_.room ||
        scene.width!=previous_.width || scene.height!=previous_.height || scene.camera_x!=previous_.camera_x || scene.camera_y!=previous_.camera_y) {
-        reset();packet_.hud=scene.hud;packet_.lamps=scene.lamps;
-        if(settings.hardware_rt || settings.persistent_gore || settings.fluid_smoke || settings.weapon_impacts)packet_.casters=scene.casters;
+        const bool continuous_room=primed_ && scene.frame>previous_.frame &&
+            scene.frame-previous_.frame<=8 && scene.room==previous_.room &&
+            scene.width==previous_.width && scene.height==previous_.height;
+        const float elapsed=continuous_room?float(scene.frame-previous_.frame)*.01827925f:0;
+        WeaponFxPacket retainedFx{};
+        if(continuous_room)retainedFx=packet_.weaponFx;
+        reset();packet_.cinema=cinema;packet_.hud=scene.hud;packet_.lamps=scene.lamps;
+        if(continuous_room)packet_.weaponFx=retainedFx;
+        if(settings.hardware_rt || settings.persistent_gore || settings.fluid_smoke ||
+           settings.weapon_impacts || settings.contact_shadows)
+            packet_.casters=scene.casters;
         previous_=scene;
         // Retain scene identity, not emitter continuity: an explosion already
         // visible when scrolling stops must still seed its cosmetic burst.
-        previous_.objects.clear();packet_.remains=scene.remains;primed_=true;emitDeaths();return;
+        previous_.objects.clear();packet_.remains=scene.remains;primed_=true;
+        advance_weapon_fx(scene,elapsed,settings);emitDeaths();return;
     }
     // Repaints and pauses never advance cosmetic time; disabled categories vanish immediately.
     std::erase_if(particles_,[&](const Particle& p){return !enabled(p.kind,settings);});
@@ -451,6 +574,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     emitDeaths();
     const float dt=float(scene.frame-previous_.frame)*.01827925f; // 506*289 / 8 MHz
     packet_.dt=dt;
+    advance_weapon_fx(scene,dt,settings);
     for(auto& p:particles_) {
         p.life-=dt; p.x+=p.vx*dt;p.y+=p.vy*dt;p.z+=p.vz*dt;
         if(p.kind==Kind::Smoke) {p.size+=dt*1.5f;p.vx*=std::exp(-dt*2);p.vy*=std::exp(-dt*2);}
@@ -468,10 +592,46 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     auto command=[&](unsigned kind,float x,float y,float count,float dx,float dy,float variant,float size){
         if(resident_ && packet_.spawns.size()<256)packet_.spawns.push_back({x,y,float(kind),count,dx,dy,variant,size});
     };
+    // Reuse the fixed quarter-resolution flow field. Eight injections and 24
+    // core particles per observation bound even a simultaneous boss barrage.
+    // Key moments and explosions take priority over attack wisps.
+    unsigned smokeEvents=0,smokeCores=0;
+    const unsigned smokeStyle=scene.room==0x10007?6:scene.room==0x20007?7:scene.room==0x20015?8:5;
+    auto smokePuff=[&](float x,float y,float dx,float dy,float strength,unsigned cores){
+        if(!settings.fluid_smoke || smokeEvents>=8)return;
+        ++smokeEvents;
+        command(15,x,y,1,dx,dy,float(smokeStyle),strength);
+        const unsigned count=std::min(cores,24-smokeCores);
+        if(count)command(16,x,y,float(count),dx,dy,strength>=1?1.f:0.f,0);
+        smokeCores+=count;
+    };
+    if(cinema.death && !bossSmokeDeath_){
+        for(float side:{-1.f,0.f,1.f})smokePuff(cinema.deathX+side*18,cinema.deathY,side*.35f,-.3f,1.65f,6);
+    }
+    bossSmokeDeath_=cinema.death;
+    for(const auto& hit:scene.impacts)if((hit.flags&(BossPart|BrokenJoint))==(BossPart|BrokenJoint))
+        smokePuff(hit.x-scene.camera_x,hit.y-scene.camera_y,0,-.3f,1.5f,6);
+    if(settings.fluid_smoke)for(const auto& obj:scene.objects)if(obj.kind==EffectKind::Explosion){
+        if(smokeEvents>=8)break;
+        const bool fresh=std::none_of(previous_.objects.begin(),previous_.objects.end(),[&](const auto& old){
+            return old.slot==obj.slot && old.kind==obj.kind && old.weapon==obj.weapon &&
+                std::abs(old.x-obj.x)<32 && std::abs(old.y-obj.y)<32;
+        });
+        if(fresh)smokePuff(obj.x,obj.y,0,-.15f,scene.studio.boss?1.25f:1.05f,6);
+    }
     for(const auto& hit:scene.impacts){
-        if(hit.flags&BrokenJoint)continue;
+        if(hit.flags&BrokenJoint){
+            if(settings.combat_feedback)impact(ImpactTier::Large);
+            continue;
+        }
         const float x=hit.x-scene.camera_x,y=hit.y-scene.camera_y;
         const bool metal=hit.flags&MachinePart,boss=hit.flags&BossPart;
+        WeaponFamily family{};
+        if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(hit.weapon,family) &&
+           !has_weapon_fx(WeaponFxKind::Impact,family,x,y))
+            queue_weapon_fx(WeaponFxKind::Impact,family,x,y,hit.dx,hit.dy,boss?1.4f:metal?1.15f:1.f);
+        if(settings.combat_feedback)
+            impact(boss||hit.weapon==0x4204||hit.weapon==0x4206?ImpactTier::Medium:ImpactTier::Small);
         if(metal){
             if(settings.particles)emit(Kind::Spark,x,y,boss?18:7);
             if(settings.destruction)command(13,x,y,boss?4:2,hit.dx,hit.dy,1,0);
@@ -527,12 +687,41 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         }
     }
     size_t emitters=0;
+    unsigned smokeTrails=0;
     for(const auto& obj:scene.objects) {
         if(++emitters>96) break;
         const auto prior=std::find_if(previous_.objects.begin(),previous_.objects.end(),[&](const auto& old){
             return old.slot==obj.slot && old.kind==obj.kind && old.weapon==obj.weapon && std::abs(old.x-obj.x)<32 && std::abs(old.y-obj.y)<32;});
         bool newly_visible=prior==previous_.objects.end();
         bool launched=newly_visible || (prior->vx==0 && prior->vy==0 && (obj.vx!=0 || obj.vy!=0));
+        if(!newly_visible && scene.studio.boss && obj.kind==EffectKind::EnemyShot &&
+           scene.frame/10!=previous_.frame/10 && smokeTrails<2){
+            const float speed=std::hypot(obj.vx,obj.vy);
+            if(speed>.1f){
+                smokePuff(obj.x-obj.vx,obj.y-obj.vy,-obj.vx/speed*.2f,-obj.vy/speed*.2f,.35f,1);
+                ++smokeTrails;
+            }
+        }
+        WeaponFamily family{};
+        if(settings.combat_feedback && settings.weapon_signatures &&
+           obj.kind==EffectKind::Projectile && projectile_weapon_family(obj.weapon,family)){
+            const float speed=std::hypot(obj.vx,obj.vy);
+            if(weaponFxObjectContinuity_ && launched && speed>.1f){
+                const float x=obj.barrel?obj.muzzle_x:obj.x-obj.vx;
+                const float y=obj.barrel?obj.muzzle_y:obj.y-obj.vy;
+                queue_weapon_fx(WeaponFxKind::Muzzle,family,x,y,obj.vx/speed,obj.vy/speed,1);
+            }
+            if(!newly_visible){
+                const float oldSpeed=std::hypot(prior->vx,prior->vy);
+                if(speed>.1f && oldSpeed>.1f){
+                    const float dot=(obj.vx*prior->vx+obj.vy*prior->vy)/(speed*oldSpeed);
+                    if(dot<-.35f){
+                        queue_weapon_fx(WeaponFxKind::Ricochet,family,obj.x,obj.y,obj.vx/speed,obj.vy/speed,1);
+                        if(settings.combat_feedback)impact(ImpactTier::Small);
+                    }
+                }
+            }
+        }
         if(launched && (settings.muzzle_flash || settings.weapon_impacts || settings.fluid_smoke) && (obj.kind==EffectKind::EnemyShot ||
            (obj.kind==EffectKind::Projectile && obj.weapon!=0x4204 && obj.weapon!=0x4206))){
             float dx=obj.vx,dy=obj.vy;
@@ -555,7 +744,15 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             float speed=std::hypot(dx,dy);
             if(speed>.1f){
                 if(settings.muzzle_flash)spawn_arena(ArenaEffect::Muzzle,x,y,dx/speed,dy/speed);
-                if(settings.fluid_smoke)command(16,x,y,3,dx/speed,dy/speed,0,0);
+                if(settings.fluid_smoke){
+                    if(scene.studio.boss && obj.kind==EffectKind::EnemyShot)
+                        smokePuff(x,y,dx/speed,dy/speed,.55f,2);
+                    else{
+                        const unsigned count=std::min(3u,24-smokeCores);
+                        if(count)command(16,x,y,float(count),dx/speed,dy/speed,0,0);
+                        smokeCores+=count;
+                    }
+                }
                 bool energy=obj.kind==EffectKind::EnemyShot || obj.weapon==0x4205;
                 if(settings.weapon_impacts || settings.fluid_smoke)command(15,x,y,1,dx/speed,dy/speed,energy?1.f:0.f,0);
             }
@@ -576,15 +773,6 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             command(unsigned(ArenaEffect::Brass),obj.x-obj.vx,obj.y-obj.vy,1,obj.vx,obj.vy,float(casing),0);
         }
         // Player bullets already have their retail sprite, including at analog bearings.
-        if(obj.kind==EffectKind::EnemyShot && !newly_visible && settings.tracers) {
-            float dx=obj.x-prior->x,dy=obj.y-prior->y;
-            float distance=std::hypot(dx,dy);
-            if(distance>=1) {
-                float scale=std::min(1.f,12.f/distance);
-                dx*=scale;dy*=scale;
-                command(unsigned(ArenaEffect::Tracer),obj.x-dx*.5f,obj.y-dy*.5f,1,dx*.5f,dy*.5f,0,0);
-            }
-        }
         if(obj.kind==EffectKind::Projectile) {
             if(newly_visible && settings.particles) emit(Kind::Spark,obj.x,obj.y,1);
         } else if(obj.kind==EffectKind::Blood && !scene.studio.boss) {
@@ -592,8 +780,8 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             if(newly_visible && settings.blood) emit(Kind::Blood,obj.x,obj.y,24);
             if(newly_visible && settings.debris) emit(Kind::Debris,obj.x,obj.y,5);
         } else if(obj.kind==EffectKind::Explosion) {
-            if(newly_visible && settings.fluid_smoke)command(16,obj.x,obj.y,8,0,0,1,0);
-            if(newly_visible && (settings.weapon_impacts||settings.fluid_smoke))command(15,obj.x,obj.y,1,0,0,2,0);
+            if(newly_visible && settings.combat_feedback)impact(ImpactTier::Large);
+            if(newly_visible && settings.weapon_impacts && !settings.fluid_smoke)command(15,obj.x,obj.y,1,0,0,2,0);
             if(newly_visible && settings.shockwaves) spawn_arena(ArenaEffect::Shockwave,obj.x,obj.y);
             if(newly_visible && settings.voxels) emit(Kind::Voxel,obj.x,obj.y,8,true);
             if(newly_visible && settings.debris) emit(Kind::Debris,obj.x,obj.y,6,true);
@@ -641,6 +829,11 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             if(!entered && !(now==scene.objects.end()&&inside(old.x,old.y)))continue;
             if(std::find(contacts_.begin(),contacts_.end(),key)!=contacts_.end()){hit=true;break;}
             float x=old.x+dx*(entered?contact.t:0),y=old.y+dy*(entered?contact.t:0);
+            WeaponFamily family{};
+            if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(old.weapon,family) &&
+               !has_weapon_fx(WeaponFxKind::Impact,family,x,y))
+                queue_weapon_fx(WeaponFxKind::Impact,family,x,y,old.vx,old.vy,target.metal?1.2f:1.f);
+            if(settings.combat_feedback)impact(target.metal?ImpactTier::Medium:ImpactTier::Small);
             if(settings.persistent_gore)command(11,x,y,1,old.vx,old.vy,target.metal?1:0,target.metal?3:6);
             if(settings.weapon_impacts || settings.fluid_smoke)command(15,x,y,1,old.vx,old.vy,old.weapon==0x4204?2:old.weapon==0x4205?1:3,1);
             if(target.metal) {
@@ -657,6 +850,13 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             hit=true;break;
         }
         if(!hit && now==scene.objects.end() && (old.x<12||old.x>scene.width-13||old.y<33||old.y>scene.height-13)) {
+            WeaponFamily family{};
+            if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(old.weapon,family)){
+                const float speed=std::hypot(old.vx,old.vy);
+                if(speed>.1f)
+                    queue_weapon_fx(WeaponFxKind::Ricochet,family,old.x,old.y,old.vx/speed,old.vy/speed,.8f);
+            }
+            if(settings.combat_feedback)impact(ImpactTier::Small);
             if(settings.particles)emit(Kind::Spark,old.x,old.y,4);
         }
     }
@@ -680,6 +880,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         }
     }
     previous_=scene;
+    weaponFxObjectContinuity_=true;
 }
 void EnhanceEffects::compose(std::span<uint32_t> pixels,int width,int height,const PcSettings& s) const {
     if(!s.enhance || !primed_ || width!=previous_.width || height!=previous_.height || pixels.size()!=size_t(width)*height) return;

@@ -88,7 +88,6 @@ struct Machine {
     // Enhanced host input and immutable launch bearings by retail process pool slot.
     void analog_walk_facing();
     void analog_velocity();
-    void boost_enemy_motion();
     // MUTOID.GETY: redirect an action that would press the tank into a wall.
     void mutoid_wall_action();
     std::array<u16,2> move_inputs{};

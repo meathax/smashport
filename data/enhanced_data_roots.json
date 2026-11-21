@@ -5,6 +5,16 @@
   "native_data_base": "0xff000000",
   "roots": [
     {
+      "name": "GETCNT first weapon charge table",
+      "reference": "0xffe28bd0",
+      "sites": [{"pc": "0xffe28760", "instruction": "ADDI {L1},A0"}]
+    },
+    {
+      "name": "GETCNT second weapon charge table",
+      "reference": "0xffe28b50",
+      "sites": [{"pc": "0xffe287a0", "instruction": "ADDI {L1},A0"}]
+    },
+    {
       "name": "GAMEMODS",
       "reference": "0xffe72650",
       "sites": [

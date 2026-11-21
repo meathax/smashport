@@ -1,0 +1,281 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Smash T.V.",
+  "repo": "meathax/smashport",
+  "inputs": [
+    {
+      "id": "rom",
+      "label": "Your legally obtained retail Smash T.V. revision L8 ROM ZIP (merged or split set)",
+      "role": "game",
+      "formats": [
+        {
+          "type": "file",
+          "extensions": ["zip"]
+        }
+      ]
+    }
+  ],
+  "prepare": {
+    "program": ["SmashTV.exe"],
+    "args": [
+      "--prepare",
+      "--rom={input:rom}",
+      "--data={data}"
+    ],
+    "label": "Translating and building Smash T.V. from your L8 ROM",
+    "timeout": 900,
+    "done": ["{data}/native-player/player.json"],
+    "version": "1.0.0"
+  },
+  "start": {
+    "program": ["SmashTV.exe"],
+    "args": [
+      "--play",
+      "--data={data}"
+    ]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [
+        {
+          "path": "{data}/pc-settings.cfg"
+        }
+      ],
+      "new": {
+        "version": "1",
+        "fullscreen": "0",
+        "scaling": "1",
+        "filter": "0",
+        "smooth_motion": "1",
+        "vsync": "0",
+        "fps": "0",
+        "volume": "100",
+        "muted": "0"
+      }
+    }
+  ],
+  "settings": [
+    {
+      "id": "profile",
+      "label": "Playfield",
+      "group": "Game",
+      "in": "args",
+      "help": "Arcade Original keeps the original 4:3 game; Custom Widescreen uses the shared 16:9 arena.",
+      "choices": [
+        {
+          "label": "Arcade Original (4:3)",
+          "args": ["--classic"]
+        },
+        {
+          "label": "Custom Widescreen (16:9)",
+          "args": ["--widescreen"]
+        }
+      ]
+    },
+    {
+      "id": "window",
+      "label": "Window",
+      "group": "Video",
+      "help": "Fullscreen owns the display. Windowed mode can use any desktop window size.",
+      "choices": [
+        {
+          "label": "Windowed",
+          "set": { "fullscreen": "0" }
+        },
+        {
+          "label": "Fullscreen",
+          "set": { "fullscreen": "1" }
+        }
+      ],
+      "defaults": { "fullscreen": "0" }
+    },
+    {
+      "id": "scaling",
+      "label": "Scaling",
+      "group": "Video",
+      "help": "Keep source pixels exact, fill the display with near-integer scaling, or smooth the image.",
+      "choices": [
+        {
+          "label": "Exact integer",
+          "set": { "scaling": "0" }
+        },
+        {
+          "label": "Integer fill",
+          "set": { "scaling": "1" }
+        },
+        {
+          "label": "Smooth",
+          "set": { "scaling": "2" }
+        }
+      ],
+      "defaults": { "scaling": "1" }
+    },
+    {
+      "id": "picture",
+      "label": "Picture mode",
+      "group": "Video",
+      "help": "Choose the native pixel look or one of the built-in CRT and modern display filters.",
+      "choices": [
+        { "label": "Nearest", "set": { "filter": "0" } },
+        { "label": "Linear", "set": { "filter": "1" } },
+        { "label": "Sharp", "set": { "filter": "2" } },
+        { "label": "CRT", "set": { "filter": "3" } },
+        { "label": "Modern", "set": { "filter": "4" } },
+        { "label": "CRT Guest Advanced", "set": { "filter": "5" } },
+        { "label": "CRT Royale", "set": { "filter": "6" } },
+        { "label": "CRT Lottes", "set": { "filter": "7" } }
+      ],
+      "defaults": { "filter": "0" }
+    },
+    {
+      "id": "motion",
+      "label": "Motion",
+      "group": "Video",
+      "help": "Smooth Motion presents captured frames with host interpolation; Arcade exact keeps simulation timing visible.",
+      "choices": [
+        {
+          "label": "Smooth Motion",
+          "set": { "smooth_motion": "1" }
+        },
+        {
+          "label": "Arcade exact",
+          "set": { "smooth_motion": "0" }
+        }
+      ],
+      "defaults": { "smooth_motion": "1" }
+    },
+    {
+      "id": "vsync",
+      "label": "Desktop VSync",
+      "group": "Video",
+      "help": "Synchronize presentation with the desktop. Smooth Motion already synchronizes output.",
+      "choices": [
+        { "label": "Off", "set": { "vsync": "0" } },
+        { "label": "On", "set": { "vsync": "1" } }
+      ],
+      "defaults": { "vsync": "0" }
+    },
+    {
+      "id": "fps",
+      "label": "Show FPS",
+      "group": "Video",
+      "help": "Show the current display and simulation rates in the top-left corner.",
+      "choices": [
+        { "label": "Off", "set": { "fps": "0" } },
+        { "label": "On", "set": { "fps": "1" } }
+      ],
+      "defaults": { "fps": "0" }
+    },
+    {
+      "id": "volume",
+      "label": "Volume",
+      "group": "Audio",
+      "help": "Master output volume. The generated arcade sound stream is unchanged.",
+      "slider": {
+        "key": "volume",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "format": "%.0f"
+      },
+      "defaults": { "volume": "100" }
+    },
+    {
+      "id": "mute",
+      "label": "Sound",
+      "group": "Audio",
+      "help": "Mute output without changing the original sound-board execution.",
+      "choices": [
+        { "label": "On", "set": { "muted": "0" } },
+        { "label": "Muted", "set": { "muted": "1" } }
+      ],
+      "defaults": { "muted": "0" }
+    }
+  ],
+  "groups": [
+    {
+      "id": "Game"
+    },
+    {
+      "id": "Video"
+    },
+    {
+      "id": "Audio"
+    }
+  ],
+  "folders": {
+    "game": [
+      {
+        "path": "{data}/native-player"
+      }
+    ],
+    "logs": [
+      {
+        "path": "{data}/logs"
+      }
+    ],
+    "cache": [
+      {
+        "path": "{data}/cache"
+      }
+    ],
+    "saves": [
+      {
+        "path": "{data}"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "id": "game_files",
+      "label": "Prepared player",
+      "help": "Open the private native build created from your ROM ZIP.",
+      "open": "game"
+    },
+    {
+      "id": "logs",
+      "label": "Logs",
+      "help": "Open setup and game logs for troubleshooting.",
+      "open": "logs"
+    },
+    {
+      "id": "cache",
+      "label": "Cache",
+      "help": "Clear generated shader and import caches. A later launch rebuilds them.",
+      "clear": "cache"
+    }
+  ],
+  "saves": [
+    "{data}/cmos-l8.bin",
+    "{data}/cmos-l8-16x9.bin",
+    "{data}/room-scores-*.bin",
+    "{data}/pc-settings.cfg",
+    "{data}/keys.cfg",
+    "{data}/profile.cfg",
+    "{data}/net.cfg"
+  ],
+  "looks": {
+    "allowed": false,
+    "reason": "Smash T.V. includes its own native picture modes and CRT shaders."
+  },
+  "exit_codes": {
+    "0": "ok",
+    "64": "RecompLauncher did not provide the setup data path or ROM input.",
+    "65": "The private L8 player could not be prepared. Re-select your complete retail ROM ZIP and review setup.log.",
+    "66": "The prepared player is incomplete. Run Set Up Again from the game's page.",
+    "67": "The prepared player could not be started.",
+    "1": "The game closed with an error."
+  },
+  "system": {
+    "windows": {
+      "version": "10",
+      "graphics": {
+        "d3d12": "12_0"
+      }
+    }
+  },
+  "min": "0.90.0-beta.37"
+}

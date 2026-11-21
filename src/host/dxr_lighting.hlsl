@@ -14,7 +14,7 @@ cbuffer Scene : register(b0) {
     float4 floorRect; // current room floor in light-map space
     float4 ambient;   // rgb, floor gloss
     float4 world;     // camera x, camera y, light count, flags (1 coverage, 2 specular rows)
-    float4 tone;      // actor floor, occlusion strength, unused, actor count
+    float4 tone;      // actor floor, occlusion strength, first boss + 1, actor count
     Light lights[MAX_LIGHTS];
 };
 RaytracingAccelerationStructure scene : register(t0);
@@ -23,6 +23,7 @@ StructuredBuffer<float4> actors : register(t2);
 RWTexture2D<float4> lightMap : register(u0);
 
 static const uint NoSelf = 0xffffffffu;
+static const uint SpriteSurface = 0xfffffffeu;
 static const float3 ViewDir = float3(0, .70710678, .70710678);
 static const float Tau = 6.2831853;
 
@@ -45,17 +46,32 @@ bool spriteAt(int2 p) {
     uint bits = coverage.Load((uint(p.y) * 32 + (uint(p.x) >> 5)) * 4);
     return ((bits >> (uint(p.x) & 31)) & 1) != 0;
 }
+uint spriteOwner(int2 pixel){
+    uint address=(uint(extent.y)*32+uint(pixel.y)*256+(uint(pixel.x)>>2))*4;
+    return (coverage.Load(address)>>((uint(pixel.x)&3)*8))&255;
+}
 // Card-local u (across) and v (up) map back to the displayed sprite pixel.
 bool silhouette(uint id, float3 local) {
-    float4 r = actors[id * 2];
+    float4 r = actors[id * 3];
     float u = local.x, v = local.z;
     if ((uint(world.w) & 1) == 0) {
         float2 q = float2((u - .5) / .42, (v - .48) / .52);
         return dot(q, q) < 1;
     }
-    return spriteAt(int2(floor(r.x + u * r.y), floor(r.z - v * r.w - .001)));
+    int2 pixel=int2(floor(r.x + u * r.y), floor(r.z - v * r.w - .001));
+    if(!spriteAt(pixel))return false;
+    if((uint(world.w)&4)!=0){
+        uint bank=spriteOwner(pixel);
+        if(bank!=uint(actors[id*3+1].x))return false;
+    }
+    return true;
 }
 float visibility(float3 origin, float3 dir, float tmax, uint self) {
+    // An ungrouped 2D sprite has no evidenced world-space height. Its shared
+    // light field can cross a wall proxy (notably y=46 minus height=24), making
+    // a straight shadow cut through Cobra's head. Do not receive proxy shadows
+    // on that artistic surface. Its alpha-tested cards still shadow the room.
+    if(self==SpriteSurface)return 1;
     RayDesc ray;
     ray.Origin = origin; ray.Direction = dir; ray.TMin = .02; ray.TMax = max(.03, tmax);
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
@@ -64,6 +80,8 @@ float visibility(float3 origin, float3 dir, float tmax, uint self) {
         if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
             uint id = q.CandidateInstanceID();
             if (id == self) continue;
+            // Adjacent tiles of one boss are not separate physical occluders.
+            if (self < SpriteSurface && actors[self*3+1].w>0 && actors[id*3+1].w==actors[self*3+1].w) continue;
             float3 local = q.CandidateObjectRayOrigin() + q.CandidateObjectRayDirection() * q.CandidateTriangleRayT();
             if (silhouette(id, local)) q.CommitNonOpaqueTriangleHit();
         }
@@ -189,6 +207,26 @@ void main(uint3 id : SV_DispatchThreadID) {
     float4 actorLight = 0;
     float3 actorSpec = 0;
     if ((uint(world.w) & 1) == 0 || spriteAt(int2(id.xy))) {
+        uint a=NoSelf;
+        float3 Pa=0;
+        // The displayed boss silhouette is authoritative. Do not expose the
+        // current object rectangles where displayed parts overlap or leave a
+        // narrow gap during animation. The palette still protects other actors.
+        if((uint(world.w)&4)!=0 && tone.z>0){
+            uint owner=spriteOwner(int2(id.xy));
+            for(uint candidate=uint(tone.z)-1;candidate<uint(tone.w);++candidate){
+                float4 info=actors[candidate*3+1],r=actors[candidate*3+2];
+                if(info.w>0 && uint(info.x)==owner &&
+                   pixel.x>=r.x-8 && pixel.x<r.x+r.y+8 && pixel.y>=r.z-r.w-8 && pixel.y<r.z+8){
+                    a=candidate;break;
+                }
+            }
+        }
+        // Every displayed sprite gets a continuous receiver, even when the
+        // observer's part rectangles have gaps. Do not merge Cobra's separate
+        // snakes or unrelated actors merely because they share a palette.
+        bool continuousSprite=(uint(world.w)&4)!=0 && spriteOwner(int2(id.xy))>0;
+        if(a==NoSelf && !continuousSprite){
         RayDesc eye;
         eye.Origin = float3(pixel.x, pixel.y + 200, 200);
         eye.Direction = float3(0, -.70710678, -.70710678);
@@ -203,19 +241,37 @@ void main(uint3 id : SV_DispatchThreadID) {
             }
         }
         if (primary.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            uint a = primary.CommittedInstanceID();
-            float4 r = actors[a * 2], info = actors[a * 2 + 1];
-            float3 Pa = eye.Origin + eye.Direction * primary.CommittedRayT();
+            a = primary.CommittedInstanceID();
+            Pa = eye.Origin + eye.Direction * primary.CommittedRayT();
+        }
+        }
+        if(a!=NoSelf || continuousSprite){
+            float4 r = 0, info = float4(continuousSprite ? spriteOwner(int2(id.xy)) : 0,0,0,0);
+            if(a!=NoSelf){r=actors[a*3+2];info=actors[a*3+1];}
+            bool assembledBoss=info.w>0;
+            if(assembledBoss)Pa=float3(pixel.x,r.z,r.z-pixel.y);
             // Rounded body: a cylinder about the sprite's vertical axis, tipped up near the head.
             float u = saturate((pixel.x - r.x) / max(r.y, 1.)), v = saturate((r.z - pixel.y) / max(r.w, 1.));
             float th = (u - .5) * 2.5;
             float3 Na = normalize(float3(sin(th), cos(th) * .8, .3 + .5 * v));
-            bool metal = info.y > .5;
+            if(continuousSprite && !assembledBoss){
+                Pa=float3(pixel.x,pixel.y+24,24);
+                Na=normalize(float3(0,1,1));
+                a=SpriteSurface;
+                info.y=0;
+            }
+            uint material = uint(round(info.y));
+            bool polished = !assembledBoss && (material == 2 || material == 3);
+            bool bossFlesh = assembledBoss || material == 5;
             float3 diff = 0;
+            float gloss = polished ? (material == 2 ? .98 : .78) :
+                          bossFlesh ? .58 : material == 4 ? .18 : .38;
+            float shine = polished ? (material == 2 ? 24 : 18) :
+                          bossFlesh ? 11 : material == 4 ? 5 : 8;
             for (uint i = 0; i < count; ++i)
-                shadeLight(i, Pa + Na * .2, Na, a, metal ? .95 : .3, metal ? 18 : 7, seed, diff, actorSpec);
+                shadeLight(i, Pa + Na * .2, Na, a, gloss, shine, seed, diff, actorSpec);
             float3 base = max(ambient.rgb, tone.x);
-            actorLight = float4(base + diff, (info.x + (metal ? 128 : 0)) / 255.);
+            actorLight = float4(base + diff, (info.x + (polished ? 128 : 0)) / 255.);
         }
     }
     lightMap[id.xy + uint2(1024, 0)] = actorLight;

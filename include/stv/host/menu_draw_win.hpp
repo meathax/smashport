@@ -8,7 +8,9 @@
 #include <utility>
 namespace stv::host {
 struct MenuRenderAudit { RECT panel{}; int total_lines=0,visible_lines=0; bool selection_visible=false; };
-inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string> lines,const ArcadeMenuFont* arcade=nullptr) {
+inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string> lines,
+                                    const ArcadeMenuFont* arcade=nullptr,
+                                    const RECT* requested_panel=nullptr) {
     MenuRenderAudit audit;
     if(cw<96 || ch<96 || lines.empty()) return audit;
     SetBkMode(dc,TRANSPARENT);
@@ -16,8 +18,14 @@ inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string
     // a binding list needs a viewport. Preserve crisp arcade lettering.
     for (auto& line : lines)
         for (char& c : line) if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
-    const int bw = std::min(cw - 24, std::max(520, std::min(cw * 9 / 10, ch)));
-    const int bh = std::min(ch - 24, std::max(260, ch * 3 / 5));
+    int bw = std::min(cw - 24, std::max(520, std::min(cw * 9 / 10, ch)));
+    int bh = std::min(ch - 24, std::max(260, ch * 3 / 5));
+    if (requested_panel) {
+        const int left = std::clamp(int(requested_panel->left), 12, cw - 12);
+        const int top = std::clamp(int(requested_panel->top), 12, ch - 12);
+        bw = std::clamp(int(requested_panel->right - requested_panel->left), 1, cw - left);
+        bh = std::clamp(int(requested_panel->bottom - requested_panel->top), 1, ch - top);
+    }
     const int lh = std::max(9, (bh - 36) / 16);
     const int font_size = std::max(8, lh * 3 / 4);
     HFONT font = CreateFontW(-font_size, std::max(4, font_size * 3 / 5), 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -39,7 +47,12 @@ inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string
         lines=std::move(visible);
     }
     audit.visible_lines=int(lines.size());
-    const int bx = std::max(12, (cw - bw) / 2), by = std::max(12, (ch - bh) / 2);
+    const int bx = requested_panel
+        ? std::clamp(int(requested_panel->left), 12, cw - bw)
+        : std::max(12, (cw - bw) / 2);
+    const int by = requested_panel
+        ? std::clamp(int(requested_panel->top), 12, ch - bh)
+        : std::max(12, (ch - bh) / 2);
     RECT box{bx, by, bx + bw, by + bh};
     audit.panel=box;
     auto fill = [&](RECT area, COLORREF color) {

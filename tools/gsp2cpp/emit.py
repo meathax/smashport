@@ -808,12 +808,16 @@ def main():
                     if i.text != "MOVE A1,*A8({W1}),1":
                         raise SystemExit("Changed retail player velocity write")
                     body.insert(0, "if (m.enhanced) m.analog_velocity();")
-                if i.pc == 0xffe017c0:  # NDSP1.DVEL, after MMFM and before X/Y integration
-                    if note != "NDSP1.ASM:573" or i.text != "ADD A12,A10":
-                        raise SystemExit("Changed retail object motion integration")
-                    body.insert(0, "if (m.enhanced) m.boost_enemy_motion();")
                 if i.pc == 0xffe00230:  # DCLIPL, before clipping and beam splitting
                     body.insert(0, "if (m.enhanced) m.queue_aimed_sprite();")
+                if i.pc in (0xffed2b90, 0xffed2c20):
+                    # POW1 ENCIRCLE uses the same orbit multiplier on both axes.
+                    # A blade's first registered CHAINHIT opens its sweep until it flies off.
+                    if i.text != "MOVK 5h,A0" or body.count("c.a[0]=5u;") != 1:
+                        raise SystemExit(f"Changed blade orbit owner at {i.pc:08x}")
+                    body = list(body)
+                    body[body.index("c.a[0]=5u;")] = (
+                        "c.a[0]=(enhanced_scene(m) && rb(m,c.a[13]+0x1a0u)) ? 7u : 5u;")
                 if i.pc in sound_sites:
                     line, probe = sound_sites[i.pc]
                     if note != f"SOUNDS.ASM:{line}":
@@ -844,14 +848,6 @@ def main():
                         body.insert(0, "if (m.enhanced) m.ww(0x010f2e40u, 1);")
                     elif rule.get("policy") == "tank_reaction_parent":
                         body.insert(0, "if (m.enhanced && !enhanced_tank_reaction_parent(m)) { c.cyc += 3; return m.boundary(0xffe0a5f0u); }")
-                    elif rule.get("policy") == "room16_coop_robot_limit":
-                        # Replace the byte value at this single SETMAX load, before
-                        # MOVB sets flags and ONEPADJ/ADJMAX apply retail modifiers.
-                        load = "rb(m,c.a[0])"
-                        line = next(j for j,b in enumerate(body) if load in b)
-                        body[line] = body[line].replace(load,
-                            "(c.a[0] == enhanced_data_address(0xffe13098u) && enhanced_scene(m) && "
-                            "m.rw(0x010ee600u) == 3 ? 26u : rb(m,c.a[0]))")
                     elif rule.get("policy") == "coop_cobra_threshold":
                         # Adjust this unique COBRAKIL read before MOVE sets flags.
                         # STATUS3 retains the retail co-op branch and difficulty;
@@ -869,10 +865,7 @@ def main():
                         body.insert(line, "if (enhanced_scene(m) && m.rw(0x010eb610u) == 2 && "
                                     "m.rw(0x010eb630u) == 7) c.a[1] = c.a[1] * 4 / 5;")
                     else:
-                        reg = f"c.a[{rule['register']}]"
-                        numerator, denominator = rule.get("motion_ratio", [5, 4])
-                        adjustment = f"if (enhanced_scene(m)) {reg} = u32(s32(s64(s32({reg}))*{numerator}/{denominator}));"
-                        body.insert(0 if rule["phase"] == "before" else next(j for j,b in enumerate(body) if b.startswith("c.cyc +=")), adjustment)
+                        raise SystemExit(f"Unknown enhanced balance policy at {i.pc:08x}: {rule.get('policy')}")
                     balance_patched.add(i.pc)
                 if i.pc in scene_sites:
                     store = scene_sites[i.pc]["store_cpp"]

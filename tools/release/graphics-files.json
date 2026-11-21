@@ -250,11 +250,11 @@
     },
     {
       "path": "licenses/PINS_crt.md",
-      "sha256": "f9dffb0f676f44ec84409cc9b6fa24d814470e8ab8666fafc279049282ae7975"
+      "sha256": "c8221c6a7e12f1078c69cff0be0ee18feb55cc44437a7bdd5162a800f157df56"
     },
     {
       "path": "licenses/PROVENANCE.json",
-      "sha256": "68e88878f3e558ccc869f9db8bcea315a1a90b0af0cea86190a46fafaeedd1f4"
+      "sha256": "2f4b5c4c4e2a81f4dfde04893111619b524ce088acf109931cad2ba2c021f0d5"
     },
     {
       "path": "licenses/LICENSE-LLVM.txt",

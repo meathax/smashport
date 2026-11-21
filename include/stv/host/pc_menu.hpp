@@ -46,14 +46,17 @@ enum class PcMenuItem : std::uint8_t {
     None,
     Resume, LocalCoop, MainMenu, RestartGame, Video, Audio, Controls, Multiplayer, OperatorMenu, Quit,
     WindowScale, Fullscreen, Scaling, PixelFilter, Vsync, ShowFps, PlayfieldProfile,
-    Glow, Sharpen, Curvature, CrtBeam, BeamBrightness, BeamAntiRetention,
+    Glow, Sharpen, Curvature,
     MasterVolume, Mute, SoundTest,
     KeyboardBindings, PadBindings, SwapPads, StickDeadzone, ResetControls,
     PlayerName, HostGame, DirectHost, FindRooms, DirectJoin, Disconnect,
-    Enhance, EnhanceAll, EnableAllEffects, Particles, Blood, Debris, Smoke, Fire, Lighting, RayTracing, Voxels, Shockwaves, Tracers, Brass, MuzzleFlash, RoomLights, PersistentGore, Materials, Destruction, WeaponImpacts, FluidSmoke, ExplosiveDebris,
+    Enhance, EnhanceAll, EnableAllEffects, Particles, Blood, Debris, Smoke, Fire, Lighting, RayTracing, Voxels, Shockwaves, Tracers, Brass, MuzzleFlash, RoomLights, PersistentGore, Materials, Destruction, WeaponImpacts, FluidSmoke, ExplosiveDebris, RoomCinema,
     Back, Options,
     RoomScores, PublicHost, PublicBrowser, Connections, HostMode, Motion, RunAhead, HardwareRT,
-    SoundChannels, Reverb, StereoWidth, HiFiAudio, Count
+    Atmosphere, SpriteRim, ContactShadows, WetMaterials, HeatDistortion, EmissiveSpill, CinematicGrade,
+    SoundChannels, Reverb, StereoWidth, HiFiAudio,
+    CombatFeedback, CameraShake, ZoomPunch, HitFlash, EdgeEffects, WeaponSignatures, TemporalTrails,
+    ReduceShake, ReduceFlashing, ReduceMotion, Count
 };
 
 constexpr std::size_t PcMenuItemCount = static_cast<std::size_t>(PcMenuItem::Count);
@@ -65,10 +68,12 @@ constexpr std::size_t PcMenuItemCount = static_cast<std::size_t>(PcMenuItem::Cou
 struct PcMenuContext {
     bool title_options = false;
     bool gpu_effects = false;
-    bool beam_effects = false;
-    bool beam_options = false;
     bool online = false;
     bool public_host = false;
+    bool combat_feedback = true;
+    bool reduce_shake = false;
+    bool reduce_flashing = false;
+    bool reduce_motion = false;
     bool development_profile_chooser = false;  // false for the fixed 16:9 player build
     std::array<bool, PcMenuItemCount> available{};
 

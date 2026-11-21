@@ -149,41 +149,6 @@ Point object_pivot(Machine& m,u32 obj) {
 
 }
 
-void Machine::boost_enemy_motion() {
-    if(!enhanced_scene(*this) || game_scene_state(*this)!=0x10)return;
-    const u32 node=c.a[0],offset=node-object_pool_base;
-    if(offset>=object_slots*object_stride || offset%object_stride)return;
-    const u16 oid=rw(node+0x150);
-    const unsigned type=(oid>>8)&31;
-    const bool neutral=oid==0x0800 || oid==0x0b00 || oid==0x0e00;
-    if((oid&0xe000)!=0x8000 && !neutral)return;
-    // Scale the final motion once. Formation offsets, difficulty rolls and
-    // raw acceleration remain distinct, and velocity RAM never compounds.
-    switch(type){
-    case 3: case 4: case 6: case 8: case 9: case 11: case 14: case 16: case 18:
-        c.a[12]=u32(s32(s64(s32(c.a[12]))*9/8));
-        c.a[11]=u32(s32(s64(s32(c.a[11]))*9/8));
-        break;
-    case 17:{
-        const u32 proc=rlong(*this,node+0x160);
-        const u32 parent=firing_slot(proc)>=0?rlong(*this,proc+0x100):0;
-        const bool mutoid=firing_slot(parent)>=0 && rw(parent+0x20)==214;
-        c.a[12]=u32(s32(s64(s32(c.a[12]))*(mutoid?5:9)/(mutoid?4:8)));
-        c.a[11]=u32(s32(s64(s32(c.a[11]))*(mutoid?5:9)/(mutoid?4:8)));
-        break;
-    }
-    case 24:{
-        // All moving Mutoid body components share the same motion multiplier.
-        // Its separately spawned helper uses the ordinary enemy rate.
-        const bool helper=(oid&255)==8;
-        c.a[12]=u32(s32(s64(s32(c.a[12]))*(helper?9:5)/(helper?8:4)));
-        c.a[11]=u32(s32(s64(s32(c.a[11]))*(helper?9:5)/(helper?8:4)));
-        break;
-    }
-    default:break; // boss components have their own acceleration policy
-    }
-}
-
 void Machine::mutoid_wall_action() {
     // GET_ST has chosen the next action in A0 and A8 is the tank half whose Y
     // the retail MDN/MUP handlers test against WORLDTLY+[40,170]. Retail picks
@@ -832,12 +797,19 @@ bool apply_enhanced(Machine& m, int widen) {
         }
         r.sl(slot, enhanced_data_address(pointer));
     }
-    // RMAX/GMAX crowds +50%; ORB/HULK/FAT caps +25% (rounded down).
-    // The wider arena needs crowd density as well as faster movement. Keep
-    // ORB/HULK/FAT caps on the smaller increase rather than multiplying every
-    // enemy family's cap by the same amount. Retail SETMAX owns the modifiers.
-    // Only verified table extents are changed; signed modifiers and spawn totals
-    // remain owned by the original room logic. Single tanks stay single.
+    // SCORE GETCNT indexes the DIP-selected shot table on refill and meter
+    // depletion. Give each special weapon another quarter of its imported
+    // charges per segment, rounded to nearest. Entry zero is the default gun.
+    for (u32 base : {0xffe28b50u, 0xffe28bd0u}) {
+        for (unsigned mode=1; mode<=4; ++mode) {
+            auto& charges=r.w(base+16*mode);
+            charges=u16((charges*5u+2u)/4u);
+        }
+    }
+    // The retail MOVB/ADJMAX path observes signed bytes. Keep the widened cap
+    // below the sign bit after the 6-point difficulty modifier; 248 became
+    // negative after SETMAX and prevented later spawns. The fixed L8 process and
+    // object stores remain the practical 240/420-object bounds.
     const std::pair<u32,std::vector<u8>> population[] = {
         {0xffe13018u, STV_ROM_POP_ffe13018}, // RMAX2
         {0xffe12e98u, STV_ROM_POP_ffe12e98}, // OMAX
@@ -849,6 +821,8 @@ bool apply_enhanced(Machine& m, int widen) {
         {0xffe12e40u, STV_ROM_POP_ffe12e40}, // FMAX
     };
     for (const auto& [base, values] : population) {
+        const bool ordinary=base==0xffe13018u || base==0xffe12f58u ||
+                            base==0xffe13178u || base==0xffe130d8u;
         for (u32 i=0; i<values.size(); ++i) {
             const u32 address=base+i*8, aligned=address&~15u;
             const unsigned shift=(address&8u);
@@ -857,10 +831,10 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen population table mismatch",address);
                 m.stop=true; return false;
             }
-            const bool crowd = base==0xffe13018u || base==0xffe12f58u ||
-                               base==0xffe13178u || base==0xffe130d8u;
-            const u8 count=original<=2 ? original :
-                u8(crowd ? original*7/4 : original*3/2);
+            // Preserve the authored mix at the point of admission: ordinary
+            // squads get twice the slots, specialist groups get half again.
+            const unsigned scaled=ordinary?2u*original:(3u*original+1u)/2u;
+            const u8 count=original<=2?original:u8(std::min(120u,scaled));
             r.w(aligned)=u16((r.w(aligned)&~(0xffu<<shift))|(u16(count)<<shift));
         }
     }
@@ -886,6 +860,15 @@ bool apply_enhanced(Machine& m, int widen) {
             }
         }
         r.w(row.address+16)=row.budget;
+        if(row.budget>row.original[1] && row.original[3]>0) {
+            // Keep the spawn tail at about 105% of retail while admitting the
+            // larger population sooner. Rate is measured in 3-tick sleeps;
+            // one is already the fastest representable release cadence.
+            const u64 retail=row.original[3];
+            const u64 release=(retail*row.original[1]*21u)/
+                               (u64(row.budget)*20u);
+            r.w(row.address+48)=u16(std::max<u64>(1,release));
+        }
     }
     // Widescreen movement: 25% faster, preserving directions and shoe advantage.
     {

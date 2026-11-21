@@ -12,6 +12,10 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
@@ -20,6 +24,10 @@ using System.Windows.Forms;
 
 internal static class PlayerSetup {
     const string Title = "Smash T.V.";
+    const int ExitUsage = 64;
+    const int ExitPrepare = 65;
+    const int ExitPlayer = 66;
+    const int ExitLaunch = 67;
     // STV_INSTALL_ROOT is a test override: everything (no shortcut) under one folder.
     static readonly string TestRoot = Environment.GetEnvironmentVariable("STV_INSTALL_ROOT");
     static readonly string LocalData = string.IsNullOrEmpty(TestRoot)
@@ -42,13 +50,22 @@ internal static class PlayerSetup {
                 try { return Run(args); } finally { mutex.ReleaseMutex(); }
             }
         } catch (Exception e) {
+            if (IsRecompLauncher()) {
+                Console.Error.WriteLine(e.ToString());
+                return Array.IndexOf(args, "--prepare") >= 0 ? ExitPrepare : ExitLaunch;
+            }
             MessageBox.Show(e.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }
 
+    static bool IsRecompLauncher() {
+        return Environment.GetEnvironmentVariable("RECOMPLAUNCHER") == "1";
+    }
+
     static int Run(string[] args) {
-        string kit = ExtractKit();
+        if (IsRecompLauncher()) return RunRecompLauncher(args);
+        string kit = ExtractKit(InstallParent);
         InstallLauncher(kit);
         Directory.CreateDirectory(State);
         string kitId = Sha256(Path.Combine(kit, "manifest.json"));
@@ -98,6 +115,56 @@ internal static class PlayerSetup {
         return 0;
     }
 
+    static int RunRecompLauncher(string[] args) {
+        bool prepare = Array.IndexOf(args, "--prepare") >= 0;
+        bool play = Array.IndexOf(args, "--play") >= 0;
+        string data = Argument(args, "--data") ??
+                      Environment.GetEnvironmentVariable("RECOMPLAUNCHER_DATA");
+        if (string.IsNullOrEmpty(data) || (prepare == play)) return ExitUsage;
+        data = Path.GetFullPath(data);
+        Directory.CreateDirectory(data);
+        string state = Path.Combine(data, "native-player");
+        string kitRoot = Path.Combine(data, "cache", "kits");
+        Directory.CreateDirectory(state);
+        string kit = ExtractKit(kitRoot, false);
+        if (prepare) {
+            string rom = Argument(args, "--rom") ?? Argument(args, "--game");
+            if (string.IsNullOrEmpty(rom) || !File.Exists(rom)) {
+                Console.Error.WriteLine("The complete retail L8 ROM ZIP was not selected.");
+                return ExitUsage;
+            }
+            return BuildHeadless(kit, state, Path.GetFullPath(rom)) ? 0 : ExitPrepare;
+        }
+        var player = Player.Load(state);
+        if (player == null || !player.Verify()) {
+            Console.Error.WriteLine("The prepared Smash T.V. player is missing or incomplete.");
+            return ExitPlayer;
+        }
+        return LaunchAndWait(player, data, PassThrough(args));
+    }
+
+    static string Argument(string[] args, string name) {
+        for (int i = 0; i < args.Length; ++i) {
+            if (args[i].StartsWith(name + "=", StringComparison.Ordinal)) return args[i].Substring(name.Length + 1);
+            if (args[i] == name && i + 1 < args.Length) return args[i + 1];
+        }
+        return null;
+    }
+
+    static string[] PassThrough(string[] args) {
+        var result = new System.Collections.Generic.List<string>();
+        for (int i = 0; i < args.Length; ++i) {
+            string arg = args[i];
+            if (arg == "--play" || arg == "--prepare") continue;
+            if (arg == "--data" || arg == "--rom" || arg == "--game") { ++i; continue; }
+            if (arg.StartsWith("--data=", StringComparison.Ordinal) ||
+                arg.StartsWith("--rom=", StringComparison.Ordinal) ||
+                arg.StartsWith("--game=", StringComparison.Ordinal)) continue;
+            result.Add(arg);
+        }
+        return result.ToArray();
+    }
+
     static int Launch(Player player) {
         var start = new ProcessStartInfo(player.Exe) {
             WorkingDirectory = Path.GetDirectoryName(player.Exe),
@@ -108,41 +175,125 @@ internal static class PlayerSetup {
         return 0;
     }
 
+    static int LaunchAndWait(Player player, string data, string[] arguments) {
+        var start = new ProcessStartInfo(player.Exe) {
+            WorkingDirectory = Path.GetDirectoryName(player.Exe),
+            UseShellExecute = false
+        };
+        start.Arguments = QuoteArguments(new[] { "--data=" + data }.Concat(arguments));
+        start.EnvironmentVariables["STV_HOST_ROM_ZIP"] = player.Rom;
+        start.EnvironmentVariables["STV_HOST_DATA"] = data;
+        using (var process = Process.Start(start)) {
+            if (process == null) return ExitLaunch;
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+    }
+
+    static string QuoteArguments(System.Collections.Generic.IEnumerable<string> arguments) {
+        return string.Join(" ", arguments.Select(arg =>
+            arg.IndexOfAny(new[] {' ', '\t', '"'}) >= 0
+                ? "\"" + arg.Replace("\"", "\\\"") + "\""
+                : arg));
+    }
+
     // ---- kit ---------------------------------------------------------------
-    static string ExtractKit() {
+    static string LongPath(string path) {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+            return @"\\?\UNC\" + path.Substring(2);
+        return @"\\?\" + path;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CreateDirectoryW(string path, IntPtr security);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFileAttributesW(string path);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool MoveFileExW(string source, string destination, uint flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
+
+    const uint InvalidFileAttributes = 0xffffffff;
+    const uint GenericWrite = 0x40000000;
+    const uint CreateAlways = 2;
+    const uint FileAttributeNormal = 0x80;
+    static bool WinExists(string path) {
+        return GetFileAttributesW(LongPath(path)) != InvalidFileAttributes;
+    }
+
+    static string ParentPath(string path) {
+        int slash = Math.Max(path.LastIndexOf('\\'), path.LastIndexOf('/'));
+        return slash > 2 ? path.Substring(0, slash) : null;
+    }
+
+    static void WinCreateDirectory(string path) {
+        if (WinExists(path)) return;
+        string parent = ParentPath(path);
+        if (!string.IsNullOrEmpty(parent) && !WinExists(parent)) WinCreateDirectory(parent);
+        if (!CreateDirectoryW(LongPath(path), IntPtr.Zero) &&
+            Marshal.GetLastWin32Error() != 183)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create " + path);
+    }
+
+    static Stream WinCreateFile(string path) {
+        SafeFileHandle handle = CreateFileW(LongPath(path), GenericWrite, 0, IntPtr.Zero,
+                                            CreateAlways, FileAttributeNormal, IntPtr.Zero);
+        if (handle.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create " + path);
+        return new FileStream(handle, FileAccess.Write, 65536, false);
+    }
+
+    static string KitMemberPath(string root, string member) {
+        if (member.Length == 0 || member.IndexOf(':') >= 0 ||
+            member.StartsWith("/", StringComparison.Ordinal) ||
+            member.StartsWith(@"\", StringComparison.Ordinal))
+            throw new InvalidDataException("Invalid kit path " + member);
+        string relative = member.Replace('/', '\\');
+        foreach (string part in relative.Split('\\'))
+            if (part == "." || part == "..")
+                throw new InvalidDataException("Invalid kit path " + member);
+        return Path.Combine(root, relative);
+    }
+
+    static string ExtractKit(string installParent, bool showProgress = true) {
         using (Stream zip = Assembly.GetExecutingAssembly().GetManifestResourceStream("player.zip")) {
             if (zip == null) throw new InvalidDataException("This SmashTV.exe has no player kit.");
             string id;
             using (var sha = SHA256.Create()) id = BitConverter.ToString(sha.ComputeHash(zip)).Replace("-", "").Substring(0, 24);
-            string dest = Path.Combine(InstallParent, id);
-            if (File.Exists(Path.Combine(dest, "manifest.json"))) return dest;
-            Directory.CreateDirectory(InstallParent);
+            string dest = Path.Combine(installParent, id);
+            if (WinExists(Path.Combine(dest, "manifest.json"))) return dest;
+            WinCreateDirectory(installParent);
             zip.Position = 0;
-            string tmp = Path.Combine(InstallParent, "tmp-" + Guid.NewGuid().ToString("N"));
+            string tmp = Path.Combine(installParent, "tmp-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tmp);
-            using (var progress = new ProgressWindow("Installing Smash T.V....")) {
-                progress.Show();
+            using (var progress = showProgress ? new ProgressWindow("Installing Smash T.V....") : null) {
+                if (progress != null) progress.Show();
                 try {
                     using (var archive = new ZipArchive(zip, ZipArchiveMode.Read)) {
-                        string root = Path.GetFullPath(tmp) + Path.DirectorySeparatorChar;
                         foreach (var entry in archive.Entries) {
-                            string path = Path.GetFullPath(Path.Combine(tmp, entry.FullName));
-                            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                                throw new InvalidDataException("Invalid kit path " + entry.FullName);
-                            if (entry.FullName.EndsWith("/")) { Directory.CreateDirectory(path); continue; }
-                            Directory.CreateDirectory(Path.GetDirectoryName(path));
-                            entry.ExtractToFile(path);
+                            string path = KitMemberPath(tmp, entry.FullName);
+                            if (entry.FullName.EndsWith("/")) {
+                                WinCreateDirectory(path);
+                                continue;
+                            }
+                            WinCreateDirectory(ParentPath(path));
+                            using (Stream input = entry.Open())
+                            using (Stream output = WinCreateFile(path))
+                                input.CopyTo(output);
                             Application.DoEvents();
                         }
                     }
-                    try { Directory.Move(tmp, dest); }
-                    catch (IOException) { if (!Directory.Exists(dest)) throw; }
-                } finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+                    if (!MoveFileExW(LongPath(tmp), LongPath(dest), 0))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not finish extracting the player kit");
+                } finally {
+                    try { Directory.Delete(tmp, true); } catch (Exception) {}
+                }
             }
-            // Earlier versions are superseded; anything still in use stays.
-            foreach (var old in Directory.GetDirectories(InstallParent))
-                if (!string.Equals(Path.GetFileName(old), id, StringComparison.OrdinalIgnoreCase))
-                    try { Directory.Delete(old, true); } catch (Exception) {}
             return dest;
         }
     }
@@ -184,6 +335,7 @@ internal static class PlayerSetup {
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        start.EnvironmentVariables["PYTHONHOME"] = kit;
         using (var progress = new ProgressWindow(message))
         using (var process = new Process { StartInfo = start }) {
             var log = new System.Text.StringBuilder();
@@ -201,6 +353,39 @@ internal static class PlayerSetup {
             }
             process.WaitForExit();
             lock (log) File.WriteAllText(Path.Combine(State, "setup.log"), log.ToString());
+            return process.ExitCode == 0;
+        }
+    }
+
+    static bool BuildHeadless(string kit, string state, string rom) {
+        Console.WriteLine("progress 0.05 Verifying the selected retail L8 ROM set");
+        var start = new ProcessStartInfo(Path.Combine(kit, "python", "python.exe"),
+            "-I -B \"" + Path.Combine(kit, "player_setup.py") + "\" --state \"" + state +
+            "\" --rom \"" + rom + "\" --prepare-only") {
+            WorkingDirectory = kit,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.EnvironmentVariables["PYTHONHOME"] = kit;
+        using (var process = new Process { StartInfo = start }) {
+            var log = new System.Text.StringBuilder();
+            DataReceivedEventHandler collect = (s, e) => {
+                if (e.Data == null) return;
+                lock (log) log.AppendLine(e.Data);
+                Console.WriteLine(e.Data);
+            };
+            process.OutputDataReceived += collect;
+            process.ErrorDataReceived += collect;
+            if (!process.Start()) return false;
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            process.WaitForExit();
+            string logFolder = Path.Combine(Path.GetDirectoryName(state), "logs");
+            Directory.CreateDirectory(logFolder);
+            lock (log) File.WriteAllText(Path.Combine(logFolder, "setup.log"), log.ToString());
+            if (process.ExitCode == 0) Console.WriteLine("progress 1.0 Smash T.V. is ready to play");
             return process.ExitCode == 0;
         }
     }

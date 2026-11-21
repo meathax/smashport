@@ -1,6 +1,6 @@
 {
   "date": "2026-11-11",
-  "scope": "Private local donor snapshot; donor working-tree commit not established; exact source bytes pinned below. Upstream pins and licenses in copied PINS_crt.md. No donor changes.",
+  "scope": "Private local donor snapshot; donor working-tree commit not established; exact source bytes and Smash adaptations are pinned below. Upstream pins and licenses are in copied PINS_crt.md.",
   "files": [
     {
       "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\post_chain.cpp",
@@ -11,21 +11,6 @@
       "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\post_chain.h",
       "copy": "third_party\\graphics\\runtime\\post\\post_chain.h",
       "sha256": "5c85ba3002aa672dc481df769a8cc805c88f4a0207d7173607ae1913dab70324"
-    },
-    {
-      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\gdl_post_test.cpp",
-      "copy": "third_party\\graphics\\runtime\\post\\gdl_post_test.cpp",
-      "sha256": "14a761d19893b2561a4c6b79901124874992bc06da23dd45b307cd59cd2336e7"
-    },
-    {
-      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\blurbusters\\LICENSE",
-      "copy": "third_party\\graphics\\runtime\\post\\blurbusters\\LICENSE",
-      "sha256": "64baf37c51f18b1ccfdc2958f6da7fc0fdefbc92370977cd3114d5111828cf33"
-    },
-    {
-      "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\runtime\\post\\blurbusters\\crt-simulator.hlsl",
-      "copy": "third_party\\graphics\\runtime\\post\\blurbusters\\crt-simulator.hlsl",
-      "sha256": "de1a931a0ef4f2c01babf7ea43ea4d1f5af2302eca53651897ee2f9eb5fe3ea6"
     },
     {
       "source": "D:\\Arcade\\AI\\aCORES\\GDL DECOMP\\third_party\\PINS_crt.md",
@@ -366,15 +351,13 @@
   "adaptations": [
     {
       "path": "third_party\\graphics\\runtime\\post\\post_chain.h",
-      "upstream_copy": "third_party\\graphics\\runtime\\post\\post_chain.h.upstream",
-      "current_sha256": "5baf7bd68833a6c1151d24b67ef773cfcc07fc733274d9f688e23bbb9f2a80fd",
-      "change": "Expose read-only preset_frame_succeeded so Smash can report runtime shader failure instead of silent native fallback."
+      "current_sha256": "5c867afde0a4c195c8dff34cc40200ee8d4164b0b8b7672bffd4abf8c5fef6d8",
+      "change": "Expose preset_frame_succeeded and remove the unused CRT beam simulator."
     },
     {
       "path": "third_party\\graphics\\runtime\\post\\post_chain.cpp",
-      "upstream_copy": "third_party\\graphics\\runtime\\post\\post_chain.cpp.upstream",
-      "current_sha256": "bc1830d89d10b5c09e6a257a08b304c4d1d9cc0e4ce726f896e315d1a1630bd8",
-      "change": "Expose read-only preset_frame_succeeded so Smash can report runtime shader failure instead of silent native fallback."
+      "current_sha256": "cea283d5fd640f8eb8ee0f3b01a6de6f1af76480a3010cdee13c03adfa355a0f",
+      "change": "Expose preset_frame_succeeded and remove the unused CRT beam shader, history and rendering path."
     }
   ]
 }

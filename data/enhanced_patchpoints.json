@@ -1,6 +1,11 @@
 {
   "note": "Typed enhanced-profile geometry. Source-annotated points bind to accepted source matches; explicit PC points additionally verify retail instruction shape and immediate. Geometry is selected by enhanced_scene(m), preserving native attract and diagnostics.",
   "points": [
+    {"name": "bubble_minimum_flight", "pc": "0xffe35f90", "instruction": "MOVI {W1},B0", "reference_imm": "0x00000005", "enhanced_imm": "0x00000007"},
+    {"name": "bubble_maximum_flight", "pc": "0xffe35fb0", "instruction": "MOVI {W1},B1", "reference_imm": "0x00000012", "enhanced_imm": "0x00000018"},
+    {"name": "blade_hit_limit", "pc": "0xffed3920", "instruction": "CMPI {~W1},A1", "reference_imm": "0x00000005", "enhanced_imm": "0x00000007"},
+    {"name": "boss_pickup_window", "pc": "0xffed6a50", "instruction": "MOVI {W1},A0", "reference_imm": "0x0000015c", "enhanced_imm": "0x00000195"},
+    {"name": "arena_pickup_window", "pc": "0xffed6b30", "instruction": "MOVI {W1},A0", "reference_imm": "0x000000ba", "enhanced_imm": "0x000000de"},
     {
       "name": "player_rescue_left_bound",
       "pc": "0xffe7bec0",

@@ -9,9 +9,6 @@
 //   source prepare   -> optional box downsample of a high-resolution render
 //                       to the base picture (511x384, or wider for widescreen)
 //                       or to "full width x 384 lines"                [native]
-//   beam simulator   -> optional Blur Busters CRT beam simulation, one
-//                       sub-frame per display refresh, with the two previous
-//                       emulated refreshes as history                 [native]
 //   CRT chain        -> any RetroArch .slangp preset through librashader
 //                       (D3D12 runtime, C API, loaded from librashader.dll)
 //   final pass       -> placement (aspect, letterbox/pillarbox, integer
@@ -53,17 +50,6 @@ enum class ViewportMode : uint32_t {
 
 enum class PassThroughFilter : uint32_t { Nearest = 0, Bilinear, SharpBilinear };
 
-struct BeamSettings {
-    bool enabled = false;      // native CRT beam simulator; needs a display faster than the source
-    float gain = 0.7f;         // "brightness vs clarity": time-averaged light = gain x picture.
-                               // 1.0 = full brightness (bright pixels stay lit for the whole refresh),
-                               // 0.5 = half brightness, every pixel lit at most half the time
-    float gamma = 2.4f;        // gamma of the picture and the display, as in the original shader
-    bool lcd_anti_retention = true;  // when the display rate is an even multiple of the source rate,
-                               // run the simulated tube 0.001 display refresh per refresh slow so that
-                               // the bright band drifts and an LCD's polarity inversion cannot burn in
-};
-
 struct Settings {
     // --- source preparation
     SourceMode source_mode = SourceMode::AsIs;
@@ -93,9 +79,6 @@ struct Settings {
     bool auto_progressive_fix = true;  // set the known interlace-detection parameters of the loaded
                                        // preset to "progressive" (this game is 384 lines progressive,
                                        // which most presets mistake for interlaced)
-
-    // --- sub-frame beam simulation
-    BeamSettings beam;
 
     // --- output encoding
     OutputColorSpace color_space = OutputColorSpace::SDR;
@@ -127,12 +110,11 @@ struct Output {
     uint32_t height = 0;
 };
 
-// Where one display refresh sits on the emulated CRT's time axis. Only the
-// beam simulator uses it.
+// Where one display refresh sits on the source time axis.
 struct RefreshTiming {
     // Start of this display refresh, in emulated CRT refreshes (one unit =
     // one 16.56 ms scanout of the game). The integer part counts emulated
-    // refreshes, the fraction is the position of the beam down the tube.
+    // refreshes, the fraction is the position within that refresh.
     // Must not go backwards.
     double source_time = 0.0;
     // Length of this display refresh in the same unit: source rate / display
@@ -150,8 +132,6 @@ struct Stats {
     DXGI_FORMAT chain_format = DXGI_FORMAT_UNKNOWN;
     bool preset_is_hdr_aware = false;
     bool chain_encodes_hdr = false;   // the preset itself writes HDR10/scRGB this frame
-    bool beam_active = false;         // the beam simulator ran in the last present
-    uint64_t beam_refreshes = 0;      // emulated refreshes the simulator has started
     uint32_t auto_fixes = 0;          // parameters set by auto_progressive_fix / preset_curvature
 };
 
@@ -211,8 +191,8 @@ public:
     static uint64_t preset_fingerprint(const std::string& slangp_path);
 
     // Optional librashader sub-frame preset (BFI presets from slang-shaders).
-    // It runs after the CRT chain when present() is given sub-frame indices
-    // and the native beam simulator is off. Empty path removes it.
+    // It runs after the CRT chain when present() is given sub-frame indices.
+    // Empty path removes it.
     bool set_subframe_preset(const std::string& slangp_path, std::string* error = nullptr);
 
     // Re-check the preset file and every file it references. Reloads when
@@ -234,7 +214,7 @@ public:
     // SPIR-V -> HLSL -> DXC. `true` forces the HLSL route. Next preset load.
     void set_force_hlsl_pipeline(bool force);
 
-    // Drop temporal state (shader history, beam history) on the next frame:
+    // Drop temporal state (shader history) on the next frame:
     // call after a discontinuity (state load, scene cut).
     void reset_history();
 

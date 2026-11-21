@@ -256,7 +256,7 @@ struct GpuFilter::Impl {
         gpu.init(); chain=std::make_unique<PostChain>(gpu.device.get(),gpu.queue.get(),directory.wstring());
         auto& s=chain->settings(); s.base_width=547;s.base_height=256;s.source_fps=8000000.0f/146234.0f;
         s.viewport_mode=gdl::post::ViewportMode::Full; s.preset_curvature=false;
-        s.auto_progressive_fix=true; s.beam.enabled=false;
+        s.auto_progressive_fix=true;
     }
 };
 GpuFilter::GpuFilter()=default;

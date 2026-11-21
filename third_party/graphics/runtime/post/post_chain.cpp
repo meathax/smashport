@@ -1,10 +1,7 @@
 // Post-processing chain: see post_chain.h and docs/post_chain.md.
 //
-// The beam simulator pass (ps_beam) is a port of the Blur Busters CRT Beam
-// Simulator by Mark Rejhon (@BlurBusters) and Timothy Lottes
-// (@NOTimothyLottes), MIT licence; the unmodified original and its licence
-// are in runtime/post/blurbusters/. The sharpening follows the published
-// formula of AMD FidelityFX Contrast Adaptive Sharpening (MIT).
+// The sharpening follows the published formula of AMD FidelityFX Contrast
+// Adaptive Sharpening (MIT).
 #include <windows.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
@@ -66,13 +63,10 @@ cbuffer C : register(b0) {
     float4 hdr;        // paper white nits, peak nits, decode gamma (0 = sRGB), unused
     uint4 mode;        // filter, picture encode, box taps x, box taps y
     float4 geom;       // curvature x, curvature y, corner radius (fraction of height), sharpen 0..1
-    float4 beam;       // raster position 0..1, display refreshes per emulated refresh, gain, gamma
     uint4 mode2;       // background encode, bezel on, unused, unused
     float4 uvs;        // valid region of t0 / texture size (x, y); 1 = whole texture
 };
 Texture2D tex : register(t0);
-Texture2D tex1 : register(t1);
-Texture2D tex2 : register(t2);
 SamplerState s_point : register(s0);
 SamplerState s_linear : register(s1);
 
@@ -177,30 +171,6 @@ float4 ps(float4 pos : SV_Position) : SV_Target {
     return float4(lerp(bg, pic, alpha), 1.0);
 }
 
-// ---- CRT beam simulator (port of the Blur Busters / Timothy Lottes shader) ----
-float3 beam_dec(float3 c) {
-    return lerp(c / 12.92, pow((c + 0.055) / 1.055, beam.w), step(0.04045, c));
-}
-float3 beam_enc(float3 c) {
-    return saturate(lerp(c * 12.92, 1.055 * pow(c, 1.0 / beam.w) - 0.055, step(0.0031308, c)));
-}
-float3 overlap(float start, float3 len, float f_start) {
-    return max(0.0, min(start + len, f_start + 1.0) - max(start, f_start));
-}
-float4 ps_beam(float4 pos : SV_Position) : SV_Target {
-    float2 uv = pos.xy * src_size.zw;
-    float fph = beam.y;                       // display refreshes per emulated CRT refresh
-    float scale = fph * beam.z;               // light of a full-white pixel, in display refreshes
-    float3 curr = beam_dec(tex.SampleLevel(s_point, uv, 0).rgb) * scale;    // emulated refresh k
-    float3 prev1 = beam_dec(tex1.SampleLevel(s_point, uv, 0).rgb) * scale;  // k-1
-    float3 prev2 = beam_dec(tex2.SampleLevel(s_point, uv, 0).rgb) * scale;  // k-2
-    float tube = uv.y * fph;                  // when the beam reaches this row, in display refreshes
-    float f_start = beam.x * fph;             // this display refresh covers [f_start, f_start + 1]
-    float3 result = overlap(tube - fph, prev2, f_start)
-                  + overlap(tube, prev1, f_start)
-                  + overlap(tube + fph, curr, f_start);
-    return float4(beam_enc(result), 1.0);
-}
 )hlsl";
 
 struct Constants {
@@ -210,7 +180,6 @@ struct Constants {
     float hdr[4];
     uint32_t mode[4];
     float geom[4];
-    float beam[4];
     uint32_t mode2[4];
     float uvs[4];
 };
@@ -280,13 +249,13 @@ struct PostChain::Impl {
     bool params_dirty = true;
 
     Com<ID3D12RootSignature> root;
-    Com<ID3DBlob> vs_blob, ps_blob, ps_beam_blob;
+    Com<ID3DBlob> vs_blob, ps_blob;
     std::unordered_map<uint32_t, Com<ID3D12PipelineState>> psos;
     Com<ID3D12DescriptorHeap> rtv_heap, srv_heap;
     uint32_t rtv_size = 0, srv_size = 0, srv_next = 0;
     static constexpr uint32_t kSrvTriples = 64;
 
-    Tex prep, latest, crt, subtex, prev1, prev2, beamtex;
+    Tex prep, latest, crt, subtex;
     Com<ID3D12Fence> fence;
     uint64_t fence_value = 0;
     HANDLE fence_event = nullptr;
@@ -303,9 +272,6 @@ struct PostChain::Impl {
     bool chain_dirty = true;       // the CRT chain has not run for the current image
     bool chain_ok = false;         // crt holds a valid picture
     bool chain_encodes_hdr = false;
-    // beam simulator
-    bool beam_valid = false;
-    int64_t beam_k = 0;            // emulated refresh the history is at
     // legacy sub-frame indices
     uint32_t legacy_sub = 0, legacy_total = 1;
     std::string last_error;
@@ -341,13 +307,12 @@ struct PostChain::Impl {
         hd.NumDescriptors = 8;
         check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(rtv_heap.put())), "CreateDescriptorHeap(rtv)");
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        hd.NumDescriptors = kSrvTriples * 3;
+        hd.NumDescriptors = kSrvTriples;
         hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         check(device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(srv_heap.put())), "CreateDescriptorHeap(srv)");
         rtv_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
         srv_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         prep.rtv_slot = 0; crt.rtv_slot = 1; subtex.rtv_slot = 2; latest.rtv_slot = 3;
-        prev1.rtv_slot = 4; prev2.rtv_slot = 5; beamtex.rtv_slot = 6;
 
         Com<ID3DBlob> err;
         auto compile = [&](const char* entry, const char* target, Com<ID3DBlob>& out) {
@@ -359,11 +324,10 @@ struct PostChain::Impl {
         };
         compile("vs", "vs_5_0", vs_blob);
         compile("ps", "ps_5_0", ps_blob);
-        compile("ps_beam", "ps_5_0", ps_beam_blob);
 
         D3D12_DESCRIPTOR_RANGE range{};
         range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        range.NumDescriptors = 3;
+        range.NumDescriptors = 1;
         D3D12_ROOT_PARAMETER params[2]{};
         params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         params[0].Constants.Num32BitValues = sizeof(Constants) / 4;
@@ -393,11 +357,11 @@ struct PostChain::Impl {
         fence_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     }
 
-    ID3D12PipelineState* pso_for(DXGI_FORMAT fmt, bool beam) {
-        const uint32_t key = static_cast<uint32_t>(fmt) | (beam ? 0x10000u : 0u);
+    ID3D12PipelineState* pso_for(DXGI_FORMAT fmt) {
+        const uint32_t key = static_cast<uint32_t>(fmt);
         auto it = psos.find(key);
         if (it != psos.end()) return it->second.get();
-        ID3DBlob* pixel = beam ? ps_beam_blob.get() : ps_blob.get();
+        ID3DBlob* pixel = ps_blob.get();
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
         d.pRootSignature = root.get();
         d.VS = {vs_blob->GetBufferPointer(), vs_blob->GetBufferSize()};
@@ -508,32 +472,24 @@ struct PostChain::Impl {
 
     struct DrawArgs {
         ID3D12Resource* src = nullptr;      // t0
-        ID3D12Resource* src1 = nullptr;     // t1 (beam: previous refresh)
-        ID3D12Resource* src2 = nullptr;     // t2 (beam: the one before)
         uint32_t sw = 0, sh = 0;
         Rect rect{};
         Filter filter = kNearest;
         Encode encode = kCopy;
         Encode background = kSdr;
         bool final_pass = false;            // adjustments, curvature and bezel apply
-        bool beam = false;
-        float beam_pos = 0, beam_fph = 1;
         float uvs_x = 1, uvs_y = 1;        // valid region of src / its texture size
     };
 
     // One native full-target draw into the given render target.
     void draw(ID3D12GraphicsCommandList* cmd, const DrawArgs& a, D3D12_CPU_DESCRIPTOR_HANDLE target,
               DXGI_FORMAT fmt, uint32_t tw, uint32_t th) {
-        const uint32_t slot = (srv_next++ % kSrvTriples) * 3;
+        const uint32_t slot = srv_next++ % kSrvTriples;
         D3D12_CPU_DESCRIPTOR_HANDLE cpu = srv_heap->GetCPUDescriptorHandleForHeapStart();
         cpu.ptr += static_cast<SIZE_T>(slot) * srv_size;
         D3D12_GPU_DESCRIPTOR_HANDLE gpu = srv_heap->GetGPUDescriptorHandleForHeapStart();
         gpu.ptr += static_cast<UINT64>(slot) * srv_size;
-        ID3D12Resource* srcs[3] = {a.src, a.src1 ? a.src1 : a.src, a.src2 ? a.src2 : a.src};
-        for (ID3D12Resource* r : srcs) {
-            device->CreateShaderResourceView(r, nullptr, cpu);
-            cpu.ptr += srv_size;
-        }
+        device->CreateShaderResourceView(a.src, nullptr, cpu);
 
         const Settings& s = settings;
         Constants c{};
@@ -561,16 +517,12 @@ struct PostChain::Impl {
             c.mode2[1] = s.bezel ? 1u : 0u;
         }
         c.mode2[0] = a.background;
-        c.beam[0] = a.beam_pos;
-        c.beam[1] = a.beam_fph;
-        c.beam[2] = std::clamp(s.beam.gain, 0.05f, 1.0f);
-        c.beam[3] = std::clamp(s.beam.gamma, 1.0f, 4.0f);
         c.uvs[0] = a.uvs_x; c.uvs[1] = a.uvs_y; c.uvs[2] = c.uvs[3] = 1.0f;
 
         ID3D12DescriptorHeap* heaps[] = {srv_heap.get()};
         cmd->SetDescriptorHeaps(1, heaps);
         cmd->SetGraphicsRootSignature(root.get());
-        cmd->SetPipelineState(pso_for(fmt, a.beam));
+        cmd->SetPipelineState(pso_for(fmt));
         cmd->SetGraphicsRoot32BitConstants(0, sizeof(Constants) / 4, &c, 0);
         cmd->SetGraphicsRootDescriptorTable(1, gpu);
         const D3D12_VIEWPORT vp{0, 0, static_cast<float>(tw), static_cast<float>(th), 0, 1};
@@ -894,7 +846,6 @@ uint64_t PostChain::frame_count() const { return impl_->frame_count; }
 void PostChain::set_force_hlsl_pipeline(bool force) { impl_->force_hlsl = force; }
 void PostChain::reset_history() {
     impl_->clear_history = impl_->sub_clear_history = true;
-    impl_->beam_valid = false;
 }
 
 DXGI_FORMAT PostChain::output_format_for(OutputColorSpace cs) {
@@ -1049,7 +1000,6 @@ void PostChain::process(ID3D12GraphicsCommandList* cmd, ID3D12Resource* input, u
 
     if (tw != m.src_w || th != m.src_h) {
         m.clear_history = m.sub_clear_history = true;   // history textures change size
-        m.beam_valid = false;
         m.src_w = tw; m.src_h = th;
     }
     m.chain_dirty = true;
@@ -1083,59 +1033,13 @@ void PostChain::present(ID3D12GraphicsCommandList* cmd, const Output& out, const
     }
     Tex* pic = m.owned;
 
-    // Beam simulator: first in the chain, on the unprocessed game picture, as
-    // its authors specify. One pass per display refresh.
-    const bool beam = s.beam.enabled && timing.span > 0.0 && timing.span < 0.999;
-    m.stats.beam_active = beam;
-    int64_t k = 0;
-    if (beam) {
-        double fph = 1.0 / timing.span;                 // display refreshes per emulated refresh
-        double t = timing.source_time;
-        const double nearest = std::round(fph);
-        if (s.beam.lcd_anti_retention && std::fabs(fph - nearest) < 1e-3 && std::fmod(nearest, 2.0) == 0.0) {
-            t = t * fph / (fph + 0.001);                // the simulated tube runs very slightly slow
-            fph += 0.001;
-        }
-        k = static_cast<int64_t>(std::floor(t));
-        const double pos = t - static_cast<double>(k);
-        // History: prev1 is the picture the beam is drawing now (emulated
-        // refresh k-1 in the original's numbering), prev2 the one before.
-        if (!m.beam_valid || m.prev1.w != pic->w || m.prev1.h != pic->h) {
-            m.copy(cmd, *pic, m.prev1);
-            m.copy(cmd, *pic, m.prev2);
-            m.beam_valid = true;
-            m.beam_k = k;
-        } else if (k > m.beam_k) {
-            const int64_t steps = std::min<int64_t>(k - m.beam_k, 2);
-            for (int64_t i = 0; i < steps; ++i) {
-                std::swap(m.prev1.res, m.prev2.res);     // same size, format and state
-                std::swap(m.prev1.rtv_slot, m.prev2.rtv_slot);
-                m.copy(cmd, *pic, m.prev1);
-            }
-            m.stats.beam_refreshes += static_cast<uint64_t>(k - m.beam_k);
-            m.beam_k = k;
-        }
-        m.ensure(m.beamtex, pic->w, pic->h, DXGI_FORMAT_R8G8B8A8_UNORM);
-        Impl::transition(cmd, m.beamtex, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        Impl::DrawArgs a;
-        a.src = pic->res.get(); a.src1 = m.prev1.res.get(); a.src2 = m.prev2.res.get();
-        a.sw = pic->w; a.sh = pic->h;
-        a.rect = {0, 0, static_cast<float>(pic->w), static_cast<float>(pic->h)};
-        a.beam = true;
-        a.beam_pos = static_cast<float>(pos);
-        a.beam_fph = static_cast<float>(fph);
-        m.draw(cmd, a, m.rtv(m.beamtex), m.beamtex.fmt, pic->w, pic->h);
-        Impl::transition(cmd, m.beamtex, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        pic = &m.beamtex;
-    }
-
-    // CRT chain: once per game image, or once per display refresh behind the beam simulator.
+    // CRT chain: once per game image.
     bool chain_ran = false;
     if (m.chain.handle) {
-        if (beam || m.chain_dirty || !m.chain_ok || m.crt.w == 0) {
-            const uint64_t count = beam ? static_cast<uint64_t>(std::max<int64_t>(k, 0)) : (m.frame_count ? m.frame_count - 1 : 0);
+        if (m.chain_dirty || !m.chain_ok || m.crt.w == 0) {
+            const uint64_t count = m.frame_count ? m.frame_count - 1 : 0;
             m.chain_ok = m.run_chain(cmd, pic->res.get(), out.width, out.height, count);
-            m.chain_dirty = beam;   // after beam frames the plain picture must be redone
+            m.chain_dirty = false;
         }
         if (m.chain_ok) { pic = &m.crt; chain_ran = true; }
         else m.chain_encodes_hdr = false;
@@ -1147,8 +1051,8 @@ void PostChain::present(ID3D12GraphicsCommandList* cmd, const Output& out, const
     }
     m.stats.chain_encodes_hdr = m.chain_encodes_hdr;
 
-    // Optional librashader sub-frame preset (BFI), only without the native simulator.
-    if (m.sub.handle && !beam && m.legacy_total > 1 && !m.chain_encodes_hdr) {
+    // Optional librashader sub-frame preset (BFI).
+    if (m.sub.handle && m.legacy_total > 1 && !m.chain_encodes_hdr) {
         m.ensure(m.subtex, pic->w, pic->h, DXGI_FORMAT_R8G8B8A8_UNORM);
         if (m.libra_frame(m.sub, cmd, pic->res.get(), m.subtex, m.refresh_count ? m.refresh_count - 1 : 0,
                           m.sub_clear_history, m.legacy_sub, m.legacy_total, LIBRA_COLOR_SPACE_SDR))

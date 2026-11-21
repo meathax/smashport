@@ -106,11 +106,10 @@ GameProfile GameProfile::enhanced_l8_16_9() {
     p.geometry.left_extension = 68;
     p.geometry.right_extension = 69;
     p.geometry.geometry_verified = false;
-    // Initial deterministic balance seed required by the enhanced plan:
-    // 547/410 ~= 4/3 more horizontal play area.  Both one- and two-player
-    // entries are fingerprinted together and remain provisional until room
-    // pressure/clear-time captures validate the measured geometry.
-    p.balance = {0x454e4831u, 2, {4, 4}, {3, 3}, {4, 4}, {3, 3}};
+    // Deterministic Widescreen balance seed: the common 150% population policy,
+    // 70% release delay and both player counts share one compatibility identity.
+    // Per-room retail tables remain the authoritative values.
+    p.balance = {0x454e4832u, 2, {3, 3}, {2, 2}, {7, 7}, {10, 10}};
     p.process_graph_complete = false;
     return p;
 }

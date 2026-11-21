@@ -67,17 +67,17 @@ The private GDL DECOMP standalone post-processing donor is recorded byte-for-byt
 in `third_party/graphics/PROVENANCE.json`. Its upstream dependencies are
 librashader 0.12.0 (MPL-2.0; C headers MIT), DirectX Shader Compiler v1.9.2609
 (LLVM/NCSA and MIT), CRT Guest Advanced and CRT Royale (GPL-2.0-or-later), and
-CRT Lottes (public domain). The copied post-chain and the live D3D11 presenter
-contain a native port of
-[Blur Busters CRT Beam Simulator](https://github.com/blurbusters/crt-beam-simulator)
-at commit `734786a6c48f954af11cb390e38a9e06107ffdd9`,
-Copyright (c) 2024 Mark Rejhon (@BlurBusters) and Timothy Lottes
-(@NOTimothyLottes), under the MIT licence. Exact hashes and the complete
-licence are retained under `third_party/graphics/runtime/post/blurbusters/`.
-The live player adds no window, game or frame-history code from that repository.
-The same post chain contains an AMD CAS-inspired formula.
+CRT Lottes (public domain). The copied post-chain contains an AMD CAS-inspired
+formula.
 Full runtime, shader and donor notices and source/build pins are retained in
 `third_party/graphics/` and copied to the staged `licenses/` and `shaders/` trees.
 The shader subset is pinned to slang-shaders commit
 `2345ee91602a7404d3a1a6a5df6108d7305fdad4`. No source ROM or gameplay code comes
 from that donor. This remains a private build, not a redistribution approval.
+
+## SDL3 and Recomp Achievements
+
+The SDL player and optional Windows gamepad backend use SDL3 under its zlib
+license. Recomp Achievements is pinned in
+`third_party/recomp_achievements/UPSTREAM.txt`. That directory retains the
+SDK license and the notices for its cJSON and rcheevos dependencies.

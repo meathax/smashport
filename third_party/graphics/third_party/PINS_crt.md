@@ -118,31 +118,6 @@ git fetch --depth 1 origin 2345ee91602a7404d3a1a6a5df6108d7305fdad4 && git check
 No local changes (`git status` clean). The project presets in `presets/`
 refer to it with `#reference "../third_party/slang-shaders/..."`.
 
-## Blur Busters CRT beam simulator (reference source)
-
-| Item | Value |
-|---|---|
-| Upstream | https://github.com/blurbusters/crt-beam-simulator |
-| Commit | `734786a6c48f954af11cb390e38a9e06107ffdd9` (2025-12-30, branch `main`) |
-| Licence | MIT, Copyright 2024 Mark Rejhon (@BlurBusters) and Timothy Lottes (@NOTimothyLottes) |
-| Where | `runtime/post/blurbusters/` (exact HLSL reference and MIT licence); GLSL/README are pinned below as algorithm provenance |
-
-| File | SHA-256 |
-|---|---|
-| `LICENSE` | `64baf37c51f18b1ccfdc2958f6da7fc0fdefbc92370977cd3114d5111828cf33` |
-| `README.md` | `c37e37cde0ac2149ab24eeb59d3f3e414833aa68282c6e3785342cd61b6539a9` |
-| `crt-simulator.glsl` | `0da1f821c742eeb37b80d945693eaddb21d08ebae6c2ff4590389be75b108614` |
-| `crt-simulator.hlsl` | `de1a931a0ef4f2c01babf7ea43ea4d1f5af2302eca53651897ee2f9eb5fe3ea6` |
-
-The diagnostic D3D12 chain contains pixel shader `ps_beam`; the live player uses
-the same pinned algorithm as a D3D11 pixel shader in
-`src/host/gpu_resident.cpp`. Both run it before any Slang CRT preset. The live
-integration disables CRT Guest Advanced's `AS` afterglow and Royale's interlace
-detection when beam mode is active; complete credit is in
-`THIRD_PARTY_NOTICES.md`. The slang port inside
-slang-shaders (`subframe-bfi/`) still loads as an optional sub-frame preset
-but is not shipped.
-
 ## Project presets
 
 | File | SHA-256 |

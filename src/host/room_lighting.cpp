@@ -1,12 +1,13 @@
 #include "stv/host/room_lighting.hpp"
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace stv::host {
 namespace {
 constexpr float Pi = 3.14159265f;
-// Global grade: a darker room base lets the placed lights carve pools and shadows.
-constexpr float AmbientScale = .74f, LightScale = 1.6f;
+// Global grade: darkness is the canvas; authored fixtures remain readable.
+constexpr float AmbientScale = .68f, LightScale = 1.72f;
 enum class Anim : uint8_t { Steady, Flicker, Pulse, Strobe, Broken, Sweep, Orbit, Hue };
 struct Lamp {
     float u{}, v{}, z{}, radius{};
@@ -57,6 +58,68 @@ Lamp pattern(Lamp l, LightPattern p) { l.pattern = p; return l; }
 struct RoomKey { unsigned circuit, wave; };
 RoomKey key(uint32_t room) { return {room >> 16, room & 0xffff}; }
 
+// Authored retail selectors: 48 playable rooms plus terminal/bonus selectors.
+// Profile entries are presentation-only and never address game RAM or ROM data.
+constexpr RoomLightingProfile kRoomProfiles[] = {
+    {0x00001, "Arena One: gantry opener", MoodTheme::Steel, ScaffoldMotion::CrossSweep, {.62f,.80f,1}, .98f, 1.02f, .012f, .0f, 1.0f},
+    {0x00002, "Ten Keys: crimson alarm", MoodTheme::Steel, ScaffoldMotion::OrbitSweep, {1,.22f,.12f}, .94f, 1.08f, .019f, .7f, .95f},
+    {0x00003, "Power Vault: toxic spill", MoodTheme::Steel, ScaffoldMotion::Pulse, {.38f,1,.35f}, .92f, 1.13f, .034f, 1.6f, 1.05f},
+    {0x00004, "Shrapnel Works: magenta cut", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.26f,.70f}, .90f, 1.12f, .027f, 2.4f, 1.0f},
+    {0x00005, "Bonus Prizes: live broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.78f,.42f}, 1.0f, 1.0f, .016f, .5f, 1.2f},
+    {0x00006, "Shrapnel Hall: broken strip", MoodTheme::Steel, ScaffoldMotion::Beacon, {1,.55f,.18f}, .90f, 1.18f, .041f, 4.1f, .85f},
+    {0x00007, "Total Carnage: orange rolling bank", MoodTheme::Steel, ScaffoldMotion::Scanline, {1,.42f,.10f}, .88f, 1.20f, .052f, 1.1f, 1.1f},
+    {0x00008, "Crowd Control: cyan crossfire", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.20f,.88f,1}, .90f, 1.10f, .014f, 3.0f, 1.05f},
+    {0x00009, "Tank Trouble: red chase", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.10f}, .86f, 1.25f, .031f, 5.2f, 1.1f},
+    {0x0000a, "Mutoid One: dissection white", MoodTheme::Mutoid, ScaffoldMotion::CrossSweep, {.88f,.92f,1}, .82f, 1.28f, .011f, .2f, 1.25f},
+    {0x0000b, "First Rack: silver finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.75f,.86f,1}, .98f, 1.0f, .020f, 2.2f, 1.25f},
+
+    {0x10001, "Orbs: violet containment", MoodTheme::Neon, ScaffoldMotion::OrbitSweep, {.64f,.36f,1}, .92f, 1.12f, .018f, .4f, 1.1f},
+    {0x10002, "Ten Keys Two: cyan lift", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.22f,.92f,1}, .90f, 1.10f, .015f, 1.4f, 1.05f},
+    {0x10003, "Smash 'Em: pink pursuit", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {1,.31f,.72f}, .88f, 1.16f, .045f, 2.5f, 1.0f},
+    {0x10004, "Fire Power: toxic valves", MoodTheme::Toxic, ScaffoldMotion::Pulse, {.42f,1,.20f}, .84f, 1.20f, .037f, 3.7f, 1.15f},
+    {0x10005, "Slaughter Line: magenta rails", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.62f}, .88f, 1.18f, .024f, 4.8f, 1.0f},
+    {0x10006, "Laser Death Zone: blue slicer", MoodTheme::Neon, ScaffoldMotion::Scanline, {.18f,.68f,1}, .82f, 1.26f, .061f, 5.1f, 1.1f},
+    {0x10007, "Scarface: monitor storm", MoodTheme::Scarface, ScaffoldMotion::OrbitSweep, {.42f,1,.46f}, .78f, 1.32f, .026f, .8f, 1.3f},
+    {0x10008, "Rowdy Droids: moon search", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.52f,.70f,1}, .90f, 1.08f, .013f, 1.9f, .95f},
+    {0x10009, "Vacuum Clean: white hazard", MoodTheme::Moonlit, ScaffoldMotion::Beacon, {1,.72f,.46f}, .86f, 1.20f, .043f, 3.4f, 1.15f},
+    {0x1000a, "Reserved metal selector", MoodTheme::Moonlit, ScaffoldMotion::Pulse, {.52f,.72f,1}, .92f, 1.0f, .029f, .0f, .9f},
+    {0x1000b, "Metal Death: caustic bay", MoodTheme::Toxic, ScaffoldMotion::OrbitSweep, {.30f,1,.54f}, .84f, 1.22f, .020f, 2.1f, 1.15f},
+    {0x1000c, "Watch Your Step: pit show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.80f,.36f}, .94f, 1.05f, .017f, 4.4f, 1.2f},
+    {0x1000d, "Total Carnage Two: cold violet", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {.66f,.46f,1}, .86f, 1.17f, .047f, 1.7f, 1.0f},
+    {0x1000e, "Defend Me: cyan apron", MoodTheme::Stage, ScaffoldMotion::Chase, {.26f,.90f,1}, .94f, 1.05f, .022f, 5.9f, 1.25f},
+    {0x1000f, "Turtles: amber convoy", MoodTheme::Moonlit, ScaffoldMotion::OrbitSweep, {1,.63f,.24f}, .90f, 1.10f, .016f, 2.7f, 1.0f},
+    {0x10010, "Chunks: magenta machinery", MoodTheme::Neon, ScaffoldMotion::Pulse, {1,.24f,.66f}, .84f, 1.20f, .035f, 4.0f, 1.15f},
+    {0x10011, "These Are Fast: cobalt strobe", MoodTheme::Neon, ScaffoldMotion::Scanline, {.16f,.54f,1}, .80f, 1.28f, .068f, 1.2f, 1.1f},
+    {0x10012, "Buffalo Herd: polar sweep", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.58f,.84f,1}, .90f, 1.10f, .015f, 3.3f, 1.0f},
+    {0x10013, "Second Rack: blue-gold finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.56f,.76f,1}, .96f, 1.02f, .024f, 4.9f, 1.25f},
+
+    {0x20001, "No Dice: jungle breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.60f,.18f}, .88f, 1.12f, .014f, .6f, 1.05f},
+    {0x20002, "Temple Alert: braziers", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.56f,.16f}, .86f, 1.16f, .012f, 1.8f, 1.2f},
+    {0x20003, "Scorpion Fever: amber pincer", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.38f,.08f}, .84f, 1.20f, .048f, 3.1f, 1.05f},
+    {0x20004, "Cobra Ahead: acid warning", MoodTheme::Jungle, ScaffoldMotion::Pulse, {.52f,1,.24f}, .82f, 1.22f, .034f, 4.2f, 1.15f},
+    {0x20005, "Walls of Pain: gold teeth", MoodTheme::Temple, ScaffoldMotion::Chase, {1,.52f,.14f}, .88f, 1.14f, .029f, 5.4f, 1.15f},
+    {0x20006, "Last Arena: furnace sun", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.72f,.30f}, .82f, 1.22f, .016f, 1.1f, 1.2f},
+    {0x20007, "Cobra Death: twin crimson moons", MoodTheme::Cobra, ScaffoldMotion::OrbitSweep, {1,.20f,.08f}, .76f, 1.38f, .018f, .4f, 1.3f},
+    {0x20008, "Turtle Guard: cyan canopy", MoodTheme::Jungle, ScaffoldMotion::Beacon, {.18f,.88f,1}, .86f, 1.16f, .036f, 2.0f, 1.05f},
+    {0x20009, "Extra Sauce: hot magenta", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.26f,.50f}, .82f, 1.24f, .056f, 3.3f, 1.0f},
+    {0x2000a, "Reserved jungle selector", MoodTheme::Jungle, ScaffoldMotion::Pulse, {1,.60f,.20f}, .92f, 1.0f, .030f, .0f, .9f},
+    {0x2000b, "Secret Rooms: hidden gold", MoodTheme::Temple, ScaffoldMotion::Beacon, {1,.76f,.30f}, .82f, 1.20f, .039f, 4.7f, 1.2f},
+    {0x2000c, "Enjoy My Wealth: gold broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.74f,.28f}, .96f, 1.08f, .017f, 5.8f, 1.3f},
+    {0x2000d, "No Turtles: cold furnace", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {.45f,.72f,1}, .84f, 1.16f, .019f, 1.5f, 1.0f},
+    {0x2000e, "Turtle Chunks: blue-gold chase", MoodTheme::Stage, ScaffoldMotion::Chase, {.42f,.82f,1}, .94f, 1.08f, .026f, 2.8f, 1.25f},
+    {0x2000f, "Dynamite Cobra: ember grid", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.30f,.08f}, .80f, 1.28f, .064f, 4.1f, 1.1f},
+    {0x20010, "Buffalo Gun: temple target", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.58f,.22f}, .82f, 1.20f, .014f, 5.0f, 1.2f},
+    {0x20011, "Total Carnage Three: violet rain", MoodTheme::Jungle, ScaffoldMotion::Scanline, {.72f,.36f,1}, .80f, 1.25f, .050f, 1.0f, 1.15f},
+    {0x20012, "Secret Hall: amber breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.54f,.18f}, .84f, 1.18f, .018f, 3.6f, 1.1f},
+    {0x20013, "Enough Keys: electric gold", MoodTheme::Stage, ScaffoldMotion::Chase, {1,.82f,.36f}, .94f, 1.10f, .028f, 4.9f, 1.3f},
+    {0x20014, "Final Keys: red white show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.22f,.14f}, .84f, 1.28f, .020f, 5.7f, 1.35f},
+    {0x20015, "Mutoid Return: neon apocalypse", MoodTheme::Finale, ScaffoldMotion::OrbitSweep, {1,.12f,.64f}, .76f, 1.38f, .022f, .9f, 1.35f},
+    {0x20016, "Pleasure Dome: spectral finale", MoodTheme::Dome, ScaffoldMotion::Pulse, {.68f,.36f,1}, .88f, 1.15f, .012f, 2.6f, 1.35f},
+    {0x20017, "Ending screen: final afterglow", MoodTheme::Dome, ScaffoldMotion::CrossSweep, {1,.56f,.18f}, .84f, 1.10f, .018f, 4.0f, 1.2f},
+};
+constexpr RoomLightingProfile kUnknownProfile{0, "Unbound room", MoodTheme::Steel, ScaffoldMotion::CrossSweep,
+                                                {.72f,.82f,1}, 1, 1, .015f, 0, 1};
+
 std::vector<Lamp> themeLamps(uint32_t room) {
     const auto [circuit, wave] = key(room);
     std::vector<Lamp> l;
@@ -75,6 +138,7 @@ std::vector<Lamp> themeLamps(uint32_t room) {
             l.push_back(animate(omni(-.01f, .5f, 30, 160, 1, .6f, .1f, 1.3f), Anim::Pulse, .09f, 0));
             l.push_back(animate(omni(1.01f, .5f, 30, 160, 1, .6f, .1f, 1.3f), Anim::Pulse, .09f, Pi));
         }
+
         break;
     }
     case MoodTheme::Neon: {
@@ -137,8 +201,8 @@ std::vector<Lamp> themeLamps(uint32_t room) {
         break;
     }
     case MoodTheme::Mutoid: {
-        l.push_back(animate(spot(.3f, -.15f, 170, 440, 1, .97f, .92f, 1.5f, 20, .45f, .55f), Anim::Sweep, .008f, 0, .1f, .05f));
-        l.push_back(animate(spot(.7f, -.15f, 170, 440, 1, .97f, .92f, 1.5f, 20, .55f, .55f), Anim::Sweep, .008f, 1.7f, .1f, .05f));
+        l.push_back(animate(spot(.3f, -.15f, 170, 440, .38f, .72f, 1, 1.1f, 20, .45f, .55f), Anim::Sweep, .008f, 0, .1f, .05f));
+        l.push_back(animate(spot(.7f, -.15f, 170, 440, .38f, .72f, 1, 1.1f, 20, .55f, .55f), Anim::Sweep, .008f, 1.7f, .1f, .05f));
         l.push_back(animate(spot(.02f, -.02f, 44, 260, 1, .1f, .05f, 1.9f, 24, .3f, .5f), Anim::Orbit, .05f, 0, .3f, .3f));
         l.push_back(animate(spot(.98f, -.02f, 44, 260, 1, .1f, .05f, 1.9f, 24, .7f, .5f), Anim::Orbit, .05f, Pi, .3f, .3f));
         l.push_back(animate(omni(.5f, 1.05f, 18, 210, 1, .45f, .12f, 1.15f, 6, 1), Anim::Flicker, .2f, 0));
@@ -159,8 +223,8 @@ std::vector<Lamp> themeLamps(uint32_t room) {
         break;
     }
     case MoodTheme::Finale: {
-        l.push_back(animate(spot(.15f, -.3f, 200, 560, 1, .12f, .1f, 1.8f, 13, .35f, .5f), Anim::Sweep, .034f, 0, .32f, .3f));
-        l.push_back(animate(spot(.85f, -.3f, 200, 560, 1, .12f, .1f, 1.8f, 13, .65f, .5f), Anim::Sweep, .029f, 2, .32f, .3f));
+        l.push_back(animate(spot(.15f, -.3f, 200, 560, 1, .12f, .64f, 1.8f, 13, .35f, .5f), Anim::Sweep, .034f, 0, .32f, .3f));
+        l.push_back(animate(spot(.85f, -.3f, 200, 560, .12f, .58f, 1, 1.8f, 13, .65f, .5f), Anim::Sweep, .029f, 2, .32f, .3f));
         l.push_back(spot(.5f, -.2f, 210, 520, 1, .97f, .92f, 1.3f, 22, .5f, .55f));
         l.push_back(animate(omni(.5f, -.5f, 230, 680, .9f, .9f, 1, 2.6f, 14, 1), Anim::Strobe, 97, 31));
         l.push_back(omni(.95f, 1.1f, 40, 260, 1, .3f, .85f, 1.0f, 8, 1));
@@ -177,6 +241,67 @@ std::vector<Lamp> themeLamps(uint32_t room) {
     }
     return l;
 }
+std::vector<Lamp> scaffoldLamps(uint32_t room) {
+    const auto &p = room_lighting_profile(room);
+    const float r = p.accent[0], g = p.accent[1], b = p.accent[2];
+    auto left = spot(.08f, -.34f, 205, 600, r, g, b, .95f * p.rig, 15, .35f, .50f, .38f);
+    auto right = spot(.92f, -.34f, 205, 600, r * .65f + .25f, g * .65f + .25f, b * .65f + .25f,
+                      .9f * p.rig, 15, .65f, .50f, .38f);
+    auto wash = omni(.5f, -.08f, 82, 360, .44f + r * .24f, .44f + g * .24f, .44f + b * .24f,
+                     .58f * p.rig, 13, 2);
+    switch (p.scaffold) {
+    case ScaffoldMotion::CrossSweep:
+        left = animate(left, Anim::Sweep, p.rate, p.phase, .30f, .10f);
+        right = animate(right, Anim::Sweep, p.rate, p.phase + Pi, -.30f, .10f);
+        break;
+    case ScaffoldMotion::OrbitSweep:
+        left = animate(left, Anim::Orbit, p.rate, p.phase, .24f, .18f);
+        right = animate(right, Anim::Orbit, p.rate, p.phase + Pi, .24f, .18f);
+        break;
+    case ScaffoldMotion::Chase:
+        left = animate(left, Anim::Pulse, p.rate, p.phase);
+        right = animate(right, Anim::Pulse, p.rate, p.phase + Pi);
+        wash = animate(wash, Anim::Broken, 1, p.phase);
+        break;
+    case ScaffoldMotion::Pulse:
+        left = animate(left, Anim::Pulse, p.rate, p.phase);
+        right = animate(right, Anim::Pulse, p.rate, p.phase + Pi);
+        wash = animate(wash, Anim::Hue, .003f, p.phase);
+        break;
+    case ScaffoldMotion::Beacon:
+        left = animate(left, Anim::Strobe, 97, p.phase * 17);
+        right = animate(right, Anim::Orbit, p.rate, p.phase, .36f, .18f);
+        wash = animate(wash, Anim::Broken, 1, p.phase);
+        break;
+    case ScaffoldMotion::Scanline:
+        left = animate(left, Anim::Sweep, p.rate, p.phase, .42f, .04f);
+        right = animate(right, Anim::Sweep, p.rate, p.phase + 1.2f, -.42f, .04f);
+        wash = animate(wash, Anim::Pulse, p.rate * 2, p.phase);
+        break;
+    }
+    return {left, right, wash};
+}
+
+std::vector<Lamp> roomLamps(uint32_t room) {
+    const auto &profile = room_lighting_profile(room);
+    auto lamps = themeLamps(room);
+    for (size_t i = 0; i < lamps.size(); ++i) {
+        auto &lamp = lamps[i];
+        const float mix = .08f + .025f * float(i % 3);
+        lamp.r = lamp.r * (1 - mix) + profile.accent[0] * mix;
+        lamp.g = lamp.g * (1 - mix) + profile.accent[1] * mix;
+        lamp.b = lamp.b * (1 - mix) + profile.accent[2] * mix;
+        lamp.intensity *= profile.intensity;
+        lamp.phase += profile.phase;
+    }
+    auto scaffold = scaffoldLamps(room);
+    lamps.insert(lamps.end(), scaffold.begin(), scaffold.end());
+    // Leave exposure headroom for the boss rig and simultaneous attack lights.
+    if(room==10 || room==0x10007 || room==0x20007 || room==0x20015)
+        for(auto& lamp:lamps)lamp.intensity*=.62f;
+    return lamps;
+}
+
 // Show studio at a circuit start, left of wave one: warm show spots, marquee
 // chase and a searchlight raking the crowd. World anchored like any room.
 std::vector<Lamp> studioLamps() {
@@ -265,26 +390,7 @@ bool reaches(const GpuLight &g, float width, float height) {
 } // namespace
 
 MoodTheme room_theme(uint32_t room) {
-    const auto [circuit, wave] = key(room);
-    if (circuit == 0) {
-        if (wave == 10) return MoodTheme::Mutoid;
-        if (wave == 5) return MoodTheme::Stage;
-        if (wave == 4 || wave == 8 || wave == 9) return MoodTheme::Neon;
-        return MoodTheme::Steel;
-    }
-    if (circuit == 1) {
-        if (wave == 7) return MoodTheme::Scarface;
-        if (wave == 12 || wave == 14) return MoodTheme::Stage;
-        if (wave == 4 || wave == 11) return MoodTheme::Toxic;
-        if (wave == 1 || wave == 2 || wave == 5 || wave == 6 || wave == 16 || wave == 17) return MoodTheme::Neon;
-        return MoodTheme::Moonlit;
-    }
-    if (wave == 22) return MoodTheme::Dome;
-    if (wave == 21) return MoodTheme::Finale;
-    if (wave == 7) return MoodTheme::Cobra;
-    if (wave == 12 || wave == 14 || wave == 19 || wave == 20) return MoodTheme::Stage;
-    if (wave == 5 || wave == 6 || wave == 11 || wave == 16) return MoodTheme::Temple;
-    return MoodTheme::Jungle;
+    return room_lighting_profile(room).theme;
 }
 const char *theme_name(MoodTheme theme) {
     static constexpr const char *names[] = {"steel studio", "neon club", "moonlit hall", "toxic works", "live stage",
@@ -303,21 +409,114 @@ RoomMood room_mood(uint32_t room) {
     case MoodTheme::Stage: m.ambient = {.62f, .60f, .74f}; m.gloss = .75f; m.actorFloor = .76f; m.occlusion = .60f; break;
     case MoodTheme::Jungle: m.ambient = {.52f, .45f, .32f}; m.gloss = .12f; m.actorFloor = .80f; m.occlusion = .50f; break;
     case MoodTheme::Temple: m.ambient = {.54f, .47f, .34f}; m.gloss = .35f; m.actorFloor = .80f; m.occlusion = .50f; break;
-    case MoodTheme::Mutoid: m.ambient = {.46f, .40f, .46f}; m.gloss = .65f; m.actorFloor = .74f; m.occlusion = .65f; break;
+    case MoodTheme::Mutoid: m.ambient = {.43f, .38f, .46f}; m.gloss = .65f; m.actorFloor = .74f; m.occlusion = .65f; break;
     case MoodTheme::Scarface: m.ambient = {.42f, .50f, .44f}; m.gloss = .60f; m.actorFloor = .74f; m.occlusion = .65f; break;
     case MoodTheme::Cobra: m.ambient = {.48f, .41f, .33f}; m.gloss = .40f; m.actorFloor = .76f; m.occlusion = .60f; break;
     case MoodTheme::Finale: m.ambient = {.40f, .34f, .46f}; m.gloss = .70f; m.actorFloor = .74f; m.occlusion = .65f; break;
     case MoodTheme::Dome: m.ambient = {.50f, .46f, .56f}; m.gloss = .45f; m.actorFloor = .84f; m.occlusion = .40f; break;
     }
-    for (auto &a : m.ambient) a *= AmbientScale;
+    const auto &profile = room_lighting_profile(room);
+    for (auto &a : m.ambient) a *= AmbientScale * profile.ambient;
     return m;
+}
+const RoomLightingProfile &room_lighting_profile(uint32_t room) {
+    for (const auto &profile : kRoomProfiles) if (profile.room == room) return profile;
+    return kUnknownProfile;
+}
+size_t room_lighting_profile_count() { return std::size(kRoomProfiles); }
+
+bool is_boss_target(uint32_t room, uint16_t oid) {
+    const unsigned type = (oid >> 8) & 31;
+    if (room == 0x0000a || room == 0x20015) return type == 24;
+    if (room == 0x10007) return type == 25;
+    if (room == 0x20007) return type == 10;
+    return false;
+}
+
+void add_boss_lights(LightingFrame &frame, const EffectPacket &p, int offset) {
+    float left = 100000, top = 100000, right = -100000, bottom = -100000;
+    unsigned count = 0;
+    for (const auto &target : p.foreground) {
+        if (!is_boss_target(p.room, target.oid)) continue;
+        left = std::min(left, target.x); top = std::min(top, target.y);
+        right = std::max(right, target.x + target.w); bottom = std::max(bottom, target.y + target.h);
+        ++count;
+    }
+    if (!count || frame.dynamicLights + 4 > RoomLightRig::MaxDynamic) return;
+    const auto &profile = room_lighting_profile(p.room);
+    const float cx = (left + right) * .5f, cy = (top + bottom) * .5f;
+    const float phase = float(p.frame) * profile.rate;
+    std::array<float, 3> keyTint{1, .95f, .88f}, rimTint=profile.accent;
+    std::array<float, 3> underTint=profile.accent, edgeTint{.30f, .55f, 1};
+    if (p.room == 0x10007) {
+        keyTint = {1, 1, .94f}; rimTint = {.32f, 1, .42f};
+        underTint = {.12f, .92f, .38f}; edgeTint = {.62f, .36f, 1};
+    } else if (p.room == 0x20007) {
+        keyTint = {1, .86f, .62f}; rimTint = {1, .16f, .08f};
+        underTint = {1, .46f, .12f}; edgeTint = {.46f, .92f, 1};
+    } else if (p.room == 0x20015) {
+        keyTint = {1, .78f, .94f}; rimTint = {1, .12f, .64f};
+        underTint = {.48f, .18f, 1}; edgeTint = {.12f, .78f, 1};
+    } else {
+        keyTint = {.90f, .94f, 1}; rimTint = {1, .18f, .12f};
+        underTint = {.16f, .62f, 1}; edgeTint = {.38f, .58f, 1};
+    }
+    auto spot = [&](float x, float y, float z, float radius, float intensity,
+                    const std::array<float, 3> &color, float cone, float softness) {
+        GpuLight light;
+        light.x = x + float(offset); light.y = y; light.z = z; light.radius = radius;
+        light.r = color[0]; light.g = color[1]; light.b = color[2]; light.intensity = intensity;
+        const float dx = cx + float(offset) - light.x, dy = cy - light.y, dz = -light.z;
+        const float len = std::max(.001f, std::sqrt(dx * dx + dy * dy + dz * dz));
+        light.dx = dx / len; light.dy = dy / len; light.dz = dz / len;
+        light.cosOuter = std::cos(cone * Pi / 180);
+        light.cosInner = std::cos(cone * .42f * Pi / 180);
+        light.softness = softness; light.samples = 2;
+        frame.lights.push_back(light); ++frame.dynamicLights;
+    };
+    auto point = [&](float x, float y, float z, float radius, float intensity,
+                     const std::array<float, 3> &color, float softness) {
+        GpuLight light;
+        light.x = x + float(offset); light.y = y; light.z = z; light.radius = radius;
+        light.r = color[0]; light.g = color[1]; light.b = color[2]; light.intensity = intensity;
+        light.softness = softness; light.samples = 1;
+        frame.lights.push_back(light); ++frame.dynamicLights;
+    };
+    const float span = std::max(24.f, right - left);
+    const unsigned quality = std::min(p.cinema.quality, RoomCinemaQualityHigh);
+    const float cue = .58f * (quality ? (.70f + .12f * float(quality)) *
+        (.72f + .20f * p.cinema.bossPhase +
+         .25f * std::max(p.cinema.bossIntro, p.cinema.deathPower)) : 1.f);
+    spot(cx + std::sin(phase) * span * .24f, top - 36, 145, 350,
+         (2.4f + .35f * std::sin(phase * .7f)) * cue, keyTint, 22, 11);
+    point(cx - std::sin(phase + Pi) * span * .34f, bottom + 4, 30, 225,
+          (1.55f + .22f * std::sin(phase * 1.7f + profile.phase)) * cue, underTint, 8);
+    spot(cx + std::cos(phase * .8f) * span * .48f, top - 4, 95, 285,
+         (1.25f + .28f * std::sin(phase * 1.3f + 2)) * cue, rimTint, 31, 9);
+    point(cx - std::cos(phase * .9f + .7f) * span * .52f, cy, 54, 190,
+          (.92f + .34f * std::sin(phase * 2.1f + 4)) * cue, edgeTint, 6);
 }
 
 LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) {
     LightingFrame frame;
+    frame.lights.reserve(MaxLights);
     const auto f = p.geometry.floor;
     frame.mood = room_mood(p.room);
     if (f.w <= 0 || f.h <= 0) return frame;
+    const unsigned cinemaQuality = std::min(p.cinema.quality, RoomCinemaQualityHigh);
+    const float cinemaScale = float(cinemaQuality) / float(RoomCinemaQualityHigh);
+    if (cinemaQuality && p.studio.boss) {
+        const auto tint = room_cinema_tint(p.room);
+        const float strength = cinemaScale * std::clamp(
+            .30f + p.cinema.bossPhase * .55f + p.cinema.deathPower * .15f, 0.f, 1.f);
+        for (size_t i = 0; i < frame.mood.ambient.size(); ++i)
+            frame.mood.ambient[i] *= 1.f + (tint[i] - 1.f) * strength;
+    }
+    if (cinemaQuality) {
+        const float ambience = 1.f + p.cinema.audioPulse * (.025f + .035f * cinemaScale);
+        for (auto &a : frame.mood.ambient) a *= ambience;
+        frame.mood.gloss *= 1.f + p.cinema.audioPulse * .025f * cinemaScale;
+    }
     // World anchor: WAVES.SET_WAVE origin minus camera, plus the camera.
     float wx = f.x + float(p.camera_x), wy = f.y + float(p.camera_y);
     // The circuit-start studio holds before WAVEYX is written (origin 0, floor at
@@ -353,23 +552,46 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
             ++counter;
         }
     };
-    emit(themeLamps(p.room), current_, frame.staticLights);
-    // The departing room stays lit for the length of the pan (state 0x18) only.
-    if (!p.roomIntro) previous_ = {};
+    emit(roomLamps(p.room), current_, frame.staticLights);
+    // Retire the departing rig only after its room leaves the lighted viewport.
+    // State 0x18 can end before the camera has exposed the final wall, and later
+    // scripted camera movement must not switch off a still-visible room.
     if (previous_.valid && previous_.room != current_.room) {
         const float sx = previous_.x - float(p.camera_x) + float(offset), sy = previous_.y - float(p.camera_y);
         if (sx + previous_.w + 200 > 0 && sx - 200 < W && sy + previous_.h + 200 > 0 && sy - 200 < H)
-            emit(themeLamps(previous_.room), previous_, frame.previousRoomLights);
+            emit(roomLamps(previous_.room), previous_, frame.previousRoomLights);
         else
             previous_ = {};
     }
-    if ((p.room & 0xffff) == 1) emit(studioLamps(), current_, frame.studioLights);
-    // Gameplay lights: projectiles, enemy shots and explosions, strongest first.
-    std::vector<RoomLamp> dynamic = p.dxrLights;
-    std::stable_sort(dynamic.begin(), dynamic.end(),
+    if ((p.room & 0xffff) == 1) {
+        auto studio = studioLamps();
+        const auto &profile = room_lighting_profile(p.room);
+        for (auto &lamp : studio) {
+            lamp.r = lamp.r * .8f + profile.accent[0] * .2f;
+            lamp.g = lamp.g * .8f + profile.accent[1] * .2f;
+            lamp.b = lamp.b * .8f + profile.accent[2] * .2f;
+            lamp.intensity *= profile.intensity;
+            lamp.phase += profile.phase;
+        }
+        emit(studio, current_, frame.studioLights);
+    }
+    add_boss_lights(frame, p, offset);
+    // Explosions outrank boss-room shot spill; retain slots for cinema cues.
+    std::array<RoomLamp, MaxGameplayLights> dynamic{};
+    const auto dynamicCount = std::min(p.dxrLights.size(), dynamic.size());
+    std::copy_n(p.dxrLights.begin(), dynamicCount, dynamic.begin());
+    std::stable_sort(dynamic.begin(), dynamic.begin() + dynamicCount,
                      [](const RoomLamp &a, const RoomLamp &b) { return a.power * a.radius > b.power * b.radius; });
-    for (const auto &d : dynamic) {
-        if (frame.dynamicLights >= MaxDynamic || frame.lights.size() >= MaxLights) break;
+    const bool bossCinemaLight = cinemaQuality >= RoomCinemaQualityMedium &&
+        (p.cinema.bossIntro > .01f || p.cinema.deathPower > .01f);
+    const unsigned audioCinemaLights = cinemaQuality >= RoomCinemaQualityMedium &&
+        p.cinema.audioPulse > .015f ? (cinemaQuality == RoomCinemaQualityHigh ? 2u : 1u) : 0u;
+    const unsigned reservedCinemaLights = std::min<unsigned>(
+        MaxDynamic, (bossCinemaLight ? 1u : 0u) + audioCinemaLights);
+    const unsigned gameplayLightLimit = MaxDynamic - reservedCinemaLights;
+    for (size_t i = 0; i < dynamicCount; ++i) {
+        const auto &d = dynamic[i];
+        if (frame.dynamicLights >= gameplayLightLimit || frame.lights.size() >= MaxLights) break;
         if (!(d.power > 0) || !(d.radius > 0)) continue;
         GpuLight g;
         g.x = d.x + float(offset); g.y = d.y; g.z = d.height; g.radius = d.radius;
@@ -378,6 +600,36 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         if (!reaches(g, W, H)) continue;
         frame.lights.push_back(g);
         ++frame.dynamicLights;
+    }
+    auto emitCinema = [&](float x, float y, float z, float radius, float r, float g, float b, float power) {
+        if (frame.dynamicLights >= MaxDynamic || frame.lights.size() >= MaxLights ||
+            !(power > 0) || !(radius > 0)) return;
+        GpuLight light;
+        light.x = x + float(offset); light.y = y; light.z = z; light.radius = radius;
+        light.r = r; light.g = g; light.b = b; light.intensity = power;
+        light.softness = 5.f + 2.f * cinemaScale;
+        light.samples = cinemaQuality == RoomCinemaQualityHigh ? 2.f : 1.f;
+        if (!reaches(light, W, H)) return;
+        frame.lights.push_back(light);
+        ++frame.dynamicLights;
+    };
+    if (bossCinemaLight) {
+        const float death = p.cinema.deathPower;
+        const float power = (p.cinema.bossIntro * .65f + p.cinema.bossPower * .9f +
+                             p.cinema.bossPhase * .08f + death * .95f) * cinemaScale;
+        const auto tint = room_cinema_tint(p.room);
+        emitCinema(p.cinema.bossX ? p.cinema.bossX : frame.floor[0] + frame.floor[2] * .5f,
+                   p.cinema.bossY ? p.cinema.bossY : frame.floor[1] + 40.f,
+                   72.f + death * 40.f, 230.f + death * 150.f, tint[0], tint[1], tint[2], power);
+    }
+    if (audioCinemaLights) {
+        const auto tint = room_cinema_tint(p.studio.boss ? p.room : 0);
+        const float power = p.cinema.audioPulse * (.35f + .12f * cinemaScale);
+        emitCinema(frame.floor[0] + frame.floor[2] * .18f, frame.floor[1] + 10.f,
+                   42.f, 185.f, tint[0], tint[1], tint[2], power);
+        if (audioCinemaLights == 2)
+            emitCinema(frame.floor[0] + frame.floor[2] * .82f, frame.floor[1] + 10.f,
+                       42.f, 185.f, tint[2], tint[1], tint[0], power * .9f);
     }
     return frame;
 }

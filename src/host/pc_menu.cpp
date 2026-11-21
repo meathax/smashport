@@ -130,9 +130,6 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::WindowScale, "Window size", Kind::Adjustment);
         add(Item::Fullscreen, "Fullscreen", Kind::Adjustment);
         add(Item::PixelFilter, "Picture mode", Kind::Adjustment);
-        add(Item::CrtBeam, "CRT beam simulation", Kind::Adjustment, context.beam_effects, "Choose a GPU picture mode");
-        add(Item::BeamBrightness, "Beam brightness", Kind::Adjustment, context.beam_options, "Enable CRT beam simulation");
-        add(Item::BeamAntiRetention, "LCD anti-retention", Kind::Adjustment, context.beam_options, "Enable CRT beam simulation");
         add(Item::Scaling, "Scaling", Kind::Adjustment);
         add(Item::Vsync, "VSync", Kind::Adjustment);
         add(Item::ShowFps, "Show FPS", Kind::Adjustment);
@@ -154,7 +151,6 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::Fire, "Fire / explosion variants", Kind::Adjustment);
         add(Item::Voxels, "Tiny voxel chunks", Kind::Adjustment);
         add(Item::Shockwaves, "Blast shockwaves", Kind::Adjustment);
-        add(Item::Tracers, "Tracer afterglow", Kind::Adjustment);
         add(Item::PersistentGore, "Persistent gore", Kind::Adjustment);
         add(Item::Destruction, "Enemy destruction", Kind::Adjustment);
         add(Item::ExplosiveDebris, "Explosive death debris", Kind::Adjustment);
@@ -162,6 +158,33 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::FluidSmoke, "Dynamic smoke", Kind::Adjustment);
         add(Item::MuzzleFlash, "Weapon muzzle flash", Kind::Adjustment);
         add(Item::Brass, "Ejected brass", Kind::Adjustment);
+        add(Item::Atmosphere, "Room haze / light cones", Kind::Adjustment);
+        add(Item::SpriteRim, "Sprite rim lighting", Kind::Adjustment);
+        add(Item::ContactShadows, "Contact shadows", Kind::Adjustment);
+        add(Item::WetMaterials, "Wet surface response", Kind::Adjustment);
+        add(Item::HeatDistortion, "Localized heat", Kind::Adjustment);
+        add(Item::EmissiveSpill, "Emissive light spill", Kind::Adjustment);
+        add(Item::CinematicGrade, "Room color grade", Kind::Adjustment);
+        add(Item::RoomCinema, "Room cinema", Kind::Adjustment);
+        add(Item::CombatFeedback, "Combat feedback (cosmetic)", Kind::Adjustment);
+        add(Item::CameraShake, "Camera trauma / shake", Kind::Adjustment,
+            context.combat_feedback && !context.reduce_shake && !context.reduce_motion,
+            !context.combat_feedback ? "Enable Combat feedback" :
+                context.reduce_shake ? "Disabled by Reduce screen shake" : "Disabled by Reduce motion");
+        add(Item::ZoomPunch, "Zoom punch", Kind::Adjustment,
+            context.combat_feedback && !context.reduce_motion,
+            !context.combat_feedback ? "Enable Combat feedback" : "Disabled by Reduce motion");
+        add(Item::HitFlash, "Hit flash", Kind::Adjustment,
+            context.combat_feedback && !context.reduce_flashing,
+            !context.combat_feedback ? "Enable Combat feedback" : "Disabled by Reduce flashing");
+        add(Item::EdgeEffects, "Vignette / chromatic edges", Kind::Adjustment,
+            context.combat_feedback && !context.reduce_flashing,
+            !context.combat_feedback ? "Enable Combat feedback" : "Disabled by Reduce flashing");
+        add(Item::WeaponSignatures, "Weapon signatures", Kind::Adjustment,
+            context.combat_feedback, "Enable Combat feedback");
+        add(Item::ReduceShake, "Accessibility: reduce shake", Kind::Adjustment);
+        add(Item::ReduceFlashing, "Accessibility: reduce flashing", Kind::Adjustment);
+        add(Item::ReduceMotion, "Accessibility: reduce motion", Kind::Adjustment);
         break;
     case PcMenuPage::Audio:
         add(Item::MasterVolume, "Volume", Kind::Adjustment);

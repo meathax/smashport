@@ -1,6 +1,5 @@
 """Build and launch the native player using only this installation and the selected ROM."""
 import argparse
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -9,7 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import uuid
+import threading
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "tools/player"))
@@ -23,9 +22,61 @@ def compile_workers():
     return max(1, min(os.cpu_count() or 1, 6))
 
 
+def new_uuid():
+    raw = bytearray(os.urandom(16))
+    raw[6] = (raw[6] & 15) | 0x40
+    raw[8] = (raw[8] & 63) | 0x80
+    text = raw.hex()
+    return "-".join((text[:8], text[8:12], text[12:16], text[16:20], text[20:]))
+
+
+def is_uuid(text):
+    if len(text) != 36 or any(text[i] != "-" for i in (8, 13, 18, 23)):
+        return False
+    try:
+        int(text.replace("-", ""), 16)
+    except ValueError:
+        return False
+    return True
+
+
+def parallel_map(function, items, workers):
+    """Run the small bundled Python without requiring concurrent.futures."""
+    results = [None] * len(items)
+    next_index = 0
+    lock = threading.Lock()
+    failure = []
+
+    def worker():
+        nonlocal next_index
+        while True:
+            with lock:
+                if next_index >= len(items) or failure:
+                    return
+                index = next_index
+                next_index += 1
+            try:
+                results[index] = function(items[index])
+            except BaseException as error:
+                with lock:
+                    failure.append(error)
+                return
+
+    threads = [threading.Thread(target=worker) for _ in range(min(workers, len(items)))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if failure:
+        raise failure[0]
+    return results
+
+
 def compile_player(rom, work):
+    print("progress 0.10 Validating the selected ROM", flush=True)
     cache = work / "selected-l8.zip"
     generated = prepare(rom, cache, work / "generated")
+    print("progress 0.35 Translating the main and sound programs", flush=True)
     compiler = ROOT / "llvm/bin/clang++.exe"
     env = dict(os.environ, PATH=str(compiler.parent) + ";" + os.environ["SystemRoot"] + r"\System32")
     flags = [str(compiler), "--target=x86_64-w64-windows-gnu", "-std=c++20", "-O2",
@@ -46,11 +97,13 @@ def compile_player(rom, work):
         subprocess.run([*flags, "-w", "-c", source, "-o", obj], check=True, env=env)
         return obj
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=compile_workers()) as pool:
-        objects = list(pool.map(compile_unit, sources))
+    objects = parallel_map(compile_unit, sources, compile_workers())
+    print("progress 0.85 Linking the private native player", flush=True)
     exe = work / "SmashTV.exe"
-    subprocess.run([compiler, "--target=x86_64-w64-windows-gnu", "-static", "-municode", "-mwindows",
-                    *objects, *sorted((ROOT / "host").glob("*.o")), ROOT / "host/eos.lib",
+    host_libraries = [ROOT / "host" / name for name in ("eos.lib", "sdl.lib")
+                      if (ROOT / "host" / name).is_file()]
+    subprocess.run([compiler, "--target=x86_64-w64-windows-gnu", "-municode", "-mwindows",
+                    *objects, *sorted((ROOT / "host").glob("*.o")), *host_libraries,
                     *["-l" + n for n in "ksguid ws2_32 d3d11 d3d12 dxgi d3dcompiler kernel32 user32 gdi32 winspool shell32 ole32 oleaut32 uuid comdlg32 advapi32".split()],
                     "-o", exe], check=True, env=env)
     for item in (ROOT / "runtime").iterdir():
@@ -58,6 +111,10 @@ def compile_player(rom, work):
             shutil.copytree(item, work / item.name)
         else:
             shutil.copyfile(item, work / item.name)
+    for dll in ("libc++.dll", "libunwind.dll", "libwinpthread-1.dll"):
+        source = compiler.parent / dll
+        if source.is_file():
+            shutil.copyfile(source, work / dll)
     return exe, cache
 
 
@@ -73,12 +130,15 @@ def main():
     identity = digest(ROOT / "manifest.json")
     if marker.is_file() and not args.rom:
         saved = json.loads(marker.read_bytes())
-        folder = state / str(uuid.UUID(saved["generation"]))
+        if not is_uuid(saved["generation"]):
+            sys.exit(2)
+        folder = state / saved["generation"]
         exe, rom = folder / "SmashTV.exe", folder / "selected-l8.zip"
         if saved["kit"] != identity or digest(exe) != saved["exe"] or digest(rom) != saved["rom"]:
             sys.exit(2)
     elif args.rom:
-        generation = str(uuid.uuid4())
+        print("progress 0.05 Preparing the private native player", flush=True)
+        generation = new_uuid()
         with tempfile.TemporaryDirectory(dir=state) as td:
             temp = Path(td)
             target = temp / generation
@@ -96,10 +156,7 @@ def main():
         # generations the marker no longer names. A still-running older player
         # keeps its files; a later setup removes them.
         for child in state.iterdir():
-            try:
-                stale = child.is_dir() and str(uuid.UUID(child.name)) == child.name and child.name != generation
-            except ValueError:
-                stale = False
+            stale = child.is_dir() and is_uuid(child.name) and child.name != generation
             if stale:
                 shutil.rmtree(child, ignore_errors=True)
         exe, rom = state / generation / exe.name, state / generation / rom.name

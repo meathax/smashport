@@ -1,7 +1,16 @@
-# Retain the packaging CLI so existing callers receive an explicit failure.
+# Stage the clean, ROM-free installer with the RecompLauncher profile.
 [CmdletBinding()]
-param([string]$OutDir = '', [ValidatePattern('^\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '1.0',
-      [string]$StageDirectory = '', [switch]$DevelopmentRelease)
-# The installed player statically links the programs generated from the selected ROM.
-# A filename allowlist or a PE import audit cannot make that image distributable.
-throw 'Packaging blocked: the locally generated SmashTV.exe contains retail game code. Only the clean installer may be distributed once standalone setup and its payload audit are ready.'
+param(
+    [Parameter(Mandatory = $true)][string]$Installer,
+    [Parameter(Mandatory = $true)][string]$OutDir,
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '1.0.0'
+)
+$ErrorActionPreference = 'Stop'
+$Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$Installer = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Installer)
+$OutDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir)
+& python (Join-Path $Root 'tools\release\launcher_package.py') `
+    --installer $Installer --out-dir $OutDir --version $Version
+if ($LASTEXITCODE -ne 0) {
+    throw 'RecompLauncher package staging failed.'
+}

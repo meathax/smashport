@@ -1,4 +1,5 @@
 build/
+ready/
 __pycache__/
 *.pyc
 original/smashtv/

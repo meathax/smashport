@@ -20,6 +20,20 @@ static_assert(sizeof(GpuLight) == 64);
 
 enum class MoodTheme : uint8_t { Steel, Neon, Moonlit, Toxic, Stage, Jungle, Temple, Mutoid, Scarface, Cobra, Finale, Dome };
 enum class LightPattern : uint8_t { None, Canopy, Fan, Sparkle, Caustic };
+enum class ScaffoldMotion : uint8_t { CrossSweep, OrbitSweep, Chase, Pulse, Beacon, Scanline };
+
+struct RoomLightingProfile {
+    uint32_t room{};
+    const char *name{};
+    MoodTheme theme{};
+    ScaffoldMotion scaffold{};
+    std::array<float, 3> accent{1, 1, 1};
+    float ambient{1};       // multiplier on the theme's dark base
+    float intensity{1};     // room-light multiplier, never an actor-speed/control value
+    float rate{.015f};      // scaffold animation rate
+    float phase{};
+    float rig{1};           // virtual show-lighting wash, independent of scaffold art
+};
 
 struct RoomMood {
     MoodTheme theme{};
@@ -32,6 +46,8 @@ struct RoomMood {
 MoodTheme room_theme(uint32_t room);
 const char *theme_name(MoodTheme);
 RoomMood room_mood(uint32_t room);
+const RoomLightingProfile &room_lighting_profile(uint32_t room);
+size_t room_lighting_profile_count();
 
 struct LightingFrame {
     RoomMood mood{};
@@ -43,7 +59,7 @@ struct LightingFrame {
 class RoomLightRig {
   public:
     static constexpr size_t MaxLights = 32;
-    static constexpr size_t MaxDynamic = 12;
+    static constexpr size_t MaxDynamic = MaxGameplayLights;
     void reset() { current_ = previous_ = {}; }
     // width/offset describe the light map: offset is the 4:3 wing shift.
     LightingFrame build(const EffectPacket &, int width, int offset);

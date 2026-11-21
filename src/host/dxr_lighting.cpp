@@ -13,6 +13,10 @@
 namespace stv::host {
 using Microsoft::WRL::ComPtr;
 namespace {
+// The Windows SDK and MinGW headers provide different UUID declarations.
+constexpr GUID fence11_id{0xaffde9d1, 0x1df7, 0x4bb7, {0x8a, 0x34, 0x0f, 0x46, 0x25, 0x1d, 0xab, 0x80}};
+constexpr GUID context4_id{0x917600da, 0xf58c, 0x4c33, {0x98, 0xd8, 0x3e, 0x15, 0xb3, 0x90, 0xfa, 0x24}};
+constexpr GUID device5_id{0x8ffde202, 0xa0e7, 0x45df, {0x9e, 0x01, 0xe8, 0x37, 0x80, 0x1b, 0x5e, 0xa0}};
 void require(HRESULT hr, const char *operation) {
     if (FAILED(hr))
         throw std::runtime_error(std::string(operation) + " (" + std::to_string(static_cast<unsigned>(hr)) +
@@ -26,9 +30,12 @@ struct Constants {
     Float4 extent, floor, ambient, world, tone;
     GpuLight lights[RoomLightRig::MaxLights];
 };
-constexpr UINT capacity = 512;
-constexpr UINT actorCapacity = 224;
-constexpr UINT coverageBytes = 512 * 32 * 4;
+// One front/cross pair per retail object, plus walls and the active set's
+// floor fixtures. This covers the original 420-object pool without an
+// enhancement-only sprite cap.
+constexpr UINT capacity = 1024;
+constexpr UINT actorCapacity = 420;
+constexpr UINT coverageBytes = 512 * (32 + 256) * 4;
 constexpr UINT constantBytes = (sizeof(Constants) + 255) & ~255u;
 struct Handle {
     HANDLE value{};
@@ -57,9 +64,6 @@ struct DxrLighting::Impl {
     };
     std::array<Slot, 3> slots{};
     UINT64 submitted{}, released{};
-    uint32_t previousRoom{};
-    int previousX{}, previousY{}, previousWidth{};
-    bool previousIntro{};
     RoomLightRig rig;
     LightingFrame lastFrame;
     D3D12_RAYTRACING_GEOMETRY_DESC geometry{}, quadGeometry{};
@@ -103,8 +107,10 @@ struct DxrLighting::Impl {
         if (options.RaytracingTier < D3D12_RAYTRACING_TIER_1_1)
             throw std::runtime_error("DXR 1.1 required");
         ComPtr<ID3D11Device5> device11;
-        require(owner->QueryInterface(IID_PPV_ARGS(&device11)), "D3D11 shared fences");
-        require(ctx->QueryInterface(IID_PPV_ARGS(&context)), "D3D11 fence context");
+        require(owner->QueryInterface(device5_id, reinterpret_cast<void **>(device11.GetAddressOf())),
+                "D3D11 shared fences");
+        require(ctx->QueryInterface(context4_id, reinterpret_cast<void **>(context.GetAddressOf())),
+                "D3D11 fence context");
         D3D12_COMMAND_QUEUE_DESC q{};
         q.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         require(device->CreateCommandQueue(&q, IID_PPV_ARGS(&queue)), "DXR queue");
@@ -113,7 +119,8 @@ struct DxrLighting::Impl {
             Handle handle;
             require(device->CreateSharedHandle(f.Get(), nullptr, GENERIC_ALL, nullptr, &handle.value),
                     "share fence");
-            require(device11->OpenSharedFence(handle.value, IID_PPV_ARGS(&peer)), "open fence");
+            require(device11->OpenSharedFence(handle.value, fence11_id,
+                                              reinterpret_cast<void **>(peer.GetAddressOf())), "open fence");
         };
         fence(produced, produced11);
         fence(consumed, consumed11);
@@ -123,7 +130,7 @@ struct DxrLighting::Impl {
                                     D3D12_RESOURCE_STATE_GENERIC_READ);
             slot.constants = buffer(constantBytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
             slot.coverage = buffer(coverageBytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-            slot.actors = buffer(actorCapacity * 32, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+            slot.actors = buffer(actorCapacity * 48, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
         }
         require(device->CreateCommandList(0, q.Type, slots[0].allocator.Get(), nullptr, IID_PPV_ARGS(&list)),
                 "DXR command list");
@@ -218,7 +225,9 @@ struct DxrLighting::Impl {
         quadBottom.pGeometryDescs = &quadGeometry;
         top.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
         top.NumDescs = capacity;
-        top.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+        // Actor transforms rebuild the TLAS every arcade frame; optimize the
+        // repeated small rebuild rather than a static scene's traversal.
+        top.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO b{}, q{}, t{};
         device->GetRaytracingAccelerationStructurePrebuildInfo(&bottom, &b);
         device->GetRaytracingAccelerationStructurePrebuildInfo(&quadBottom, &q);
@@ -247,17 +256,25 @@ struct DxrLighting::Impl {
         auto &slot = slots[submitted % slots.size()];
         // Reuse the last queued map only while its receiver coordinates still
         // match. Never stall the input thread waiting for a command allocator.
+        // Hold the most recently completed map while a slot is busy. A stale
+        // map is a smoother handoff than dropping every room/scaffold light for
+        // a frame during a camera move or on a slower DXR tier.
         if (produced->GetCompletedValue() < slot.serial)
-            return previousRoom == p.room && previousX == p.camera_x && previousY == p.camera_y &&
-                           previousWidth == width && previousIntro == p.roomIntro
-                       ? view.Get()
-                       : nullptr;
+            return view.Get();
         const auto f = p.geometry.floor;
         if (f.w <= 0 || f.h <= 0 || width > 1024 || height > 512)
             return nullptr;
         std::array<D3D12_RAYTRACING_INSTANCE_DESC, capacity> instances{};
-        std::array<Float4, actorCapacity * 2> actors{};
-        UINT count = 0, actorCount = 0;
+        std::array<Float4, actorCapacity * 3> actors{};
+        // Mutoid/MC and Scarface are assembled from overlapping retail sprites.
+        // Shade the assembled figure continuously, not one cylinder per tile.
+        const unsigned bossType=(p.room==10 || p.room==0x20015)?24u:p.room==0x10007?25u:0u;
+        float bossLeft=1e6f,bossTop=1e6f,bossRight=-1e6f,bossFoot=-1e6f;
+        for(const auto& part:p.foreground)if(bossType && ((part.oid>>8)&31)==bossType){
+            bossLeft=std::min(bossLeft,part.x+offset);bossTop=std::min(bossTop,part.y);
+            bossRight=std::max(bossRight,part.x+offset+part.w);bossFoot=std::max(bossFoot,part.y+part.h);
+        }
+        UINT count = 0, actorCount = 0, firstBoss = 0;
         // Opaque proxies (walls, floor obstacles): mask 2, ID tagged above actor range.
         auto box = [&](float x, float y, float z, float w, float d, float h) {
             if (count == capacity || w <= 0 || d <= 0 || h <= 0)
@@ -275,14 +292,16 @@ struct DxrLighting::Impl {
         };
         // Each sprite stands as a front billboard on its foot line plus a crossing
         // card, so light from any side meets the same animated silhouette.
-        auto actor = [&](float x, float y, float w, float foot, float tag, bool metal) {
+        auto actor = [&](float x, float y, float w, float foot, float tag, float material, bool bossPart) {
             const float h = foot - y;
             if (actorCount == actorCapacity || count + 2 > capacity || w < 2 || h < 2 || w > 200 || h > 200 ||
                 x + w < -160 || x > width + 160)
                 return;
             const float depth = std::clamp(w * .5f, 4.f, 48.f);
-            actors[actorCount * 2] = {x, w, foot, h};
-            actors[actorCount * 2 + 1] = {tag, metal ? 1.f : 0.f, depth, 0};
+            actors[actorCount * 3] = {x, w, foot, h};
+            actors[actorCount * 3 + 1] = {tag, material, depth, bossPart?1.f:0.f};
+            actors[actorCount * 3 + 2] = bossPart?Float4{bossLeft,bossRight-bossLeft,bossFoot,bossFoot-bossTop}:Float4{x,w,foot,h};
+            if(bossPart && !firstBoss)firstBoss=actorCount+1;
             auto &front = instances[count++];
             front.Transform[0][0] = w;
             front.Transform[1][1] = 1;
@@ -324,22 +343,21 @@ struct DxrLighting::Impl {
         // overlay text, so they never occlude room light.
         for (const auto &c : p.casters) {
             const float bank = std::clamp(c.palette, 0.f, 4095.f);
-            actor(c.x + offset, c.y, c.w, std::max(c.foot, c.y + 2), float(unsigned(bank) / 64 + 1), c.material == 2);
+            const bool bossPart=bossType && std::any_of(p.foreground.begin(),p.foreground.end(),[&](const auto& part){
+                return ((part.oid>>8)&31)==bossType && part.x==c.x && part.y==c.y && part.w==c.w && part.h==c.h;
+            });
+            actor(c.x + offset, c.y, c.w, std::max(c.foot, c.y + 2), float(unsigned(bank) / 64 + 1), c.material,bossPart);
         }
-        for (const auto &part : p.foreground)
-            if ((part.oid & 0x1f00) == 0x1800) {
-                const float tag = part.paletteBank >= 0 ? float(part.paletteBank / 64 + 1) : 65;
-                actor(part.x + offset, part.y, part.w, part.y + part.h, tag, part.metal);
-            }
         const auto &mood = lastFrame.mood;
         Constants c{};
         const bool useCoverage = coverage.size() >= size_t(height) * 32;
+        const bool useOwners = coverage.size() >= size_t(height) * (32+256);
         c.extent = {float(width), float(height), float(offset), float(p.frame % 1000003)};
         c.floor = {fx, fy, f.w, f.h};
         c.ambient = {mood.ambient[0], mood.ambient[1], mood.ambient[2], mood.gloss};
         c.world = {float(p.camera_x), float(p.camera_y), float(lastFrame.lights.size()),
-                   float((useCoverage ? 1 : 0) | (height <= 256 ? 2 : 0))};
-        c.tone = {mood.actorFloor, mood.occlusion, 0, float(actorCount)};
+                   float((useCoverage ? 1 : 0) | (height <= 256 ? 2 : 0) | (useOwners ? 4 : 0))};
+        c.tone = {mood.actorFloor, mood.occlusion, float(firstBoss), float(actorCount)};
         std::copy(lastFrame.lights.begin(), lastFrame.lights.end(), c.lights);
         void *out;
         D3D12_RANGE empty{};
@@ -350,11 +368,11 @@ struct DxrLighting::Impl {
         memcpy(out, &c, sizeof(c));
         slot.constants->Unmap(0, nullptr);
         require(slot.actors->Map(0, &empty, &out), "map DXR actors");
-        memcpy(out, actors.data(), std::max<UINT>(1, actorCount) * 2 * sizeof(Float4));
+        memcpy(out, actors.data(), std::max<UINT>(1, actorCount) * 3 * sizeof(Float4));
         slot.actors->Unmap(0, nullptr);
         if (useCoverage) {
             require(slot.coverage->Map(0, &empty, &out), "map DXR coverage");
-            memcpy(out, coverage.data(), std::min<size_t>(coverageBytes, size_t(height) * 32 * 4));
+            memcpy(out, coverage.data(), std::min<size_t>(coverageBytes, size_t(height) * (useOwners?288:32) * 4));
             slot.coverage->Unmap(0, nullptr);
         }
         require(slot.allocator->Reset(), "reset DXR allocator");
@@ -384,11 +402,6 @@ struct DxrLighting::Impl {
         slot.serial = ++submitted;
         require(queue->Signal(produced.Get(), submitted), "publish DXR map");
         require(context->Wait(produced11.Get(), submitted), "wait for DXR map");
-        previousRoom = p.room;
-        previousX = p.camera_x;
-        previousY = p.camera_y;
-        previousWidth = width;
-        previousIntro = p.roomIntro;
         return view.Get();
     }
     void finishRead() {
