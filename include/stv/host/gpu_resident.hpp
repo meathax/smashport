@@ -15,7 +15,8 @@ public:
  bool update(std::span<const uint32_t>,int,int,const EffectPacket&,const PcSettings&);
  bool update_arcade(std::span<const uint16_t> indices,int stride,int width,int height,
                     std::span<const uint32_t> pens,bool widescreen,bool title,
-                    const EffectPacket&,const PcSettings&,bool pixelCoverage=false);
+                    const EffectPacket&,const PcSettings&,bool pixelCoverage=false,
+                    std::span<const uint16_t> withoutBlobs={});
  bool recompose(const EffectPacket&,const PcSettings&);
  bool draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings&,bool overlay=false,bool one_shot=false,float camera_dx=0,float camera_dy=0);
  void* overlay_dc();

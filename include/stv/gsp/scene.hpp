@@ -57,6 +57,10 @@ inline bool enhanced_scene(const Machine& m) {
     }
 }
 
+inline bool enhanced_combat(const Machine& m) {
+    return m.enhanced && game_scene_state(m) == 0x10 && enhanced_scene(m);
+}
+
 // The widened TV studio owns contestants placed and scripted while a native
 // page (the bonus tally) is still on screen. Attract mode and diagnostics keep
 // their native studio; reference_l8 is never affected.

@@ -14,6 +14,8 @@
 // Addresses are L8 (resolved from the translated code's source references).
 #include "stv/gsp/scene.hpp"
 #include "stv/gsp/ops.hpp"
+#include "stv/gsp/sprite_ink.hpp"
+#include "stv/gsp/muzzle_cels.hpp"
 #include "stv/gsp/det_math.hpp"
 
 #include <algorithm>
@@ -170,6 +172,95 @@ void Machine::mutoid_wall_action() {
     }
 }
 
+static u8 movement_contacts(u16 vector) {
+    const auto x = s8(vector), y = s8(vector >> 8);
+    return u8((x<0 ? 4 : x>0 ? 8 : 0) | (y<0 ? 1 : y>0 ? 2 : 0));
+}
+
+// UPDATE_PLYRXY reads a buffered cabinet word before testing the retail walls.
+// Use the launch direction here even if that word still holds an earlier sample.
+void Machine::lock_dash_contacts() {
+    for (const auto& state : dash)
+        if (state.burst && state.owner==c.a[7]) {
+            c.a[2]=movement_contacts(state.locked);
+            return;
+        }
+}
+
+static std::array<u32,2> player_velocity(Machine& m, u32 legs, u32 owner, u16 motion, u32 ytable, int quarters) {
+    auto axis=[&](int value,u32 speed,u32 pos,u32 low,u32 high) {
+        const s32 coord=s32(rlong(m,legs+pos));
+        const s32 delta=s32(s64(value)*speed*quarters/(127*4));
+        const s64 limit=s32(rlong(m,owner+(delta>0 ? high : low)));
+        return u32(std::clamp<s64>(limit-coord,std::min(0,delta),std::max(0,delta)));
+    };
+    return {axis(s8(motion),rlong(m,ytable-0x140+4*32),0x60,0x280,0x2a0),
+            axis(s8(motion>>8),rlong(m,ytable+2*32),0x80,0x240,0x260)};
+}
+
+u8 Machine::dash_input(unsigned player, u8 contacts, u16 motion) {
+    auto& state = dash[player];
+    const bool pressed = (contacts & 15) == 15;
+    if (pressed) contacts = u8((contacts & 0xf0) | movement_contacts(motion));
+    move_inputs[player] = motion;
+    const u32 owner = rlong(*this,0x010de2b0u + player*32);
+    if (!enhanced_combat(*this) || firing_slot(owner)<0 || rw(owner+0x20)!=247+player ||
+        rb(*this,owner+0x1d8)!=player+1 || rb(*this,owner+0x208) || rb(*this,owner+0x210)) {
+        state = {};
+        state.held = pressed;
+        return contacts;
+    }
+    if (state.owner != owner) {
+        const auto held = state.held;
+        state = {};
+        state.held = held;
+        state.owner = owner;
+        // Retail P_DIR (unaligned, high bit means standing) supplies facing
+        // before the first movement sample of this life.
+        constexpr u8 facing[] = {0,1,2,0,8,9,10,4,5,6};
+        const unsigned dir = rb(*this,owner+0x178) & 31;
+        if (dir < std::size(facing)) state.direction = digital_motion(facing[dir]);
+    }
+    const bool ending=state.burst==1;
+    if (state.burst) --state.burst;
+    else if (state.cooldown) --state.cooldown;
+    const u16 desired = motion ? motion : digital_motion(contacts);
+    if (desired && !state.burst) state.direction = desired;
+    if (pressed && !state.held && !state.cooldown && !state.burst && state.direction) {
+        const int x = s8(state.direction), y = s8(state.direction >> 8);
+        const double scale = 127.0 / std::sqrt(double(x*x + y*y));
+        state.locked = u8(std::lround(x*scale)) | (u16(u8(std::lround(y*scale)))<<8);
+        state.burst = DashState::burst_frames;
+        state.cooldown = DashState::cooldown_frames;
+    }
+    state.held = pressed;
+    if (state.burst) {
+        move_inputs[player] = state.locked;
+        contacts = u8((contacts & 0xf0) | movement_contacts(state.locked));
+    }
+    if (state.burst || ending) {
+        // Retail animation can sleep through a velocity refresh. Stamp both
+        // moving objects at the simulation boundary, including the short last step.
+        const u32 legs=rlong(*this,owner+0x120), torso=rlong(*this,owner+0x100);
+        const auto player_part=[&](u32 obj){
+            const u32 offset=obj-object_pool_base;
+            return offset<object_slots*object_stride && offset%object_stride==0 && rw(obj+0x150)==0x4101+player;
+        };
+        if(player_part(legs) && player_part(torso)){
+            const int quarters=ending ? 4 : state.burst==1 ? 3 : 15;
+            const u32 leg_process=rlong(*this,legs+0x160);
+            const bool shoes=ending && firing_slot(leg_process)>=0 && rw(leg_process+0x180);
+            const u32 ytable=enhanced_data_address(shoes ? 0xffe1fc60u : 0xffe1f9e0u);
+            const auto velocity=player_velocity(*this,legs,owner,ending ? desired : state.locked,ytable,quarters);
+            for(auto obj:{legs,torso}){
+                wlong(*this,obj+0x20,velocity[0]);
+                wlong(*this,obj+0x40,velocity[1]);
+            }
+        }
+    }
+    return contacts;
+}
+
 void Machine::analog_walk_facing() {
     const unsigned direction=c.a[3];
     if((!move_inputs[0] && !move_inputs[1]) || game_scene_state(*this)!=0x10 ||
@@ -190,17 +281,15 @@ void Machine::analog_velocity() {
     if(firing_slot(proc)<0)return;
     const unsigned n=rb(*this,proc+0x1d8)-1u;
     if(n>=2 || !move_inputs[n] || rlong(*this,0x010de2b0+n*32)!=proc)return;
-    const u32 ytable=c.a[2]-c.a[6]; // selected by retail shoe timer
-    const int dx=static_cast<std::int8_t>(move_inputs[n]&255);
-    const int dy=static_cast<std::int8_t>(move_inputs[n]>>8);
-    const auto component=[&](int axis,u32 speed,u32 pos,u32 low,u32 high) {
-        const s32 coord=s32(rlong(*this,c.a[8]+pos));
-        const s32 delta=s32(s64(axis)*speed/127);
-        if(delta>0)return std::clamp<s64>(s64(s32(rlong(*this,proc+high)))-coord,0,delta);
-        return std::clamp<s64>(s64(s32(rlong(*this,proc+low)))-coord,delta,0);
-    };
-    c.a[0]=u32(component(dx,rlong(*this,ytable-0x140+4*32),0x60,0x280,0x2a0));
-    c.a[1]=u32(component(dy,rlong(*this,ytable+2*32),0x80,0x240,0x260));
+    // Five full steps at 15/4 run speed plus a final 3/4 step give
+    // exactly 19.5 run steps, 30% farther than the original 15.
+    const auto& burst=dash[n];
+    const u32 ytable=burst.burst ? enhanced_data_address(0xffe1f9e0u) : c.a[2]-c.a[6];
+    const u16 direction=burst.burst ? burst.locked : move_inputs[n];
+    const int quarters=burst.burst==0 ? 4 : burst.burst==1 ? 3 : 15;
+    const auto velocity=player_velocity(*this,c.a[8],proc,direction,ytable,quarters);
+    c.a[0]=velocity[0];
+    c.a[1]=velocity[1];
 }
 
 void Machine::queue_aimed_sprite() {
@@ -209,7 +298,20 @@ void Machine::queue_aimed_sprite() {
     const unsigned oid=rw(obj+0x150);
     if(oid==0x4201 || oid==0x4205) {
         const int slot=firing_slot(rlong(*this,obj+0x160));
-        if(slot<0 || !(shot_aim[slot]>>10))return;
+        if(slot<0)return;
+        if(!(shot_aim[slot]>>10)){
+            // Some diagonal rifle cels have a transparent animation anchor.
+            // Keep the simulation anchor and translate only the draw command.
+            if(oid==0x4201 && (c.a[12]&15)==2){
+                const auto pivot=object_pivot(*this,obj);
+                const int x=s16(rw(obj+0x70))+pivot.x;
+                const int y=s16(rw(obj+0x90))+pivot.y-38;
+                int inkX=x,inkY=y;
+                if(nearest_sprite_ink(*this,obj,inkX,inkY))
+                    c.a[10]=u16(s16(c.a[10])+x-inkX)|(u32(u16(s16(c.a[10]>>16)+y-inkY))<<16);
+            }
+            return;
+        }
         const auto vx=s32(rlong(*this,obj+0x20)), vy=s32(rlong(*this,obj+0x40));
         if((vx==0 && vy==0) || (c.a[12]&15)!=2)return;
         const auto pivot=object_pivot(*this,obj);
@@ -252,7 +354,10 @@ void Machine::draw_aimed_sprite(u32 offset,int width,int height,int x,int y,int 
         if(pen){
             const auto cell=std::size_t(y+row)*vram_w+x+col;
             vram[cell]=palette_bank|pen;
-            if(!sprite_coverage.empty())sprite_coverage[cell]=1;
+            if(!sprite_coverage.empty()){
+                sprite_coverage[cell]=world_ink;
+                shadow_underlay[cell]=0;
+            }
         }
     }
 }
@@ -265,6 +370,7 @@ void Machine::latch_shot_aim() {
     // Helpers keep their independent emitter. The low compass nibble is filled at wake.
     const u32 wake=c.a[7];
     const bool helper=wake==0xffe370c0 || wake==0xffe36cd0 || wake==0xffe362e0 || wake==0xffe34610;
+    shot_muzzles[slot]=helper ? 1u : 0u; // independent satellite emitter
     shot_aim[slot]=game_scene_state(*this)==0x10 && (input>>10) ? u16(input | (helper ? 0x200 : 0)) : 0;
 }
 
@@ -276,9 +382,72 @@ void Machine::bind_shot_compass() {
     }
 }
 
+namespace {
+void place_player_shot(Machine& m) {
+    auto& cpu=m.c;
+    const unsigned owner=rb(m,cpu.a[13]+0x138);
+    const unsigned direction=m.rw(cpu.a[13]+0x100);
+    const unsigned weapon=cpu.a[5]==0 ? 3u : cpu.a[5]-0x4201u;
+    if(owner<1 || owner>2 || direction<1 || direction>8 || weapon>=5)return;
+
+    const u32 torso=rlong(m,0x010dd780+(owner-1)*32);
+    const u32 offset=torso-object_pool_base;
+    if(offset>=object_slots*object_stride || offset%object_stride || m.rw(torso+0x150)!=0x4100+owner)return;
+    const int w=m.rw(torso+0xf0),h=m.rw(torso+0x100);
+    if(w<1 || h<1 || w>64 || h>64)return;
+    // Measured on the unmirrored retail firing cels, from up through left to down.
+    constexpr Point tips[5][5]={
+        {{6,0},{0,0},{0,4},{0,17},{6,21}},
+        {{13,0},{0,0},{0,6},{0,17},{4,24}},
+        {{6,0},{3,4},{0,6},{1,12},{1,12}},
+        {{12,0},{11,0},{0,1},{0,2},{2,11}},
+        {{14,0},{5,0},{0,2},{0,14},{1,12}}
+    };
+    const int sector=int(direction)-1;
+    Point tip=tips[weapon][std::min(sector,8-sector)];
+    if(m.rw(torso+0xb0)&16)tip.x=w-1-tip.x;
+    const int ox=s16(m.rw(torso+0x70)),oy=s16(m.rw(torso+0x90));
+    tip.x+=ox;tip.y+=oy;
+    if(!nearest_sprite_ink(m,torso,tip.x,tip.y))return;
+    cpu.a[0]=u32(tip.x)<<16;
+    cpu.a[1]=u32(tip.y)<<16;
+    // WPN4 pops its saved X to construct the grenade ground shadow.
+    if(weapon==3)wlong(m,cpu.sp,cpu.a[0]);
+}
+} // namespace
+
+bool Machine::track_player_muzzle(u32 node) {
+    const u16 oid=rw(node+0x150);
+    if((oid<0x4201 || oid>0x4205) && !(oid==0 && rw(node+0xa0)==253))return false;
+    const u32 proc=rlong(*this,node+0x160);
+    const int slot=firing_slot(proc);
+    if(slot<0 || rw(proc+0x20)!=286 || shot_muzzles[slot]==1)return false;
+    const unsigned direction=rw(proc+0x100), weapon=oid?oid-0x4201:3;
+    const unsigned owner=rb(*this,proc+0x138);
+    if(owner<1 || owner>2 || direction<1 || direction>8)return false;
+    const u32 torso=rlong(*this,0x010dd780+(owner-1)*32);
+    if(torso-object_pool_base>=object_slots*object_stride || rw(torso+0x150)!=0x4100+owner)return false;
+    const u32 image=rlong(*this,torso+0x130);
+    const auto* cel=muzzle_cel(image);
+    if(!cel)return false;
+    const int width=rw(image);
+    const auto texel=((rlong(*this,image+64)-0x02000000u)>>3)+cel->y*((width+3)&~3)+cel->x;
+    // A spread volley has one barrel. Its flash follows the aim, independent of pellet scatter.
+    for(const auto& marker:muzzle_markers)
+        if(marker.frame==frame_number && marker.torso==torso && marker.texel==texel)return true;
+    // The retail compass runs clockwise from up.
+    const double angle=(direction-1)*eighth;
+    const auto fine=shot_aim[slot];
+    const auto aim=fine>>10?bearing(fine):Bearing{det::sin(angle),-det::cos(angle),0,0};
+    muzzle_markers.push_back({torso,texel,frame_number,c.cyc,bool(rw(torso+0xb0)&16),{0,0,float(aim.x),float(aim.y),weapon+0x4201}});
+    return true;
+}
+
 void Machine::aim_launch(bool direct) {
     const int slot=firing_slot(c.a[13]);
-    if (slot<0 || !shot_aim[slot]) return;
+    if (slot<0) return;
+    if (shot_muzzles[slot]!=1) place_player_shot(*this);
+    if (!shot_aim[slot]) return;
     const auto b=bearing(shot_aim[slot]);
     const double vx=s32(c.a[6]), vy=s32(c.a[7]);
     if (direct) {
@@ -635,11 +804,13 @@ bool apply_enhanced(Machine& m, int widen) {
 
     // movement walls (offsets from the camera, value in the high word): the camera
     // moved left by the centring shift, and the right wall moves out by widen as well
-    for (int k = 0; k < 3; ++k) {
-        const u32 t = r.l(kBndTbl + u32(k) * 32);
-        r.sl(t + 2 * 32, r.l(t + 2 * 32) + (u32(-shift) << 16));
-        r.sl(t + 3 * 32, r.l(t + 3 * 32) + (u32(widen - shift) << 16));
-    }
+    const u32 normal_bounds = r.l(kBndTbl);
+    r.sl(normal_bounds + 64, r.l(normal_bounds + 64) + (u32(-shift) << 16));
+    r.sl(normal_bounds + 96, r.l(normal_bounds + 96) + (u32(widen - shift) << 16));
+    // RINGS, POW1 and POW2 select inset rectangles while equipment is active.
+    // Keep the player's floor available through those equipment transitions.
+    r.sl(kBndTbl + 32, normal_bounds);
+    r.sl(kBndTbl + 64, normal_bounds);
 
     // spawn, door and range tables (screen-relative X)
     // Pre-placed formations bypass the random placement path. Validate entire

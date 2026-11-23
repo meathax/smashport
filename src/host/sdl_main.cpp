@@ -5,6 +5,8 @@
 #include "stv/gsp/rom_import.hpp"
 #include "stv/host/recomp_achievements.hpp"
 #include "stv/host/sdl_pads.hpp"
+#include "stv/host/dash_audio.hpp"
+#include "stv/host/pc_settings.hpp"
 #include "stv/snd/audio.hpp"
 
 #include <algorithm>
@@ -77,7 +79,7 @@ struct Controls {
     stv::host::PadBindings bindings;
 
     void sample(Machine& m, const bool* keyboard, stv::host::SdlPads& pads,
-                SDL_Window* window, bool& paused, bool& quit) {
+                SDL_Window* window, bool& paused, bool& quit, bool& dash_enabled) {
         using namespace stv::host;
         const bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
         const auto key = [&](SDL_Scancode code) { return focused && keyboard[code]; };
@@ -88,6 +90,7 @@ struct Controls {
              SDL_SCANCODE_KP_8, SDL_SCANCODE_KP_2, SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6},
         };
         u16 in0 = 0, in1 = 0;
+        std::array<bool,2> trigger{};
         router.set_overlay(paused);
         pads.refresh();
         for (int p = 0; p < 2; ++p) {
@@ -100,7 +103,9 @@ struct Controls {
                 router.set_overlay(paused);
             }
             if (paused && event == PadEvent::Confirm) quit = true;
+            if (paused && m.enhanced && event==PadEvent::Reset) dash_enabled=!dash_enabled;
             const auto state = router.game(p);
+            trigger[p] = dash_enabled && (state.buttons & PadLT);
             u16 contacts = state.move | (state.fire << 4);
             for (int b = 0; b < 8; ++b)
                 if (key(keys[p][b]) || bindings.held(p * 8 + b, state)) contacts |= u16(1 << b);
@@ -110,6 +115,17 @@ struct Controls {
         }
         if (key(SDL_SCANCODE_F2)) in1 |= 0x10;
         if (key(SDL_SCANCODE_9)) in1 |= 0x40;
+        if (m.enhanced && !paused) {
+            for (unsigned p=0;p<2;++p) {
+                auto sample=u8(in0>>(8*p));
+                auto move=sample&15;
+                if((move&3)==3)move&=~3;
+                if((move&12)==12)move&=~12;
+                sample=u8((sample&0xf0)|(trigger[p]?15:move));
+                const auto result=m.dash_input(p,sample,trigger[p]?digital_motion(move):0);
+                in0=u16((in0&~(255u<<(8*p)))|(unsigned(result)<<(8*p)));
+            }
+        }
         m.ports[0] = u16(~in0);
         m.ports[1] = u16(~in1);
     }
@@ -145,6 +161,7 @@ int play(Options options) {
         if (!apply_enhanced(m, 137)) throw std::runtime_error("The enhanced table does not match retail L8");
     }
     m.reset();
+    if (options.wide) m.enable_sprite_coverage();
     if (!options.frames) {
         std::ifstream file(cmos, std::ios::binary);
         std::vector<u16> saved(m.cmos.size());
@@ -187,6 +204,10 @@ int play(Options options) {
     host::RecompAchievements achievements;
     achievements.start(options.frames != 0);
     Controls controls;
+    host::DashAudio dash_audio;
+    host::PcSettings settings;
+    const auto settings_file=options.data/"settings.cfg";
+    host::load_pc_settings(settings_file,settings,error);
     std::vector<u32> pixels(max_width * height);
     bool quit = false, paused = false;
     auto deadline = SDL_GetTicksNS();
@@ -194,6 +215,7 @@ int play(Options options) {
     unsigned frames = 0;
     scheduler.start(m.reset_vector());
     while (!quit && (!options.frames || frames < options.frames)) {
+        const bool previous_dash=settings.dash_enabled;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) quit = true;
@@ -202,19 +224,33 @@ int play(Options options) {
                 paused = !paused;
                 if (paused && audio) SDL_ClearAudioStream(audio.get());
             }
+            if (paused && options.wide && event.key.scancode==SDL_SCANCODE_D)
+                settings.dash_enabled=!settings.dash_enabled;
             if (event.key.scancode == SDL_SCANCODE_F11) {
                 fullscreen = !fullscreen;
                 SDL_SetWindowFullscreen(window, fullscreen);
             }
         }
-        controls.sample(m, SDL_GetKeyboardState(nullptr), pads, window, paused, quit);
+        controls.sample(m, SDL_GetKeyboardState(nullptr), pads, window, paused, quit,settings.dash_enabled);
+        if(previous_dash!=settings.dash_enabled && !host::save_pc_settings(settings_file,settings,error))
+            throw std::runtime_error(error);
         if (paused != previous_paused) {
             if (paused && audio) SDL_ClearAudioStream(audio.get());
             SDL_SetWindowTitle(window, paused ? "Smash T.V. | Paused: Esc / B resume, A quit" : "Smash T.V.");
             previous_paused = paused;
         }
         if (quit) break;
-        if (paused) { deadline = SDL_GetTicksNS(); SDL_Delay(8); continue; }
+        if (paused) {
+            SDL_SetRenderDrawColor(renderer,12,14,18,255);
+            SDL_RenderClear(renderer);
+            SDL_SetRenderDrawColor(renderer,235,235,235,255);
+            SDL_RenderDebugText(renderer,24,24,"Paused   Esc / B resume   A quit");
+            if(options.wide) SDL_RenderDebugText(renderer,24,48,settings.dash_enabled ?
+                "Widescreen dash (LT)  On   [D / X to toggle]" :
+                "Widescreen dash (LT)  Off  [D / X to toggle]");
+            SDL_RenderPresent(renderer);
+            deadline=SDL_GetTicksNS(); SDL_Delay(8); continue;
+        }
         if (const auto now = SDL_GetTicksNS(); now < deadline) SDL_DelayNS(deadline - now);
         deadline = std::max(deadline + PS_PER_FRAME / 1000, SDL_GetTicksNS());
         frame_done = false;
@@ -223,13 +259,17 @@ int play(Options options) {
             throw std::runtime_error("The translated game stopped: " + sound.fault);
         ++frames;
         achievements.frame(m, false);
+        if(dash_audio.observe(m.enhanced && m.dash[0].burst==Machine::DashState::burst_frames,
+                              m.enhanced && m.dash[1].burst==Machine::DashState::burst_frames))
+            dash_audio.mix(pcm.data(),pcm.size(),1,48000);
         if (audio && SDL_GetAudioStreamQueued(audio.get()) < 48000 * int(sizeof(float)) / 10)
             SDL_PutAudioStreamData(audio.get(), pcm.data(), static_cast<int>(pcm.size() * sizeof(float)));
         pcm.clear();
         const int width = enhanced_scene(m) ? max_width : VIS_MAXX - VIS_MINX + 1;
+        const auto& frame=m.presentation_frame.empty()?m.frame:m.presentation_frame;
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
-                pixels[y * max_width + x] = m.pens[m.frame[(y + VIS_MINY) * m.vram_w + VIS_MINX + x] & 0xfff];
+                pixels[y * max_width + x] = m.pens[frame[(y + VIS_MINY) * m.vram_w + VIS_MINX + x] & 0xfff];
         const SDL_Rect updated{0, 0, width, height};
         SDL_UpdateTexture(texture.get(), &updated, pixels.data(), max_width * sizeof(u32));
         int w = 0, h = 0;

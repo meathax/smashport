@@ -2,7 +2,7 @@
 // Cabinet projection: world (x, y, z) appears at screen (x, y - z).
 // Output (HDR): [0,1024) ground/wall irradiance, a = ambient occlusion;
 // [1024,2048) sprite irradiance, a = sprite tag; rows 256+ hold specular.
-#define MAX_LIGHTS 32
+#define MAX_LIGHTS 64
 struct Light {
     float4 pos;   // xyz, radius
     float4 color; // rgb, intensity
@@ -15,6 +15,7 @@ cbuffer Scene : register(b0) {
     float4 ambient;   // rgb, floor gloss
     float4 world;     // camera x, camera y, light count, flags (1 coverage, 2 specular rows)
     float4 tone;      // actor floor, occlusion strength, first boss + 1, actor count
+    float4 previousFloor, previousAmbient, previousTone; // old tone.z is light count
     Light lights[MAX_LIGHTS];
 };
 RaytracingAccelerationStructure scene : register(t0);
@@ -66,7 +67,7 @@ bool silhouette(uint id, float3 local) {
     }
     return true;
 }
-float visibility(float3 origin, float3 dir, float tmax, uint self) {
+float visibility(float3 origin, float3 dir, float tmax, uint self, uint occluders) {
     // An ungrouped 2D sprite has no evidenced world-space height. Its shared
     // light field can cross a wall proxy (notably y=46 minus height=24), making
     // a straight shadow cut through Cobra's head. Do not receive proxy shadows
@@ -75,7 +76,7 @@ float visibility(float3 origin, float3 dir, float tmax, uint self) {
     RayDesc ray;
     ray.Origin = origin; ray.Direction = dir; ray.TMin = .02; ray.TMax = max(.03, tmax);
     RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
-    q.TraceRayInline(scene, RAY_FLAG_NONE, 0xff, ray);
+    q.TraceRayInline(scene, RAY_FLAG_NONE, occluders, ray);
     while (q.Proceed()) {
         if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
             uint id = q.CandidateInstanceID();
@@ -117,7 +118,7 @@ float gobo(uint pattern, float3 P, Light L, float t) {
     return 1;
 }
 void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine, float2 seed,
-                inout float3 diffuse, inout float3 spec) {
+                float time, uint occluders, inout float3 diffuse, inout float3 spec) {
     Light L = lights[i];
     float3 delta = L.pos.xyz - P;
     float dist = max(length(delta), .25);
@@ -134,7 +135,7 @@ void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine,
     float s = gloss * pow(saturate(dot(N, normalize(dir + ViewDir))), shine);
     if (att * (wrap + s) < .0025) return;
     uint pattern = uint(L.shape.z);
-    if (pattern) att *= gobo(pattern, P, L, extent.w);
+    if (pattern) att *= gobo(pattern, P, L, time);
     float vis = 1;
     uint samples = min(uint(L.shape.w), 3u);
     if (samples) {
@@ -146,28 +147,28 @@ void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine,
             float ang = a + Tau * k / samples;
             float3 target = L.pos.xyz + (t1 * cos(ang) + t2 * sin(ang)) * radius - P;
             float len = length(target);
-            vis += visibility(P + N * .35, target / len, len - .5, self);
+            vis += visibility(P + N * .35, target / len, len - .5, self, occluders);
         }
         vis /= samples;
     }
     diffuse += L.color.rgb * att * wrap * vis;
     spec += L.color.rgb * att * s * vis;
 }
-float occlusion(float3 P, float3 N, uint self, float2 seed) {
-    if (tone.y <= 0) return 1;
+float occlusion(float3 P, float3 N, uint self, float2 seed, float strength, uint occluders) {
+    if (strength <= 0) return 1;
     float3 t1 = abs(N.z) > .5 ? float3(1, 0, 0) : float3(0, 0, 1);
     float3 t2 = cross(N, t1);
     float a = hash2(seed + 17.3) * Tau, hit = 0;
     [unroll] for (uint k = 0; k < 3; ++k) {
         float ang = a + Tau * k / 3;
         float3 d = normalize(N + (t1 * cos(ang) + t2 * sin(ang)) * .9);
-        hit += 1 - visibility(P + N * .3, d, 28, self);
+        hit += 1 - visibility(P + N * .3, d, 28, self, occluders);
     }
-    return 1 - tone.y * hit / 3 * .62;
+    return 1 - strength * hit / 3 * .62;
 }
-// Receiver under a non-sprite pixel: rear wall face, side/front wall tops or floor.
-void surfaceAt(float2 px, out float3 P, out float3 N) {
-    float4 f = floorRect;
+// Side scenery is painted into the background. The narrow side boxes cast
+// shadows into the arena, but do not describe a raised strip in that paint.
+void surfaceAt(float2 px, float4 f, out float3 P, out float3 N) {
     N = float3(0, 0, 1);
     P = float3(px, 0);
     bool spanX = px.x >= f.x - 30 && px.x <= f.x + f.z + 30;
@@ -176,16 +177,11 @@ void surfaceAt(float2 px, out float3 P, out float3 N) {
         N = float3(0, 1, 0);
         return;
     }
-    bool sideRows = px.y >= f.y - 30 && px.y < f.y + f.w - 30;
-    if (sideRows && ((px.x >= f.x - 8 && px.x < f.x) || (px.x >= f.x + f.z && px.x < f.x + f.z + 8))) {
-        P = float3(px.x, px.y + 30, 30.4);
-        return;
-    }
     // Front wall: the art's wall face, its shading strip and the border below start at
     // the floor edge. The lip proxy box is solid there, so a ground receiver would sit
     // inside it and every shadow and occlusion ray would hit it at once (black bar).
-    // Light it as a wall top, as the side walls are. Rows above the edge are floor art.
-    if (px.x >= f.x - 8 && px.x < f.x + f.z + 8 && px.y >= f.y + f.w)
+    // Light it as a wall top. Rows above the edge are floor art.
+    if (spanX && px.y >= f.y + f.w)
         P = float3(px.x, px.y + 14, 14.4);
 }
 [numthreads(8, 8, 1)]
@@ -193,15 +189,37 @@ void main(uint3 id : SV_DispatchThreadID) {
     if (any(id.xy >= uint2(extent.xy))) return;
     float2 pixel = id.xy + .5;
     float2 seed = floor(pixel) + world.xy;
-    uint count = min(uint(world.z), MAX_LIGHTS);
+    uint total = min(uint(world.z), MAX_LIGHTS);
+    uint currentCount = total - uint(previousTone.z);
+    bool departing = previousFloor.z > 0 &&
+        all(pixel >= previousFloor.xy - float2(30, 44)) &&
+        all(pixel < previousFloor.xy + previousFloor.zw + float2(30, 15));
+    uint first = departing ? currentCount : 0;
+    uint limit = departing ? total : currentCount;
+    float4 roomAmbient = departing ? previousAmbient : ambient;
+    float2 roomTone = departing ? previousTone.xy : tone.xy;
+    float lightTime = departing ? previousTone.w : extent.w;
+    uint occluders = departing ? 5 : 3; // actor cards plus the room's walls
     bool specRows = (uint(world.w) & 2) != 0;
 
     float3 P, N;
-    surfaceAt(pixel, P, N);
-    float ao = occlusion(P, N, NoSelf, seed);
+    float4 roomFloor = departing ? previousFloor : floorRect;
+    surfaceAt(pixel, roomFloor, P, N);
+    // Keep actor shadows on side artwork. Tracing the solid wall proxies
+    // from this painted surface would start some rays inside their own wall.
+    uint backgroundOccluders = occluders;
+    if (pixel.y >= roomFloor.y && pixel.y < roomFloor.y + roomFloor.w &&
+        (pixel.x < roomFloor.x || pixel.x >= roomFloor.x + roomFloor.z))
+        backgroundOccluders = 1;
+    // The front rail and the raised door cap are in front of the actors.
+    if (roomFloor.z > 0 && pixel.x >= roomFloor.x - 30 && pixel.x < roomFloor.x + roomFloor.z + 30 &&
+        pixel.y >= roomFloor.y + roomFloor.w && pixel.y < roomFloor.y + roomFloor.w + 15)
+        backgroundOccluders &= ~1u;
+    float ao = occlusion(P, N, NoSelf, seed, roomTone.y, backgroundOccluders);
     float3 diffuse = 0, spec = 0;
-    for (uint i = 0; i < count; ++i) shadeLight(i, P, N, NoSelf, ambient.w, 22, seed, diffuse, spec);
-    lightMap[id.xy] = float4(ambient.rgb * ao + diffuse, ao);
+    for (uint i = first; i < limit; ++i)
+        shadeLight(i, P, N, NoSelf, roomAmbient.w, 22, seed, lightTime, backgroundOccluders, diffuse, spec);
+    lightMap[id.xy] = float4(roomAmbient.rgb * ao + diffuse, ao);
     if (specRows) lightMap[id.xy + uint2(0, 256)] = float4(spec, 0);
 
     float4 actorLight = 0;
@@ -268,9 +286,9 @@ void main(uint3 id : SV_DispatchThreadID) {
                           bossFlesh ? .58 : material == 4 ? .18 : .38;
             float shine = polished ? (material == 2 ? 24 : 18) :
                           bossFlesh ? 11 : material == 4 ? 5 : 8;
-            for (uint i = 0; i < count; ++i)
-                shadeLight(i, Pa + Na * .2, Na, a, gloss, shine, seed, diff, actorSpec);
-            float3 base = max(ambient.rgb, tone.x);
+            for (uint i = first; i < limit; ++i)
+                shadeLight(i, Pa + Na * .2, Na, a, gloss, shine, seed, lightTime, occluders, diff, actorSpec);
+            float3 base = max(roomAmbient.rgb, roomTone.x);
             actorLight = float4(base + diff, (info.x + (polished ? 128 : 0)) / 255.);
         }
     }

@@ -10,10 +10,11 @@
 #include <vector>
 namespace stv::host {
 enum class EffectKind : uint8_t { None, Projectile, Blood, Explosion, EnemyShot, FleshBreak, MetalBreak };
-struct EffectObject { uint32_t slot{}, image{}; EffectKind kind{}; float x{}, y{}, vx{}, vy{}; uint16_t weapon{}; bool barrel{}; float muzzle_x{}, muzzle_y{}; };
+struct EffectObject { uint32_t slot{}, image{}; EffectKind kind{}; float x{}, y{}, vx{}, vy{}; uint16_t weapon{}; bool barrel{}; float muzzle_x{}, muzzle_y{}; bool raster_muzzle{}; };
 struct EffectTarget { uint32_t slot{}; float x{},y{},w{},h{}; bool metal{}; uint16_t oid{}; int paletteBank{-1}; };
 struct HudRect { float x,y,w,h; };
-struct HudPart : HudRect { int paletteBank{-1}; bool backdrop{}; };
+struct HudPart : HudRect { int paletteBank{-1}; bool backdrop{}; bool scorePanel{}; };
+struct TankShadow { int x{},y{},w{},h{}; uint16_t pen{}; };
 struct ArenaGeometry { float left{},top{},right{},bottom{},gateLeft{},gateRight{}; unsigned openGates{}; std::vector<HudRect> solids; HudRect floor{}; };
 struct RoomLamp { float x{},y{},height{},radius{},r{},g{},b{},power{}; };
 struct ShadowCaster {
@@ -62,7 +63,9 @@ struct EffectScene {
     std::array<DeathPose,2> players{};
     std::vector<EnemyRemains> remains;
     std::vector<EnemyImpact> impacts;
+    std::vector<gsp::VisibleMuzzle> visible_muzzles;
     bool roomIntro{};
+    std::vector<TankShadow> tankShadows;
 };
 EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, int width, int height, bool observe_objects=true);
 enum class ArenaEffect { Shockwave=7, Tracer=8, Brass=9, Muzzle=10, PlayerBurst=18, EnemyBlast=19, MachineWound=20 };
@@ -140,6 +143,7 @@ struct EffectPacket { std::vector<RoomLamp> dxrLights; // ray-traced gameplay li
     RoomCinemaCue cinema;
     std::array<RoomLamp,3> lamps{};
     WeaponFxPacket weaponFx;
+    std::vector<TankShadow> tankShadows;
 };
 inline constexpr std::size_t MaxGameplayLights = 12;
 class EnhanceEffects {
@@ -161,7 +165,7 @@ private:
     void reset_weapon_fx();
     void advance_weapon_fx(const EffectScene&, float, const PcSettings&);
     void queue_weapon_fx(WeaponFxKind,WeaponFamily,float,float,float,float,float);
-    void impact(ImpactTier);
+    void impact(ImpactTier tier, bool camera_motion=false);
     bool has_weapon_fx(WeaponFxKind,WeaponFamily,float,float) const;
     bool resident_{}; EffectPacket packet_{};
     float random();

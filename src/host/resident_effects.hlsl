@@ -6,7 +6,9 @@ cbuffer Params : register(b0) {
  float dt; uint resetPool,mask,spawnCount; float4 spawnData[512];
  int2 floorOrigin, cameraShift;float brassDt;uint clearBrass,foregroundCount,hudCount;
  float4 foreground[96];float4 fixtures[12];float4 casters[840];float4 hud[420];float4 bounds,gates,solids[420];uint tick,flowCount;uint visualLevels,roomMood;float4 vent,flowEvents[64];float4 floorRect;int4 hudBanks[105];
- float4 cinemaGrade,cinemaAudio,cinemaBoss,cinemaDeath;uint4 cinemaFlags;
+ float4 cinemaFloor,cinemaGrade,cinemaBoss,cinemaDeath;float cinemaPulse;uint cinemaQuality,cinemaMood,cinemaPad;
+ float4 oldFloor,oldGrade,oldBoss,oldDeath;float oldPulse;uint oldQuality,oldMood,oldPad;
+ uint floorPan;uint3 floorPanPadding;
 };
 cbuffer CombatParams : register(b2) { uint combatCount,combatTileWidth,combatTileCapacity,combatPadding; };
 struct CombatGlyph { float x,y,dx,dy,strength;uint kind,family,color; };
@@ -56,6 +58,8 @@ bool spritePixel(int2 p,int4 rect,uint bank){
  int bank=hudBanks[group.x/4][group.x%4];
  bool backdrop=bank<=-2;
  if(backdrop)bank=-bank-2;
+ bool scorePanel=bank>=4096;
+ if(scorePanel)bank-=4096;
  // Indexed frames must identify actual HUD ink. A wildcard rectangle can
  // cross a foreground boss and switch its lighting off along a straight edge.
  // Unknown ownership grants no protection; RGB-only fixtures retain bounds.
@@ -67,10 +71,15 @@ bool spritePixel(int2 p,int4 rect,uint bank){
  for(int y=max(0,r.y)+lane.y;y<end.y;y+=8)
   for(int x=max(0,r.x)+lane.x;x<end.x;x+=8)
    // Retail monitor/score backplates are background DMA, not sprite coverage.
-   // Keep that background readable, but never protect a foreground actor just
-   // because it crosses the monitor's rectangle.
-   if(bank<0 || (backdrop && pixelCoverage && !(arcade.Load(int3(x-shift,y,0))&4096)) ||
-      spritePixel(int2(x-shift,y),sprite,bank))InterlockedOr(shadowBits[int2(x,y)],8);
+   // Match only background art or the panel's own visible ink so an actor
+   // crossing the rectangle keeps its normal compositing.
+   {
+    int2 p=int2(x-shift,y);
+    uint pen=pixelCoverage ? arcade.Load(int3(p,0)) : 0;
+    if(pen&0x4000)continue; // displayed world sprite, even inside a same-palette exit arrow
+    if(bank<0 || (backdrop && pixelCoverage && !(pen&4096)) || spritePixel(p,sprite,bank))
+     InterlockedOr(shadowBits[int2(x,y)],scorePanel?32:8);
+   }
 }
 // One bit per transient light; the visible room fixtures have separate bits.
 Texture2D<uint> dynamicShadows : register(t10);
@@ -111,8 +120,8 @@ float noise(float2 p) {
  float2 i=floor(p),f=frac(p);f=f*f*(3-2*f);
  return lerp(lerp(hash(i),hash(i+float2(1,0)),f.x),lerp(hash(i+float2(0,1)),hash(i+1),f.x),f.y);
 }
-float3 roomTint() {
- switch(roomMood&255){
+float3 roomTint(uint mood) {
+ switch(mood&255){
   case 1:return float3(.94,.55,.88); case 2:return float3(.55,.70,1);
   case 3:return float3(.45,1,.62); case 4:return float3(1,.82,.52);
   case 5:return float3(1,.55,.24); case 6:return float3(1,.78,.45);
@@ -141,7 +150,11 @@ uint originalPixel(uint2 pos) {
   if(pos.x<68 || pos.x>=478)return 0;
   pos.x-=68;
  }
- return palette[uint2(arcade[pos]&4095,0)];
+ uint index=arcade[pos];
+ uint color=palette[uint2(index&4095,0)];
+ // The indexed upload resolves identified tank-shadow stipple to floor
+ // coverage. Half-opacity black matches the checkerboard's average coverage.
+ return pixelCoverage && (index&8192)!=0 && !(mask&(1u<<21)) ? (color&0xfefefe)>>1 : color;
 }
 // Deposits belong on drawn walls and floors. Holes the boss tears in a wall,
 // pits and the black outside the set are near-black in the ROM image: a 9-tap
@@ -205,28 +218,32 @@ float2 placeOnFloor(float2 xy,float radius){
  return floorRect.z>0?clamp(xy,floorRect.xy,floorRect.xy+floorRect.zw-1):xy;
 }
 float3 lightShoulder(float3 c){float3 over=max(c-.82,0);return min(c,.82)+.18*(1-exp(-over/.18));}
-float3 roomCinema(float3 rgb,uint2 pos,bool hudPixel){
- uint quality=cinemaFlags.x;
+float3 roomCinema(float3 rgb,uint2 pos,bool hudPixel,bool departing){
+ uint quality=departing?oldQuality:cinemaQuality;
  if(!quality || !(mask&(1u<<29)) || hudPixel)return rgb;
- float pulse=cinemaAudio.x;
- rgb*=cinemaGrade.rgb*(1+pulse*(.012+.008*quality));
- float2 speakerRadius=float2(max(20.,floorRect.z*.12),42.+quality*8.);
- float2 left=floorRect.xy+floorRect.zw*float2(.17,.04);
- float2 right=floorRect.xy+floorRect.zw*float2(.83,.04);
+ float pulse=departing?oldPulse:cinemaPulse;
+ float4 floor=departing?oldFloor:cinemaFloor;
+ float3 grade=departing?oldGrade.rgb:cinemaGrade.rgb;
+ float4 boss=departing?oldBoss:cinemaBoss;
+ float4 death=departing?oldDeath:cinemaDeath;
+ rgb*=grade*(1+pulse*(.012+.008*quality));
+ float2 speakerRadius=float2(max(20.,floor.z*.12),42.+quality*8.);
+ float2 left=floor.xy+floor.zw*float2(.17,.04);
+ float2 right=floor.xy+floor.zw*float2(.83,.04);
  float2 dl=(float2(pos)+.5-left)/speakerRadius;
  float2 dr=(float2(pos)+.5-right)/speakerRadius;
  float leftGlow=pulse*saturate(1-dot(dl,dl));
  float rightGlow=quality>=3?pulse*saturate(1-dot(dr,dr))*0.86:0;
- if(quality>=2)rgb+=cinemaGrade.rgb*(leftGlow+rightGlow)*(.075+.018*quality);
- float2 bossDelta=(float2(pos)+.5-cinemaBoss.xy)/max(1.,96.+cinemaBoss.w*44.);
- float bossGlow=cinemaBoss.z*saturate(1-dot(bossDelta,bossDelta));
- rgb+=cinemaGrade.rgb*bossGlow*(.035+.012*quality);
- if(cinemaDeath.z>0){
-  float radius=max(1.,cinemaDeath.w);
-  float distance=length(float2(pos)+.5-cinemaDeath.xy);
+ if(quality>=2)rgb+=grade*(leftGlow+rightGlow)*(.075+.018*quality);
+ float2 bossDelta=(float2(pos)+.5-boss.xy)/max(1.,96.+boss.w*44.);
+ float bossGlow=boss.z*saturate(1-dot(bossDelta,bossDelta));
+ rgb+=grade*bossGlow*(.035+.012*quality);
+ if(death.z>0){
+  float radius=max(1.,death.w);
+  float distance=length(float2(pos)+.5-death.xy);
   float ring=1-saturate(abs(distance-radius)/max(5.,4.+quality*2.));
   float flash=saturate(1-distance/(radius+58.))*.35;
-  rgb+=lerp(cinemaGrade.rgb,float3(1,.84,.62),.56)*(ring*.24+flash)*cinemaDeath.z;
+  rgb+=lerp(grade,float3(1,.84,.62),.56)*(ring*.24+flash)*death.z;
  }
  return rgb;
 }
@@ -285,14 +302,24 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
  int2 nativePixel=int2(id.xy)-int2(sourceMode==2?68:0,0);
  uint ink=pixelCoverage && sourceMode!=3?arcade.Load(int3(nativePixel,0)):0;
  bool visibleSprite=(ink&4096)!=0;
+ uint hudBits=hudCount?shadows[id.xy]:0;
+ bool protectedHud=(hudBits&8)!=0;
+ bool scorePanel=(hudBits&32)!=0 && !protectedHud;
  // Hardware ray-traced room light (dxr_lighting.hlsl): HDR irradiance multiplies
  // the art; specular adds. Bright unmatched sprite pixels stay emissive.
- bool dxrOn=(mask&(1u<<21)) && !(hudCount && (shadows[id.xy]&8));
+ bool dxrOn=(mask&(1u<<21)) && !protectedHud;
+ float2 pixel=float2(id.xy)+.5;
+ bool departing=oldFloor.z>0 && all(pixel>=oldFloor.xy-float2(30,44)) &&
+                all(pixel<oldFloor.xy+oldFloor.zw+float2(30,15));
+ float4 roomFloor=departing?oldFloor:cinemaFloor;
+ bool frontWall=roomFloor.z>0 && pixel.x>=roomFloor.x-30 && pixel.x<roomFloor.x+roomFloor.z+30 &&
+                pixel.y>=roomFloor.y+roomFloor.w && pixel.y<roomFloor.y+roomFloor.w+15;
  float3 groundLight=1,groundSpec=0;
  if(dxrOn){
   // 3x3 tent resolves the world-locked shadow and occlusion dither.
   [unroll]for(int ty=-1;ty<=1;++ty)[unroll]for(int tx=-1;tx<=1;++tx){
    int2 at=clamp(int2(id.xy)+int2(tx,ty),int2(0,0),int2(width-1,height-1));
+   if(frontWall)at.y=max(at.y,int(ceil(roomFloor.y+roomFloor.w-.5)));
    groundLight+=dxrLight.Load(int3(at,0)).rgb*((2-abs(tx))*(2-abs(ty))/16.);
   }
   groundLight-=1;
@@ -314,16 +341,18 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   }
  }
  float3 cinemaRgb=float3((original>>16)&255,(original>>8)&255,original&255)/255.;
- cinemaRgb=roomCinema(cinemaRgb,id.xy,visibleSprite || (hudCount && (shadows[id.xy]&8)));
+ uint pixelMood=departing?oldMood:roomMood;
+ cinemaRgb=roomCinema(cinemaRgb,id.xy,protectedHud || (visibleSprite && !scorePanel),departing);
  uint3 cinema8=(uint3)(saturate(cinemaRgb)*255+.5);
  original=(cinema8.x<<16)|(cinema8.y<<8)|cinema8.z;
  float3 sceneTint=dxrOn?min(groundLight,1.6):1;
  uint tile=(id.y/16)*tileWidth+id.x/16;
- bool protectedSprite=visibleSprite && (!(mask&(1u<<20)) || !tiles[tile*55+54]);
- bool protectedHud=hudCount && (shadows[id.xy]&8);
- bool combatProtected=visibleSprite || protectedHud;
+ uint overlays=tiles[tile*55+54];
+ bool spriteEffect=((overlays&1) && (mask&(1u<<20))) || ((overlays&2) && (mask&1024));
+ bool protectedSprite=visibleSprite && !scorePanel && !spriteEffect;
+ bool combatProtected=protectedHud || (visibleSprite && !scorePanel);
  if(protectedSprite || protectedHud || mask==0 ||
-    id.x<4||id.x>=width-4||id.y<25||id.y>=height-4){
+    id.x<4||id.x>=width-4||(id.y<25 && !scorePanel)||id.y>=height-4){
   if(dxrOn && !visibleSprite){
    float3 lit=lightShoulder(float3((original>>16)&255,(original>>8)&255,original&255)/255.*groundLight+groundSpec*.42);
    uint3 c8=(uint3)(saturate(lit)*255+.5);original=(c8.x<<16)|(c8.y<<8)|c8.z;
@@ -338,17 +367,18 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
  bool ground=!owner;
  if(pixelCoverage)ground=!visibleSprite;
  else if(owner)ground=casters[(owner-1)*2+1].w==4;
+ ground=ground && !scorePanel;
  float surface=-1; // computed once, only where a deposit exists
  float wetDeposit=0;
  uint rimLevel=visualLevel(1), contactLevel=visualLevel(2), materialLevel=visualLevel(3);
  if(!visibleSprite && rimLevel) {
   uint edge=(spriteAtOutput(id.xy-uint2(1,0))?1:0)+(spriteAtOutput(id.xy+uint2(1,0))?1:0)+
             (spriteAtOutput(id.xy-uint2(0,1))?1:0)+(spriteAtOutput(id.xy+uint2(0,1))?1:0);
-  float3 color=lerp(float3(1,1,1),roomTint(),.5);
+  float3 color=lerp(float3(1,1,1),roomTint(pixelMood),.5);
   float3 lit=max(sceneTint,float3(.72,.72,.72));
   rgb+=color*lit*edge*(.010+.008*rimLevel);
  }
- if(!visibleSprite && contactLevel && (shadows[id.xy]&16))
+ if(!frontWall && !visibleSprite && !scorePanel && contactLevel && (shadows[id.xy]&16))
   rgb*=1-(.035+.025*contactLevel);
  if((mask&(2048|32768)) && ground){
   uint mark=stains.Load(int3(int2(id.xy)+floorOrigin,0));
@@ -383,11 +413,11 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   float2 world=float2(id.xy)+float2(cameraShift);
   float ripple=pow(saturate(.5+.5*sin(length(world-floorRect.xy)*(.72+materialLevel*.16)-tick*.08)),8);
   float sheen=saturate(noise(world*.18+tick*.004)-.52)*1.8;
-  rgb+=roomTint()*(.018+.012*materialLevel)*(ripple*.65+sheen)*wetDeposit*(.45+smoke*.55);
+  rgb+=roomTint(pixelMood)*(.018+.012*materialLevel)*(ripple*.65+sheen)*wetDeposit*(.45+smoke*.55);
  }
  uint spillLevel=visualLevel(5);
  if(spillLevel && !visibleSprite) {
-  uint roomCode=roomMood>>8;
+  uint roomCode=pixelMood>>8;
   float angle=float(roomCode%7)*.68+1.05;
   float2 direction=float2(cos(angle),sin(angle));
   float radius=2+spillLevel*2;
@@ -399,7 +429,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   float3 spill=max(c1-.68,0)*.7+max(c2-.68,0)*.3;
   rgb+=spill*(.07+.025*spillLevel)*(1+.35*saturate(noise(base*.11)));
  }
- if(!visibleSprite && (mask&512)){
+ if(!visibleSprite && !scorePanel && (mask&512)){
   uint mark=restingBrass.Load(int3(int2(id.xy)+floorOrigin,0));
   if(mark!=0){
    bool covered=false;
@@ -410,9 +440,9 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    if(!covered)rgb=lerp(rgb,caseTint[mark&7]*(((mark>>3)&255)/255.),(mark>>11)/255.);
   }
  }
- if(!visibleSprite && (mask&65536)){
+ if((!visibleSprite || scorePanel) && (mask&65536)){
   int2 grate=int2(id.xy)-int2(vent.xy);
-  if(vent.z && !owner && abs(grate.x)<4 && abs(grate.y)<6)rgb=(grate.y&1)?float3(.27,.29,.32):float3(.08,.09,.105);
+  if(vent.z && !owner && !scorePanel && abs(grate.x)<4 && abs(grate.y)<6)rgb=(grate.y&1)?float3(.27,.29,.32):float3(.08,.09,.105);
   float4 fog=smokeField.SampleLevel(smokeSampler,(float2(id.xy)+.5)/(ceil(float2(width,height)/4)*4),0);
   if(fog.z>.012){
    float2 pos=(float2(id.xy)-fog.xy*.22)*.095+float2(tick*.004,-tick*.003);
@@ -452,7 +482,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   if(state.pos.w<=0)continue;
   Particle p;p.shape=float4(state.pos.x,state.pos.y-state.pos.z,state.color.w,state.misc.x);
   uint kind=(uint)state.misc.x;
-  if(visibleSprite && (kind!=20 || (ink&0xfc0)!=uint(state.misc.w)))continue;
+  if(visibleSprite && kind!=10 && (kind==20 ? (ink&0xfc0)!=uint(state.misc.w) : !scorePanel))continue;
   float fadeTime=(kind==3 || kind==4 || kind==16)?.8:.4;
   p.color=float4(state.color.rgb,saturate(state.pos.w/fadeTime));p.phase=float4(state.pos.w/state.vel.w,state.pos.z,state.pos.y,0);
   float2 delta=float2(id.xy)+.5-p.shape.xy;
@@ -559,10 +589,11 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    continue;
   }
   if(kind==10){
+   if(!(mask&1024))continue;
    float2 axis=state.misc.yz;
    float along=dot(delta,axis),side=abs(dot(delta,float2(-axis.y,axis.x)));
    float reach=size*(.35+.65*p.phase.x);
-   if(along>=-1 && along<=reach && side<=.45+1.65*(1-saturate(along/reach))){
+   if(along>=0 && along<=reach && side<=.45+1.65*(1-saturate(along/reach))){
     float core=saturate(1-(side*.65+max(0,along)/reach));
     rgb=lerp(rgb,lerp(float3(1,.40,.08),float3(1,.98,.81),core),saturate(p.phase.x*3));
    }
@@ -610,7 +641,9 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   if(kind==4)rgb+=color*alpha;else rgb=lerp(rgb,color*sceneTint,saturate(alpha));
  }
  uint atmosphereLevel=visualLevel(0);
- if(atmosphereLevel) {
+ // An overlay tile only selects particles to visit. Outside their actual
+ // silhouettes, a sprite must match the protected-sprite fast path exactly.
+ if(atmosphereLevel && !combatProtected) {
   float2 span=max(floorRect.zw,float2(1,1));
   float2 uv=(float2(id.xy)+.5-floorRect.xy)/span;
   float2 drift=float2(sin(tick*.0017+float(roomMood&255)),cos(tick*.0011+float(roomMood>>8)))*.025;
@@ -618,7 +651,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   float coneB=exp(-abs(uv.x-(.82-uv.y*.12+drift.y))*24)*saturate(1.15-uv.y)*smoothstep(-.12,.08,uv.y);
   float beam=saturate(coneA+coneB*.72);
   float haze=(.008+.014*beam)*atmosphereLevel;
-  rgb=lerp(rgb,roomTint(),haze);
+  rgb=lerp(rgb,roomTint(pixelMood),haze);
   float2 moteSpace=(float2(id.xy)-float2(float(tick)*.055,-float(tick)*.018))/float(11-atmosphereLevel);
   float2 cell=floor(moteSpace),local=frac(moteSpace)-float2(hash(cell+3.7),hash(cell+19.1))*.55-.225;
   float mote=smoothstep(.94,1,hash(cell+47.3))*(1-smoothstep(0,.11,length(local)));
@@ -626,12 +659,12 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    float2 c2=floor(moteSpace*.51+8.3),f2=frac(moteSpace*.51+8.3)-.5;
    mote=max(mote,smoothstep(.965,1,hash(c2+71.9))*(1-smoothstep(0,.13,length(f2))));
   }
-  rgb+=roomTint()*mote*(.015+.01*atmosphereLevel);
+  rgb+=roomTint(pixelMood)*mote*(.015+.01*atmosphereLevel);
  }
  uint gradeLevel=visualLevel(6);
- if(gradeLevel) {
-  float3 tint=roomTint();
-  float roomSeed=hash(float2(roomMood>>8,roomMood&255))*2-1;
+ if(gradeLevel && !combatProtected) {
+  float3 tint=roomTint(pixelMood);
+  float roomSeed=hash(float2(pixelMood>>8,pixelMood&255))*2-1;
   float strength=(.022+.018*gradeLevel);
   float3 graded=saturate((rgb-.5)*(1.015+roomSeed*.025*gradeLevel)+.5);
   graded*=lerp(float3(1,1,1),float3(tint.r*.5+.75,tint.g*.5+.75,tint.b*.5+.75),.32);
@@ -812,6 +845,10 @@ void settlePlayerGore(State p){
   pool[id]=p;return;
  }
  if(resetPool || !(mask&(1<<kind))){p.pos.w=0;pool[id]=p;return;}
+ if(floorPan && p.pos.w>0){
+  p.pos.xy+=cameraShift;
+  pool[id]=p;return;
+ }
  if(p.pos.w<=0||dt==0)return;
  p.pos.w-=dt;
  if(kind==7)p.color.w=4+28*(1-saturate(p.pos.w/p.vel.w));
@@ -1074,14 +1111,14 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    }else if(kind==15){
     p.pos.z=0;p.misc.yz=b.xy/max(.01,length(b.xy));p.misc.w=b.z;p.color.w=b.z==2?26:13;p.pos.w=b.z==2?.31:.095;
    }else if(kind==10){
-    p.pos.z=0;p.pos.w=.042;p.color.w=5+random(seed)*3;p.misc.yz=b.xy;
+    p.pos.xy=floor(a.xy)+.5;p.pos.z=0;p.pos.w=b.z==1?.001:.042;p.color.w=5+random(seed)*3;p.misc.yz=b.xy;
    }else if(kind==7||kind==8){
     p.pos.z=0;p.pos.w=kind==7?.32:.065;
     p.color.w=kind==7?4:length(b.xy)+1;p.misc.yz=b.xy;
    }else{
     float angle=random(seed)*6.2831853,speed=12+random(seed)*48;
     p.vel=float4(cos(angle)*speed+b.x*12,sin(angle)*speed+b.y*12,25+random(seed)*60,0);
-    if(kind==0){p.pos.w=.12+random(seed)*.18;p.color=float4(1,.843,.541,.28);}
+    if(kind==0){p.pos.z=0;p.pos.w=.12+random(seed)*.18;p.color=float4(1,.843,.541,.28);}
     if(kind==1){p.pos.w=4+random(seed)*3;p.color=float4(.753,.09,.133,.3+random(seed)*.35);}
     if(kind==2){p.pos.w=3+random(seed)*3;p.color=float4(lerp(float3(.64,.055,.125),float3(.88,.278,.318),step(.5,random(seed))),.3+random(seed)*.45);}
     if(kind==3){p.pos.w=2.8+random(seed)*1.8;p.color=float4(.467,.443,.42,3+random(seed)*2);p.vel.xy*=.28;p.vel.z=7;}
@@ -1104,7 +1141,8 @@ void stampStain(float2 pos,float4 b,inout uint seed){
     if(!((open&4) && p.pos.x>=gates.x && p.pos.x<gates.y)){
      float lift=max(0,bounds.y-p.pos.y);p.pos.y+=lift;p.pos.z+=lift;
     }
-    p.pos.y=min(p.pos.y,bounds.w);
+    // Sparks start at the visible contact. Torso movement stops short of the front lip.
+    if(kind!=0)p.pos.y=min(p.pos.y,bounds.w);
    }
    p.vel.w=p.pos.w;pool[slot]=p;
   }
@@ -1124,6 +1162,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
   for(int y=lo.y;y<=hi.y;y++)for(int x=lo.x;x<=hi.x;x++){
    uint base=(y*tileWidth+x)*55+(brass?33:0);
    if(p.misc.x==20)InterlockedOr(bins[base+54],1u);
+   if(p.misc.x==10)InterlockedOr(bins[base+54],2u);
    InterlockedOr(bins[base],1u<<group);
    InterlockedOr(bins[base+1+group],1u<<(slot%32));
   }
@@ -1145,12 +1184,18 @@ void stampStain(float2 pos,float4 b,inout uint seed){
 // xy velocity in native pixels/second, z density, w temperature.
 RWTexture2D<float4> smokeNext : register(u0);
 bool smokeSolid(float2 p){
+ // The centered arcade page keeps room geometry in native coordinates.
+ float pageOffset=sourceMode==2?68:0;
+ p.x-=pageOffset;
+ if(sourceMode==2 && (p.x<0 || p.x>=410))return true;
  // Smoke drifts above floor fixtures. Ground collision boxes and temporary
  // player movement limits cannot carve holes in the visible floor.
  if(floorRect.z>0 && floorPixel(p))return false;
  if(bounds.z<=bounds.x)return false;
  // Vents sit in the physical wall even when a boss narrows player movement.
- float4 walls=vent.z?float4(vent.x+1,vent.y-151,vent.x+width-54,vent.y+57):bounds;
+ float ventX=vent.x-pageOffset;
+ float roomWidth=sourceMode==2?410:width;
+ float4 walls=vent.z?float4(ventX+1,vent.y-151,ventX+roomWidth-54,vent.y+57):bounds;
  uint open=uint(gates.z);bool side=p.y>=111 && p.y<169;
  if((p.x<walls.x && !(side&&(open&1))) || (p.x>walls.z && !(side&&(open&2))) ||
     (p.y<walls.y && !((open&4)&&p.x>=gates.x&&p.x<gates.y)) || p.y>walls.w)return true;
@@ -1160,6 +1205,11 @@ bool smokeSolid(float2 p){
 [numthreads(8,8,1)] void stepSmoke(uint3 id:SV_DispatchThreadID){
  uint w,h;smokeNext.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;
  float2 p=(id.xy+.5)*4,extent=float2(w,h)*4;
+ if(floorPan){
+  float2 old=p-cameraShift;
+  smokeNext[id.xy]=any(old<0)||any(old>=extent)?0:smokeField.SampleLevel(smokeSampler,old/extent,0);
+  return;
+ }
  if(smokeSolid(p)){smokeNext[id.xy]=0;return;}
  float2 old=p-cameraShift;
  float4 prev=smokeField.SampleLevel(smokeSampler,old/extent,0);

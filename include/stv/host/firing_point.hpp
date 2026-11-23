@@ -1,6 +1,7 @@
 #pragma once
 #include "stv/gsp/machine.hpp"
 #include "stv/host/enhance.hpp"
+#include "stv/gsp/sprite_ink.hpp"
 #include <array>
 #include <cmath>
 
@@ -8,26 +9,9 @@ namespace stv::host {
 namespace firing_detail {
 using stv::gsp::Machine;
 using stv::gsp::u16; using stv::gsp::u32; using stv::gsp::s16;
-// Muzzle origin: the retail program spawns each shot at its owner's hands
-// (OXVAL/OYVAL plus animation anchor at INSOBJ). The visible firing point is
-// where that shot's path leaves the owner's drawn sprite ink: the barrel tip,
-// or the top of the helmet when firing up behind the head. Analog-aimed
-// player shots already spawn at the rotated barrel tip.
-inline bool sprite_ink(const Machine& m, u32 node, int wx, int wy) {
-    auto word = [&](u32 a) { return m.ram[(a - 0x01000000u) >> 4]; };
-    const int w = word(node + 0xf0), h = word(node + 0x100);
-    const int ox = s16(word(node + 0x70)), oy = s16(word(node + 0x90));
-    const int tx = wx - ox, ty = wy - oy;
-    if (w <= 0 || h <= 0 || w > 256 || h > 256 || tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
-    const u16 flags = word(node + 0xb0);
-    u32 sag = u32(word(node + 0xd0)) | (u32(word(node + 0xe0)) << 16);
-    if (flags & 16) sag -= u32(w - 1) * 8;
-    const long long base = (long long)((sag >= 0x02000000u ? sag - 0x02000000u : sag) >> 3);
-    const int pitch = (s16(word(node + 0xc0)) + ((flags & 16) ? -w : w) + 3) & ~3;
-    const int sx = (flags & 16) ? w - 1 - tx : tx, sy = (flags & 32) ? h - 1 - ty : ty;
-    const long long at = base + (long long)pitch * sy + sx;
-    return at >= 0 && at < (long long)m.gfx.size() && (m.gfx[std::size_t(at)] & 63) != 0;
-}
+// Enhanced shots already carry the launch pixel. Classic and enemy shots
+// retain retail placement and use the owner's silhouette for the flash.
+using stv::gsp::sprite_ink;
 
 inline bool firing_point(const Machine& m, const EffectObject& shot, int camera_x, int camera_y, float& x, float& y) {
     using stv::gsp::object_pool_base; using stv::gsp::object_stride; using stv::gsp::object_slots;
@@ -39,12 +23,7 @@ inline bool firing_point(const Machine& m, const EffectObject& shot, int camera_
     y = float(spawn.y - camera_y);
     const float speed = std::hypot(shot.vx, shot.vy);
     if (speed < .1f) return true;
-    if (m.enhanced && shot.kind == EffectKind::Projectile) {
-        auto word = [&](u32 a) { return m.ram[(a - 0x01000000u) >> 4]; };
-        const u32 proc = u32(word(shot.slot + 0x160)) | (u32(word(shot.slot + 0x170)) << 16);
-        const u32 p = proc - 0x01086790u, slot = p / 0x5a0u;
-        if (p % 0x5a0u == 0 && slot < m.shot_aim.size() && (m.shot_aim[slot] >> 10)) return true;
-    }
+    if (m.enhanced && shot.kind == EffectKind::Projectile) return true;
     // Owners: displayed non-shot objects whose sprite contains the spawn anchor.
     std::array<u32, 8> owners{};
     std::size_t count = 0;
@@ -52,7 +31,10 @@ inline bool firing_point(const Machine& m, const EffectObject& shot, int camera_
     auto longword = [&](u32 a) { return u32(word(a)) | (u32(word(a + 16)) << 16); };
     for (u32 node = longword(0x01000040u), guard = 0; node && guard < object_slots && count < owners.size(); node = longword(node), ++guard) {
         if (node == shot.slot) continue;
+        if (node < object_pool_base || (node-object_pool_base)%object_stride ||
+            (node-object_pool_base)/object_stride>=object_slots) break;
         const u16 oid = word(node + 0x150);
+        if (shot.kind==EffectKind::Projectile && (oid&0xff00)!=0x4100)continue;
         if ((oid & 0xff00) == 0x4200 || oid == 0x8500) continue;
         const int w = word(node + 0xf0), h = word(node + 0x100);
         const int ox = s16(word(node + 0x70)), oy = s16(word(node + 0x90));
@@ -71,8 +53,8 @@ inline bool firing_point(const Machine& m, const EffectObject& shot, int camera_
     if (last >= 0) {
         // Same pixel-centre convention as the sampling above: the first
         // transparent pixel past the last ink pixel on the shot's path.
-        x = float(spawn.x - camera_x) + .5f + dx * (last + 1.f);
-        y = float(spawn.y - camera_y) + .5f + dy * (last + 1.f);
+        x = std::floor(spawn.x + .5f + dx * (last + .5f)) - camera_x;
+        y = std::floor(spawn.y + .5f + dy * (last + .5f)) - camera_y;
     }
     return true;
 }

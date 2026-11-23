@@ -49,18 +49,30 @@ RoomMood room_mood(uint32_t room);
 const RoomLightingProfile &room_lighting_profile(uint32_t room);
 size_t room_lighting_profile_count();
 
+struct RoomLightingLook {
+    uint32_t room{};
+    RoomCinemaCue cinema{};
+};
+
 struct LightingFrame {
     RoomMood mood{};
     std::vector<GpuLight> lights;
     std::array<float, 4> floor{}; // anchored current floor, light-map space
     unsigned staticLights{}, previousRoomLights{}, studioLights{}, dynamicLights{};
+    std::array<float, 4> previousFloor{};
+    RoomMood previousMood{};
+    unsigned gates{}, previousGates{};
+    float leftGate{}, previousLeftGate{}, lightTime{}, previousLightTime{};
+    bool previousVisible{}, holdingOrigin{};
+    RoomLightingLook look{}, previousLook{};
 };
 
 class RoomLightRig {
   public:
-    static constexpr size_t MaxLights = 32;
+    static constexpr size_t MaxRoomLights = 32;
+    static constexpr size_t MaxLights = 2 * MaxRoomLights;
     static constexpr size_t MaxDynamic = MaxGameplayLights;
-    void reset() { current_ = previous_ = {}; }
+    void reset() { current_ = {}; previous_ = {}; }
     // width/offset describe the light map: offset is the 4:3 wing shift.
     LightingFrame build(const EffectPacket &, int width, int offset);
 
@@ -70,6 +82,17 @@ class RoomLightRig {
         float x{}, y{}, w{}, h{};
         bool valid{};
     };
-    Anchor current_, previous_;
+    struct Snapshot {
+        Anchor anchor{};
+        RoomMood mood{};
+        std::array<GpuLight, MaxRoomLights> lights{};
+        size_t count{};
+        float cameraX{}, cameraY{};
+        unsigned gates{};
+        float leftGate{};
+        uint64_t frame{};
+        RoomLightingLook look{};
+    };
+    Snapshot current_, previous_;
 };
 } // namespace stv::host

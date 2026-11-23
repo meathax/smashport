@@ -1,6 +1,7 @@
 """Build the ROM-free Windows release ZIP consumed by RecompLauncher."""
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -31,6 +32,23 @@ def validate_clean_installer(installer):
             "Installer is not the clean embedded-kit SmashTV.exe; "
             "never package build/rom-player/SmashTV.exe"
         )
+    # The managed resource is a length-prefixed ZIP, followed by PE metadata.
+    # The kit writer emits one disk, no archive comment and no ZIP64 trailer.
+    end = data.rfind(b"PK\x05\x06")
+    if end < 0 or end + 22 > len(data):
+        raise ValueError("Installer lacks an embedded player kit")
+    directory_size = int.from_bytes(data[end + 12:end + 16], "little")
+    directory_offset = int.from_bytes(data[end + 16:end + 20], "little")
+    start = end - directory_size - directory_offset
+    if start < 4 or int.from_bytes(data[start-4:start], "little") != end + 22 - start:
+        raise ValueError("Invalid embedded player kit extent")
+    with zipfile.ZipFile(io.BytesIO(data[start:end+22])) as kit:
+        required = ("runtime/eos-client.ini", "runtime/EOSSDK-Win64-Shipping.dll",
+                    "host/eos.lib", "host/epic_rooms.o", "runtime/licenses/EOS.txt")
+        manifest = json.loads(kit.read("manifest.json"))
+        for path in required:
+            if path not in manifest or digest(kit.read(path)) != manifest[path]:
+                raise ValueError("Missing or invalid multiplayer payload: " + path)
     return data
 
 

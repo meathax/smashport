@@ -34,7 +34,7 @@ Merged and non-merged sets are supported. For a split set, keep the parent `smas
 
 ## Build from source
 
-Run `.\build.ps1 -Mode MSVC -Rom "C:\path\to\your-L8.zip"` from PowerShell with Visual Studio C++ tools, the Windows SDK, CMake, Ninja, and Python available. For a source-only checkout, restore the pinned graphics runtime dependencies listed in [the graphics manifest](tools/release/graphics-files.json) before building. The main and sound programs are translated ahead of time.
+Run `.\build.ps1 -Mode MSVC -Rom "C:\path\to\your-L8.zip"` from PowerShell with Visual Studio C++ tools, the Windows SDK, CMake, Ninja, and Python available. For a source-only checkout, restore the pinned graphics runtime dependencies listed in [the graphics manifest](tools/release/graphics-files.json) before building. The Windows build also requires the Epic Online Services C SDK 1.19.2.1 under `build/dependencies/eos/1.19.2.1/SDK` and a game-client configuration at `build/dependencies/eos/eos-client.ini`. Set `SDL3_DIR` to the SDL3 CMake package directory to enable SDL gamepad support. The main and sound programs are translated ahead of time.
 
 ## Credits and license
 

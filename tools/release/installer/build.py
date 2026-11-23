@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 
@@ -15,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio snd/voices game/cosched
 net/rollback net/udp net/lobby host/pc_menu host/pc_settings host/video_filter
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
-host/win_main host/wasapi host/audio_fx""".split()
+host/win_main host/wasapi host/audio_fx host/dash_audio""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
 tools/gsp2cpp/codemap.py tools/gsp2cpp/decode.py tools/gsp2cpp/retail_tables.py
 tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
@@ -65,9 +66,13 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
     cpp = tc / "bin/clang++.exe"
     gen = temp / "shaders"
     gen.mkdir()
-    write(gen / "resident_effects_shader.hpp",
-          (ROOT / "src/host/resident_effects_shader.hpp.in").read_text().replace(
-          "@STV_EFFECTS_HLSL@", (ROOT / "src/host/resident_effects.hlsl").read_text()))
+    import wave
+    with wave.open(str(ROOT / "assets/audio/ramjet.wav"), "rb") as sample:
+        pcm = sample.readframes(sample.getnframes())
+    (gen / "ramjet_pcm.inc").write_text(",\n".join(f"0x{b:02x}" for b in pcm), encoding="ascii")
+    fxc = dxc.with_name("fxc.exe")
+    subprocess.run([sys.executable, HERE / "compile_shaders.py",
+                    fxc if fxc.is_file() else "fxc.exe", gen / "resident_bytecode.hpp"], check=True)
     subprocess.run([dxc, "-T", "cs_6_5", "-E", "main", "-O3", "-Fh", gen / "dxr_shader.hpp",
                     "-Vn", "stv_dxr_shader", ROOT / "src/host/dxr_lighting.hlsl"], check=True)
     includes = [ROOT / "include", ROOT / "third_party/ymfm", GRAPHICS / "runtime/post",
@@ -117,8 +122,12 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
     copy(rc / "LICENSE", stage / "runtime/licenses/rcheevos.txt")
     copy(cjson / "LICENSE", stage / "runtime/licenses/cJSON.txt")
     if sdl:
-        copy(sdl / "lib/libSDL3.dll.a", stage / "host/sdl.lib")
-        copy(sdl / "bin/SDL3.dll", stage / "runtime/SDL3.dll")
+        if (sdl / "lib/libSDL3.dll.a").is_file():
+            import_library, dll = sdl / "lib/libSDL3.dll.a", sdl / "bin/SDL3.dll"
+        else:
+            import_library, dll = sdl / "lib/x64/SDL3.lib", sdl / "lib/x64/SDL3.dll"
+        copy(import_library, stage / "host/sdl.lib")
+        copy(dll, stage / "runtime/SDL3.dll")
         sdl_license = sdl / "LICENSE.txt"
         if not sdl_license.is_file():
             sdl_license = sdl.parent / "LICENSE.txt"
@@ -182,7 +191,7 @@ def runtime(stage, eos, config):
     if eos:
         keys = dict(line.split("=", 1) for line in config.read_text().splitlines() if "=" in line)
         required = {"ProductId", "SandboxId", "DeploymentId", "ClientId", "ClientSecret"}
-        if set(keys) != required or not all(keys.values()):
+        if set(keys) != required or not all(v and not any(c.isspace() for c in v) for v in keys.values()):
             raise ValueError("Expected only the five EOS game-client settings")
         copy(config, rt / "eos-client.ini")
         copy(eos / "SDK/Bin/EOSSDK-Win64-Shipping.dll", rt / "EOSSDK-Win64-Shipping.dll")
@@ -210,8 +219,8 @@ def check_host_sources(eos):
 
 
 def assemble(args):
-    if bool(args.eos) != bool(args.config):
-        raise ValueError("EOS SDK and client config must be supplied together")
+    if not args.eos or not args.config:
+        raise ValueError("The shipping player requires the EOS SDK and game-client configuration")
     check_host_sources(args.eos is not None)
     out = args.output.resolve()
     if out.is_relative_to(ROOT):
@@ -261,8 +270,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for opt in ("output", "llvm", "dxc"):
         parser.add_argument("--" + opt, type=Path, required=True)
-    for opt in ("eos", "config", "sdl"):
-        parser.add_argument("--" + opt, type=Path)
+    parser.add_argument("--eos", type=Path, default=ROOT / "build/dependencies/eos/1.19.2.1")
+    parser.add_argument("--config", type=Path, default=ROOT / "build/dependencies/eos/eos-client.ini")
+    parser.add_argument("--sdl", type=Path)
     assemble(parser.parse_args())
 
 

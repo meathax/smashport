@@ -70,8 +70,16 @@ class Emitter:
         ops = ins.ops
         L = []
 
+        # These list walks, collision checks and display interrupts scale with
+        # the population. Keep timing for individual actors and ROM services.
+        crowd_work = self.src.get(pc, "").startswith(
+            ("NDSP1.ASM:", "MAIN.ASM:", "MPROC.ASM:", "COLL2.ASM:"))
+
         def cy(n):
-            L.append(f"c.cyc += {n};")
+            if crowd_work and n > 1 and m in ("MOVE", "MOVB", "MMTM", "MMFM"):
+                L.append(f"c.cyc += enhanced_combat(m) ? 1 : {n};")
+            else:
+                L.append(f"c.cyc += {n};")
 
         def goto_or_ret(target, dyn=False):
             if not dyn and target in chunk_pcs:
@@ -801,6 +809,9 @@ def main():
                     if note != "MPROC.ASM:219":
                         raise SystemExit("Changed retail process allocation owner")
                     body.insert(0, "if (m.enhanced && c.a[1]==286) m.latch_shot_aim();")
+                if i.pc == 0xffe1f3d0:  # UPDATE_PLYRXY movement nibble, before wall tests
+                    if i.text != "ANDI {~L1},A2": raise SystemExit("Changed retail movement contact test")
+                    body.insert(0, "if (m.enhanced) m.lock_dash_contacts();")
                 if i.pc == 0xffe1f840:  # UPDATE_PLYRXY after both axis-boundary checks
                     if i.text != "MOVE A3,A5": raise SystemExit("Changed retail walk direction")
                     body.insert(0, "if (m.enhanced) m.analog_walk_facing();")

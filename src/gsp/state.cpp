@@ -69,7 +69,7 @@ void Machine::save_state(std::vector<u8>& out, u32 pc, bool with_prog) const {
     const u8 flags = with_prog ? 1 : 0;
     o.pod(flags);
     fields(o, *this, with_prog);
-    if (enhanced) { o.pod(aim_inputs); o.pod(shot_aim); o.pod(shot_muzzles); o.pod(move_inputs); }
+    if (enhanced) { o.pod(aim_inputs); o.pod(shot_aim); o.pod(shot_muzzles); o.pod(move_inputs); o.pod(dash); }
 }
 
 bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
@@ -92,6 +92,7 @@ bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
             i.pod(staged.aim_inputs); i.pod(staged.shot_aim);
             if (i.at < in.size()) i.pod(staged.shot_muzzles);
             if (i.at < in.size()) i.pod(staged.move_inputs);
+            if (i.at < in.size()) i.pod(staged.dash);
         }
         if (!i.ok || i.at != in.size()) return false;
         if (staged.ram.size() != 0x10000 || staged.palette.size() != 0x2000 ||
@@ -115,14 +116,20 @@ bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
         if (flags) {
             prog.swap(staged.prog); enhanced_data.swap(staged.enhanced_data); gfx.swap(staged.gfx);
             static_data_replaced();
+            retail_shadow_pixels=std::move(staged.retail_shadow_pixels);
         }
         In commit{in, 13};
         fields(commit, *this, flags != 0);
+        dash=staged.dash;
         move_inputs=staged.move_inputs;
         aim_inputs=staged.aim_inputs; shot_aim=staged.shot_aim; shot_muzzles=staged.shot_muzzles;
+        dash_poses = {};
+        display_queue_torso.swap(staged.display_queue_torso);
         sprite_coverage.swap(staged.sprite_coverage);
         display_queue_coverage.swap(staged.display_queue_coverage);
         presentation_frame.swap(staged.presentation_frame);
+        shadow_underlay.swap(staged.shadow_underlay);
+        presentation_without_blobs.swap(staged.presentation_without_blobs);
         pc = next_pc;
         run_until_cycle = ~0ull;
         return true;

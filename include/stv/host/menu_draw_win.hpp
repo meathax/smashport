@@ -7,10 +7,15 @@
 #include <vector>
 #include <utility>
 namespace stv::host {
-struct MenuRenderAudit { RECT panel{}; int total_lines=0,visible_lines=0; bool selection_visible=false; };
+struct MenuRenderAudit {
+    RECT panel{};
+    int total_lines=0,visible_lines=0,visible_footer_lines=0;
+    bool selection_visible=false;
+};
 inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string> lines,
                                     const ArcadeMenuFont* arcade=nullptr,
-                                    const RECT* requested_panel=nullptr) {
+                                    const RECT* requested_panel=nullptr,
+                                    int footer_lines=0) {
     MenuRenderAudit audit;
     if(cw<96 || ch<96 || lines.empty()) return audit;
     SetBkMode(dc,TRANSPARENT);
@@ -32,18 +37,22 @@ inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY,
                              FIXED_PITCH | FF_MODERN, L"Terminal");
     const HGDIOBJ previous_font = SelectObject(dc, font);
-    const int capacity = std::max(3, (bh - 36) / lh);
+    const int capacity = std::max(3, (bh - 22) / lh);
     audit.total_lines = int(lines.size());
+    int footer_start = int(lines.size()) - footer_lines;
     if (int(lines.size()) > capacity) {
         int selected = 1;
-        for (int i=1; i<int(lines.size()); ++i)
+        for (int i=1; i<footer_start; ++i)
             if (lines[i].rfind("> ",0)==0) { selected=i; break; }
-        const int body = capacity-2;
-        const int first = std::clamp(selected-body/2,1,int(lines.size())-body);
+        const int footer = std::min(footer_lines, capacity-3);
+        const int body = std::min(capacity-2-footer, footer_start-1);
+        const int first = std::clamp(selected-body/2,1,footer_start-body);
         std::vector<std::string> visible{lines.front()};
         visible.insert(visible.end(),lines.begin()+first,lines.begin()+first+body);
         visible.push_back("ROWS "+std::to_string(first)+"-"+std::to_string(first+body-1)+
-                          " OF "+std::to_string(lines.size()-1));
+                          " OF "+std::to_string(footer_start-1));
+        visible.insert(visible.end(),lines.begin()+footer_start,lines.begin()+footer_start+footer);
+        footer_start = int(visible.size())-footer;
         lines=std::move(visible);
     }
     audit.visible_lines=int(lines.size());
@@ -72,7 +81,9 @@ inline MenuRenderAudit draw_pc_menu(HDC dc,int cw,int ch,std::vector<std::string
         const auto& line = lines[i];
         const int y = by + 18 + int(i) * lh;
         const bool selected = line.rfind("> ", 0) == 0;
-        if(selected) audit.selection_visible = y >= by+4 && y+lh <= by+bh-4;
+        const bool row_visible = y >= by+4 && y+lh <= by+bh-4;
+        if(selected) audit.selection_visible = row_visible;
+        if(int(i)>=footer_start && row_visible) ++audit.visible_footer_lines;
         const bool section = line.rfind("-- ", 0) == 0 || line.rfind("[ ", 0) == 0;
         if (selected) {
             fill({bx + 18, y - 2, bx + bw - 18, y + lh - 2}, RGB(120, 30, 32));

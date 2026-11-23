@@ -17,17 +17,17 @@ struct PadSnapshot {
     std::uint16_t motion=0;
     bool neutral() const { return buttons==0 && move==0 && fire==0; }
 };
-// A held firing input must not become an automatic continue on a life/state
+// A held confirm input must not become an automatic continue on a life/state
 // transition. Arm only on a fresh press while start/join/continue is eligible.
-class FireStartRouter {
+class ConfirmStartRouter {
     std::array<bool,2> held_{}, armed_{};
 public:
     void reset() {held_.fill(false);armed_.fill(false);}
-    bool update(int player,bool fire,bool eligible) {
-        if(fire&&!held_[player])armed_[player]=eligible;
-        if(!fire || !eligible)armed_[player]=false;
-        held_[player]=fire;
-        return fire&&armed_[player]&&eligible;
+    bool update(int player,bool confirm,bool eligible) {
+        if(confirm&&!held_[player])armed_[player]=eligible;
+        if(!confirm || !eligible)armed_[player]=false;
+        held_[player]=confirm;
+        return confirm&&armed_[player]&&eligible;
     }
 };
 enum class PadEvent { None, Open, Up, Down, Left, Right, Confirm, Back, Reset };

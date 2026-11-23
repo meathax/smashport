@@ -28,6 +28,7 @@ struct Float4 {
 // Must match cbuffer Scene in dxr_lighting.hlsl.
 struct Constants {
     Float4 extent, floor, ambient, world, tone;
+    Float4 previousFloor, previousAmbient, previousTone;
     GpuLight lights[RoomLightRig::MaxLights];
 };
 // One front/cross pair per retail object, plus walls and the active set's
@@ -64,7 +65,6 @@ struct DxrLighting::Impl {
     };
     std::array<Slot, 3> slots{};
     UINT64 submitted{}, released{};
-    RoomLightRig rig;
     LightingFrame lastFrame;
     D3D12_RAYTRACING_GEOMETRY_DESC geometry{}, quadGeometry{};
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom{}, quadBottom{}, top{};
@@ -251,7 +251,7 @@ struct DxrLighting::Impl {
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
         list->ResourceBarrier(1, &barrier);
     }
-    ID3D11ShaderResourceView *render(const EffectPacket &p, int width, int height, int offset,
+    ID3D11ShaderResourceView *render(const EffectPacket &p, LightingFrame lighting, int width, int height, int offset,
                                      std::span<const uint32_t> coverage) {
         auto &slot = slots[submitted % slots.size()];
         // Reuse the last queued map only while its receiver coordinates still
@@ -276,7 +276,7 @@ struct DxrLighting::Impl {
         }
         UINT count = 0, actorCount = 0, firstBoss = 0;
         // Opaque proxies (walls, floor obstacles): mask 2, ID tagged above actor range.
-        auto box = [&](float x, float y, float z, float w, float d, float h) {
+        auto box = [&](float x, float y, float z, float w, float d, float h, unsigned mask) {
             if (count == capacity || w <= 0 || d <= 0 || h <= 0)
                 return;
             auto &inst = instances[count++];
@@ -287,7 +287,7 @@ struct DxrLighting::Impl {
             inst.Transform[1][3] = y;
             inst.Transform[2][3] = z;
             inst.InstanceID = 0x800000;
-            inst.InstanceMask = 2;
+            inst.InstanceMask = mask;
             inst.AccelerationStructure = blas->GetGPUVirtualAddress();
         };
         // Each sprite stands as a front billboard on its foot line plus a crossing
@@ -322,23 +322,27 @@ struct DxrLighting::Impl {
             cross.AccelerationStructure = quadBlas->GetGPUVirtualAddress();
             ++actorCount;
         };
-        lastFrame = rig.build(p, width, offset);
+        lastFrame = std::move(lighting);
         const float fx = lastFrame.floor[0], fy = lastFrame.floor[1];
-        const float reveal = std::clamp((width - fx) / f.w, 0.f, 1.f);
-        const unsigned gates = p.geometry.openGates;
+        const auto &floor = lastFrame.floor;
         // Walls: rear (top gate), sides (left/right gates) and the front lip.
-        auto walls = [&](float x0, float y0, float w, float h, unsigned open, float leftOpen) {
+        auto walls = [&](float x0, float y0, float w, float h, unsigned open, float leftOpen, unsigned mask) {
             const float topGate = open & 4 ? 36.f : 0.f, mid = x0 + w * .5f;
-            box(x0 - 30, y0 - 8, 0, mid - topGate - (x0 - 30), 8, 44);
-            box(mid + topGate, y0 - 8, 0, x0 + w + 30 - mid - topGate, 8, 44);
+            box(x0 - 30, y0 - 8, 0, mid - topGate - (x0 - 30), 8, 44, mask);
+            box(mid + topGate, y0 - 8, 0, x0 + w + 30 - mid - topGate, 8, 44, mask);
             const float leftGap = 22.f * leftOpen, rightGap = open & 2 ? 22.f : 0.f, door = y0 + h * .5f;
-            box(x0 - 8, y0, 0, 8, door - leftGap - y0, 30);
-            box(x0 - 8, door + leftGap, 0, 8, y0 + h - door - leftGap, 30);
-            box(x0 + w, y0, 0, 8, door - rightGap - y0, 30);
-            box(x0 + w, door + rightGap, 0, 8, y0 + h - door - rightGap, 30);
-            box(x0 - 8, y0 + h, 0, w + 16, 6, 14);
+            box(x0 - 8, y0, 0, 8, door - leftGap - y0, 30, mask);
+            box(x0 - 8, door + leftGap, 0, 8, y0 + h - door - leftGap, 30, mask);
+            box(x0 + w, y0, 0, 8, door - rightGap - y0, 30, mask);
+            box(x0 + w, door + rightGap, 0, 8, y0 + h - door - rightGap, 30, mask);
+            box(x0 - 8, y0 + h, 0, w + 16, 6, 14, mask);
         };
-        walls(fx, fy, f.w, f.h, gates, p.roomIntro ? reveal : float(gates & 1));
+        walls(fx, fy, floor[2], floor[3], lastFrame.gates, lastFrame.leftGate, 2);
+        if (lastFrame.previousVisible) {
+            const auto &old = lastFrame.previousFloor;
+            const unsigned open = lastFrame.previousGates;
+            walls(old[0], old[1], old[2], old[3], open, lastFrame.previousLeftGate, 4);
+        }
         // geometry.solids are ROBO TYPTEXT objects (score, timers, message windows):
         // overlay text, so they never occlude room light.
         for (const auto &c : p.casters) {
@@ -352,12 +356,20 @@ struct DxrLighting::Impl {
         Constants c{};
         const bool useCoverage = coverage.size() >= size_t(height) * 32;
         const bool useOwners = coverage.size() >= size_t(height) * (32+256);
-        c.extent = {float(width), float(height), float(offset), float(p.frame % 1000003)};
-        c.floor = {fx, fy, f.w, f.h};
+        c.extent = {float(width), float(height), float(offset), lastFrame.lightTime};
+        c.floor = {fx, fy, floor[2], floor[3]};
         c.ambient = {mood.ambient[0], mood.ambient[1], mood.ambient[2], mood.gloss};
         c.world = {float(p.camera_x), float(p.camera_y), float(lastFrame.lights.size()),
                    float((useCoverage ? 1 : 0) | (height <= 256 ? 2 : 0) | (useOwners ? 4 : 0))};
         c.tone = {mood.actorFloor, mood.occlusion, float(firstBoss), float(actorCount)};
+        if (lastFrame.previousVisible) {
+            const auto &old = lastFrame.previousFloor;
+            const auto &oldMood = lastFrame.previousMood;
+            c.previousFloor = {old[0], old[1], old[2], old[3]};
+            c.previousAmbient = {oldMood.ambient[0], oldMood.ambient[1], oldMood.ambient[2], oldMood.gloss};
+            c.previousTone = {oldMood.actorFloor, oldMood.occlusion, float(lastFrame.previousRoomLights),
+                              lastFrame.previousLightTime};
+        }
         std::copy(lastFrame.lights.begin(), lastFrame.lights.end(), c.lights);
         void *out;
         D3D12_RANGE empty{};
@@ -431,12 +443,12 @@ bool DxrLighting::prepare(ID3D11Device *dev, ID3D11DeviceContext *ctx) {
         return false;
     }
 }
-ID3D11ShaderResourceView *DxrLighting::render(const EffectPacket &p, int w, int h, int offset,
+ID3D11ShaderResourceView *DxrLighting::render(const EffectPacket &p, LightingFrame lighting, int w, int h, int offset,
                                               std::span<const uint32_t> coverage) {
     if (!impl_ || !error_.empty())
         return nullptr;
     try {
-        return impl_->render(p, w, h, offset, coverage);
+        return impl_->render(p, std::move(lighting), w, h, offset, coverage);
     } catch (const std::exception &e) {
         error_ = e.what();
         return nullptr;

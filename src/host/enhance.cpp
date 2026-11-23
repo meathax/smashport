@@ -265,11 +265,25 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         if(seen[index] || !(word(node+0xb0)&0x8000)) return s;
         seen[index]=true;
         auto image=longword(node+0x130); auto kind=classify(image,word(node+0x150));
+        auto weapon=word(node+0x150);
+        const auto process=longword(node+0x160);
+        const bool bulletProcess=process>=0x01086790 && (process-0x01086790)%0x5a0==0 &&
+            (process-0x01086790)/0x5a0<240 && word(process+0x20)==286;
+        const bool grenade=!weapon && bulletProcess && longword(process+0xc0)==node;
+        if(grenade){kind=EffectKind::Projectile;weapon=0x4204;}
         if(kind!=EffectKind::None) {
             // NDSP1 DCLIP subtracts packed WORLDTL; object coordinates are signed.
             float x=float(int16_t(word(node+0x70))-s.camera_x);
             float y=float(int16_t(word(node+0x90))-s.camera_y);
-            if(x>=0 && x<width && y>=24 && y<height-4) s.objects.push_back({node,image,kind,x,y,float(int32_t(longword(node+0x20)))/65536.f,float(int32_t(longword(node+0x40)))/65536.f,word(node+0x150)});
+            if(x>=0 && x<width && y>=24 && y<height-4) {
+                EffectObject object{node,image,kind,x,y,float(int32_t(longword(node+0x20)))/65536.f,float(int32_t(longword(node+0x40)))/65536.f,weapon};
+                if(grenade){
+                    constexpr int dx[]={0,0,1,1,1,0,-1,-1,-1},dy[]={0,-1,-1,0,1,1,1,0,-1};
+                    const unsigned dir=word(process+0x100);
+                    if(dir<=8){object.vx=float(dx[dir]);object.vy=float(dy[dir]);}
+                }
+                s.objects.push_back(object);
+            }
         }
         // DISP OSIZE supplies a 2D footprint. Proxy height is an artistic choice.
         unsigned type=(word(node+0x150)>>8)&0x3f;
@@ -304,20 +318,28 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
         bool ui=(oid&0x1f00)==0x0700 || oid==1 || lifePanel;
         const bool tvMonitor=oid==0x070f || oid==0x0710; // TVMNTR map and announcer parts
         const bool overhead=oid==2 || oid==3; // SCROLL_WAVE changes SUBUP to SUBUP2 while moving it
+        // SCORE.ASM assigns these subtypes to score, lives, join text and countdowns.
+        const bool scoreText=oid==0x0702 || oid==0x0703 || oid==0x0704 ||
+                             (oid>=0x070b && oid<=0x070e);
         const auto hudPal=word(node+0x110);
         const int hudBank=(hudPal&0xf00)|((hudPal>>8)&0xc0);
+        // Retail L8 SHAD / SHAD2 use pen 1 and share MUTT with the tank.
+        // The image owner matters: the OID and palette alone include wreckage.
+        // GSAGOF rounds OSIZEX up to a four-pixel DMA row (13 -> 16, 59 -> 60).
+        if(oid==4 && ((image==0xfffe0120u && w==16 && h==71) ||
+                      (image==0xfffe01a0u && w==60 && h==6)))
+            s.tankShadows.push_back({int(x),int(y),int(w),int(h),uint16_t(hudBank|1)});
         if(lifePanel && x<width && x+w>0){
             // The 52x56 backplate is drawn over the room wall: its outer five
             // columns on the screen edge and six top rows are rim wall art that
-            // must light like the neighbouring wall. Only the monitor itself and the
-            // score bezel hanging below it (106x33, measured against the retail
-            // frames in both layouts) are screen overlay.
+            // must light like the neighbouring wall. Mark the inset and the score
+            // bezel as room surfaces so they receive light and airborne effects.
             const bool left=x+w*.5f<width*.5f;
-            s.hud.push_back({{left?x+5:x,y+6,w-5,h-6},hudBank,true});
-            s.hud.push_back({{left?x+25:x-77,46,106,33},hudBank,true});
-        }else if((overhead || (ui && (tvMonitor || y+h<=56 || oid==1))) &&
+            s.hud.push_back({{left?x+5:x,y+6,w-5,h-6},hudBank,true,true});
+            s.hud.push_back({{left?x+25:x-77,46,106,33},hudBank,true,true});
+        }else if((scoreText || overhead || (ui && (tvMonitor || y+h<=56 || oid==1))) &&
                  w>0 && h>0 && x<width && x+w>0 && y<height && y+h>0){
-            s.hud.push_back({{x,y,w,h},hudBank});
+            s.hud.push_back({{x,y,w,h},hudBank,false,scoreText});
         }
         // Only physical objects occlude light. Neutral animation frames include
         // blood, muzzle sprites and explosions, whose bounds are not bodies.
@@ -375,7 +397,7 @@ void EnhanceEffects::emit(Kind kind,float x,float y,int count,bool inert) {
         float a=random()*6.2831853f, speed=12+random()*48;
         Particle p{kind,x,y,2,std::cos(a)*speed,std::sin(a)*speed,25+random()*60,0,0,1,0};
         switch(kind) {
-        case Kind::Spark:p.life=.12f+random()*.18f;p.size=.28f;p.color=0xffd78a;break;
+        case Kind::Spark:p.z=0;p.life=.12f+random()*.18f;p.size=.28f;p.color=0xffd78a;break;
         case Kind::Blood:p.life=4+random()*3;p.color=0xc01722;p.size=.3f+random()*.35f;break;
         case Kind::Voxel:p.life=4+random()*3;p.color=random()>.5f?0x8e1020:0xd33542;p.size=.28f+random()*.42f;break;
         case Kind::Debris:p.life=3+random()*3;p.color=random()>.5f?0xa30e20:0xe04751;p.size=.3f+random()*.45f;break;
@@ -426,13 +448,15 @@ bool EnhanceEffects::has_weapon_fx(WeaponFxKind kind,WeaponFamily family,float x
     }
     return false;
 }
-void EnhanceEffects::impact(ImpactTier tier) {
+void EnhanceEffects::impact(ImpactTier tier, bool camera_motion) {
     auto& director=packet_.weaponFx.director;
     float trauma=.18f,zoom=.003f,flash=.16f,vignette=.10f,split=.08f;
     if(tier==ImpactTier::Medium){trauma=.45f;zoom=.007f;flash=.34f;vignette=.22f;split=.26f;}
     if(tier==ImpactTier::Large){trauma=.82f;zoom=.014f;flash=.72f;vignette=.44f;split=.62f;}
-    director.camera_trauma=std::max(director.camera_trauma,trauma);
-    director.zoom_punch=std::max(director.zoom_punch,zoom);
+    if(camera_motion){
+        director.camera_trauma=std::max(director.camera_trauma,trauma);
+        director.zoom_punch=std::max(director.zoom_punch,zoom);
+    }
     director.hit_flash=std::max(director.hit_flash,flash);
     director.vignette=std::max(director.vignette,vignette);
     director.chromatic_split=std::max(director.chromatic_split,split);
@@ -446,6 +470,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     if(!primed_ || scene.room!=previous_.room || scene.frame<previous_.frame){roomStart_=scene.frame;stepDistance_.fill(0);nextFoot_.fill(0);}
     packet_.roomAge=scene.frame-roomStart_;packet_.studio=scene.studio;
     packet_.foreground=scene.targets;
+    packet_.tankShadows=scene.tankShadows;
     packet_.lamps=scene.lamps;packet_.hud=scene.hud;packet_.geometry=scene.geometry;
     packet_.cinema=roomCinema_.observe({
         scene.frame,scene.room,unsigned(std::min<std::uint64_t>(packet_.roomAge,1000000)),
@@ -523,7 +548,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         }
     }
     auto emitDeaths=[&]{
-        if(deathCount && settings.combat_feedback)impact(ImpactTier::Large);
+        if(deathCount && settings.combat_feedback)impact(ImpactTier::Large,true);
         if(resident_ && settings.destruction)for(const auto& hit:scene.impacts){
             if(!(hit.flags&BrokenJoint) || packet_.spawns.size()>=250)continue;
             const bool eye=hit.oid==0x9904 || hit.oid==0x9905;
@@ -621,7 +646,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     }
     for(const auto& hit:scene.impacts){
         if(hit.flags&BrokenJoint){
-            if(settings.combat_feedback)impact(ImpactTier::Large);
+            if(settings.combat_feedback)impact(ImpactTier::Large,true);
             continue;
         }
         const float x=hit.x-scene.camera_x,y=hit.y-scene.camera_y;
@@ -686,14 +711,29 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             trace(2+tank.oid-0x9801,x,y,x-(prior->x+prior->w*.5f),y-(prior->y+prior->h-1));
         }
     }
+    for(const auto& flash:scene.visible_muzzles){
+        if(!settings.muzzle_flash)continue;
+        if(resident_ && packet_.spawns.size()<256)
+            packet_.spawns.push_back({float(flash.x),float(flash.y),float(ArenaEffect::Muzzle),1,flash.dx,flash.dy,1});
+        WeaponFamily family{};
+        if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(flash.weapon,family))
+            queue_weapon_fx(WeaponFxKind::Muzzle,family,float(flash.x),float(flash.y),flash.dx,flash.dy,1);
+    }
     size_t emitters=0;
     unsigned smokeTrails=0;
     for(const auto& obj:scene.objects) {
-        if(++emitters>96) break;
+        if(++emitters>96 && obj.kind!=EffectKind::Projectile) continue;
         const auto prior=std::find_if(previous_.objects.begin(),previous_.objects.end(),[&](const auto& old){
             return old.slot==obj.slot && old.kind==obj.kind && old.weapon==obj.weapon && std::abs(old.x-obj.x)<32 && std::abs(old.y-obj.y)<32;});
         bool newly_visible=prior==previous_.objects.end();
         bool launched=newly_visible || (prior->vx==0 && prior->vy==0 && (obj.vx!=0 || obj.vy!=0));
+        if(obj.kind==EffectKind::Projectile && obj.weapon!=0x4206){
+            const float speed=std::hypot(obj.vx,obj.vy);
+            if(!obj.raster_muzzle && launched && settings.muzzle_flash && speed>.1f)
+                spawn_arena(ArenaEffect::Muzzle,obj.barrel?obj.muzzle_x:obj.x-obj.vx,
+                            obj.barrel?obj.muzzle_y:obj.y-obj.vy,obj.vx/speed,obj.vy/speed);
+            if(obj.weapon==0x4201)continue; // its retail sprite owns the rest of its flight
+        }
         if(!newly_visible && scene.studio.boss && obj.kind==EffectKind::EnemyShot &&
            scene.frame/10!=previous_.frame/10 && smokeTrails<2){
             const float speed=std::hypot(obj.vx,obj.vy);
@@ -706,7 +746,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         if(settings.combat_feedback && settings.weapon_signatures &&
            obj.kind==EffectKind::Projectile && projectile_weapon_family(obj.weapon,family)){
             const float speed=std::hypot(obj.vx,obj.vy);
-            if(weaponFxObjectContinuity_ && launched && speed>.1f){
+            if(!obj.raster_muzzle && weaponFxObjectContinuity_ && launched && speed>.1f){
                 const float x=obj.barrel?obj.muzzle_x:obj.x-obj.vx;
                 const float y=obj.barrel?obj.muzzle_y:obj.y-obj.vy;
                 queue_weapon_fx(WeaponFxKind::Muzzle,family,x,y,obj.vx/speed,obj.vy/speed,1);
@@ -743,7 +783,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             }
             float speed=std::hypot(dx,dy);
             if(speed>.1f){
-                if(settings.muzzle_flash)spawn_arena(ArenaEffect::Muzzle,x,y,dx/speed,dy/speed);
+                if(settings.muzzle_flash && obj.kind==EffectKind::EnemyShot)spawn_arena(ArenaEffect::Muzzle,x,y,dx/speed,dy/speed);
                 if(settings.fluid_smoke){
                     if(scene.studio.boss && obj.kind==EffectKind::EnemyShot)
                         smokePuff(x,y,dx/speed,dy/speed,.55f,2);
@@ -849,15 +889,30 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             }
             hit=true;break;
         }
-        if(!hit && now==scene.objects.end() && (old.x<12||old.x>scene.width-13||old.y<33||old.y>scene.height-13)) {
+        if(hit || now!=scene.objects.end())continue;
+        float x=old.x,y=old.y;
+        const auto& floor=scene.geometry.floor;
+        const float front=floor.y+floor.h;
+        const bool nearFront=floor.h>0 && old.vy>0 && old.y+old.vy>=front;
+        bool frontContact=false;
+        if(nearFront){
+            const float contactX=old.x+(front-old.y)*(old.vx/old.vy);
+            if(contactX>=floor.x && contactX<floor.x+floor.w){
+                x=contactX;
+                y=front;
+                frontContact=true;
+            }
+        }
+        if(frontContact || old.x<12 || old.x>scene.width-13 || old.y<33 ||
+           (floor.h<=0 && old.y>scene.height-13)) {
             WeaponFamily family{};
             if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(old.weapon,family)){
                 const float speed=std::hypot(old.vx,old.vy);
                 if(speed>.1f)
-                    queue_weapon_fx(WeaponFxKind::Ricochet,family,old.x,old.y,old.vx/speed,old.vy/speed,.8f);
+                    queue_weapon_fx(WeaponFxKind::Ricochet,family,x,y,old.vx/speed,old.vy/speed,.8f);
             }
             if(settings.combat_feedback)impact(ImpactTier::Small);
-            if(settings.particles)emit(Kind::Spark,old.x,old.y,4);
+            if(settings.particles)emit(Kind::Spark,x,y,4);
         }
     }
     contacts_=std::move(contacts);

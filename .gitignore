@@ -8,3 +8,6 @@ original/smashtv/
 generated/private/
 release/Windows-x64/
 debug.log
+
+# Locally restored Windows graphics runtimes
+/third_party/graphics/**/*.dll

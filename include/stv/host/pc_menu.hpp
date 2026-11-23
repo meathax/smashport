@@ -54,7 +54,7 @@ enum class PcMenuItem : std::uint8_t {
     Back, Options,
     RoomScores, PublicHost, PublicBrowser, Connections, HostMode, Motion, RunAhead, HardwareRT,
     Atmosphere, SpriteRim, ContactShadows, WetMaterials, HeatDistortion, EmissiveSpill, CinematicGrade,
-    SoundChannels, Reverb, StereoWidth, HiFiAudio,
+    Dash, SoundChannels, Reverb, StereoWidth, HiFiAudio,
     CombatFeedback, CameraShake, ZoomPunch, HitFlash, EdgeEffects, WeaponSignatures, TemporalTrails,
     ReduceShake, ReduceFlashing, ReduceMotion, Count
 };

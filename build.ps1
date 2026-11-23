@@ -5,8 +5,7 @@ param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Release',
     [switch]$PlayerRelease, # compatibility alias for the sole player build
     [string]$Rom,
-    [switch]$Play,
-    [switch]$Lab   # also build the retired v0.5 hand-written lab code (STV_LAB)
+    [switch]$Play
 )
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
@@ -26,8 +25,7 @@ if (!$Lab -and !$Rom) {
         if ($Saved -and $Saved.rom -eq (Get-FileHash -LiteralPath $Cache).Hash) {
             $Rom = $Cache
             if ($Play -and (Test-Path -LiteralPath $Exe) -and $Saved.player -eq (Get-FileHash -LiteralPath $Exe).Hash) {
-                & (Join-Path $Root 'tools\update-ready.ps1') -BuildDirectory $BuildDirectory
-                $env:STV_HOST_ROM_ZIP = $Cache
+                        $env:STV_HOST_ROM_ZIP = $Cache
                 Start-Process -FilePath $Exe -WorkingDirectory $BuildDirectory
                 return
             }
@@ -66,36 +64,6 @@ if ($Mode -eq 'MSVC') {
             if ($LASTEXITCODE -ne 0) { throw 'ROM setup failed. Select a complete retail L8 set.' }
             $PlayerInputs = Get-Content -Encoding utf8 -Raw -LiteralPath $Result
         } finally { if (Test-Path -LiteralPath $Result) { Remove-Item -LiteralPath $Result } }
-    } else {
-        New-Item -ItemType Directory -Force -Path (Join-Path $Root 'build\p1') | Out-Null
-        & python (Join-Path $Root 'tools\gsp2cpp\asm.py') link --mem ROM2=FFFF7000 `
-            --out (Join-Path $Root 'build\p1\robo.bin') `
-            --map (Join-Path $Root 'build\p1\robo.map.json') `
-            --listing (Join-Path $Root 'build\p1\listing.json') `
-            --report (Join-Path $Root 'build\p1\report.json')
-        if ($LASTEXITCODE -ne 0) { throw 'P1 source-alignment prerequisites failed.' }
-        New-Item -ItemType Directory -Force -Path (Join-Path $Root 'generated\private') | Out-Null
-        & python (Join-Path $Root 'tools\gsp2cpp\codemap.py') `
-            --listing (Join-Path $Root 'build\p1\listing.json') `
-            --map (Join-Path $Root 'build\p1\robo.map.json') `
-            --out (Join-Path $Root 'generated\private\l8_codemap.json')
-        if ($LASTEXITCODE -ne 0) { throw 'Oracle code-map generation failed.' }
-        & python (Join-Path $Root 'tools/gsp2cpp/ensure_emission.py') --refresh
-        if ($LASTEXITCODE -ne 0) { throw 'Oracle emission failed.' }
-        & python (Join-Path $Root 'tools/m6809_aot/emit6809.py') `
-            (Join-Path $Root 'original\user-supplied-roms\smashtv.zip')
-        if ($LASTEXITCODE -ne 0) { throw 'Oracle sound emission failed.' }
-    }
-    if (!$Lab -and
-        (!(Test-Path -LiteralPath (Join-Path $Root 'build\p1\listing.json')) -or
-         !(Test-Path -LiteralPath (Join-Path $Root 'build\p1\robo.map.json')))) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $Root 'build\p1') | Out-Null
-        & python (Join-Path $Root 'tools\gsp2cpp\asm.py') link --mem ROM2=FFFF7000 `
-            --out (Join-Path $Root 'build\p1\robo.bin') `
-            --map (Join-Path $Root 'build\p1\robo.map.json') `
-            --listing (Join-Path $Root 'build\p1\listing.json') `
-            --report (Join-Path $Root 'build\p1\report.json')
-        if ($LASTEXITCODE -ne 0) { throw 'P1 source-alignment prerequisites failed.' }
     }
     $Configure = 'call "' + $VsDevCmd + '" -no_logo -arch=x64 -host_arch=x64 && "' + $CMake + '" -S "' + $Root + '" -B "' + $BuildDirectory + '" -G Ninja -DCMAKE_BUILD_TYPE=' + $Configuration + ' -DCMAKE_TRY_COMPILE_CONFIGURATION=' + $Configuration + ' -DSTV_PLAYER_INPUTS="' + $PlayerInputs + '" -DSTV_PLAYER_RELEASE=' + $(if ($Lab) { 'OFF' } else { 'ON' }) + ' -DSTV_LAB=' + $(if ($Lab) { 'ON' } else { 'OFF' })
     $Target = if ($Play -and !$Lab) { ' --target SmashTV' } else { '' }
@@ -104,7 +72,6 @@ if ($Mode -eq 'MSVC') {
     if (!$Lab) {
         @{rom=(Get-FileHash -LiteralPath $Cache).Hash; player=(Get-FileHash -LiteralPath $Exe).Hash} |
             ConvertTo-Json | Set-Content -LiteralPath $Selection -Encoding utf8
-        & (Join-Path $Root 'tools\update-ready.ps1') -BuildDirectory $BuildDirectory
         Write-Host "Local game built from your ROM: $Exe"
         if ($Play) {
             $env:STV_HOST_ROM_ZIP = $Cache

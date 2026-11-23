@@ -3,7 +3,6 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_5.h>
-#include <d3dcompiler.h>
 #include <wrl/client.h>
 #define LIBRA_RUNTIME_D3D11
 #include "librashader.h"
@@ -14,7 +13,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <array>
-#include "resident_effects_shader.hpp"
+#include "resident_bytecode.hpp"
 #include "dxr_lighting.hpp"
 #include "title_background.hpp"
 using Microsoft::WRL::ComPtr;
@@ -28,64 +27,12 @@ float effect_level(int level){
  return levels[std::clamp(level,0,3)];
 }
 void check(HRESULT h,const char* message){if(FAILED(h))throw std::runtime_error(std::string(message)+": "+std::to_string(uint32_t(h)));}
-const char* displayShader=R"DISPLAY(
-Texture2D<uint> image:register(t0);Texture2D<float4> overlay:register(t1);Texture2D<float4> filteredImage:register(t2);
-Texture2D<uint> arcadePixels:register(t3);Texture2D<uint> protectionMap:register(t4);
-SamplerState linearSampler:register(s0);
-cbuffer Display:register(b1){float sw,sh,dw,dh;uint mode;float glow,sharpen,curvature;float2 pan,padding;
- float hitFlash,vignette,chromatic,padding2;uint sourceMode;float3 padding3;};
-struct V{float4 p:SV_Position;float2 uv:TEXCOORD0;};
-V vs(uint i:SV_VertexID){V v;v.uv=float2((i<<1)&2,i&2);v.p=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);return v;}
-float3 pixel(int2 xy){uint c=image.Load(int3(clamp(xy,int2(0,0),int2(sw-1,sh-1)),0));return float3((c>>16)&255,(c>>8)&255,c&255)/255.;}
-float3 sampleImage(float2 uv){
- if(mode==9)return filteredImage.Load(int3(clamp(int2(uv*float2(sw,sh)),int2(0,0),int2(sw-1,sh-1)),0)).rgb;
- if(mode==8)return filteredImage.SampleLevel(linearSampler,uv,0).rgb;
- float2 xy=uv*float2(sw,sh)-.5;
- if(mode==0||mode==4||mode>=5)return pixel(int2(floor(xy+.5)));
- if(mode==2||mode==3){float2 scale=max(1,floor(float2(dw/sw,dh/sh)));float2 q=uv*float2(sw,sh)*scale-.5;float2 base=floor(q),f=frac(q);
-  int2 a=int2(floor(base/scale)),b=int2(floor((base+1)/scale));return lerp(lerp(pixel(a),pixel(int2(b.x,a.y)),f.x),lerp(pixel(int2(a.x,b.y)),pixel(b),f.x),f.y);}
- int2 p=int2(floor(xy));float2 f=frac(xy);
- return lerp(lerp(pixel(p),pixel(p+int2(1,0)),f.x),lerp(pixel(p+int2(0,1)),pixel(p+1),f.x),f.y);
-}
-bool protectedPixel(float2 uv){
- int2 p=clamp(int2(uv*float2(sw,sh)),int2(0,0),int2(sw-1,sh-1));
- if((protectionMap.Load(int3(p,0))&8)!=0)return true;
- if(sourceMode==0)return false;
- if(sourceMode==2){p.x-=68;if(p.x<0||p.x>=410)return false;}
- return (arcadePixels.Load(int3(p,0))&4096)!=0;
-}
-float4 ps(V v):SV_Target{
- float2 originalUv=saturate(v.uv+pan/float2(sw,sh));
- bool protect=protectedPixel(originalUv);
- float2 uv=v.uv;if(mode>=4&&curvature>0){float2 p=uv*2-1;p*=1+curvature*.04*dot(p,p);uv=p*.5+.5;if(any(uv<0)||any(uv>1))return float4(0,0,0,1);}
- uv=saturate(uv+pan/float2(sw,sh));
- float3 rgb=sampleImage(uv);
- if(!protect && chromatic>0){
-  float edge=smoothstep(.26,.70,length(v.uv-.5));
-  float shift=chromatic*1.45*edge/max(sw,1);
-  rgb.r=sampleImage(saturate(uv+float2(shift,0))).r;
-  rgb.b=sampleImage(saturate(uv-float2(shift,0))).b;
- }
- if(mode>=4&&mode<=7){
-  float3 neighbors=(sampleImage(uv+float2(1/sw,0))+sampleImage(uv-float2(1/sw,0))+sampleImage(uv+float2(0,1/sh))+sampleImage(uv-float2(0,1/sh)))*.25;
-  rgb=saturate(rgb+(rgb-neighbors)*sharpen*.2);
-  if(glow>0){float3 bloom=0;[unroll]for(int y=-2;y<=2;y++)[unroll]for(int x=-2;x<=2;x++){float3 c=sampleImage(uv+float2(x/sw,y/sh));bloom+=max(0,c-.55);}rgb+=bloom*glow*.018;}
- }
- if(mode==3){float scan=1-.45*(1-sin(3.14159265*frac(uv.y*sh)));int phosphor=int(v.p.x)%3;rgb*=scan*float3(phosphor==0?1:.8,phosphor==1?1:.8,phosphor==2?1:.8);}
- float edgeDistance=min(min(v.uv.x,v.uv.y),min(1-v.uv.x,1-v.uv.y));
- if(!protect){
-  rgb*=1-vignette*.42*(1-smoothstep(0,.24,edgeDistance));
-  rgb=lerp(rgb,float3(1,.96,.82),hitFlash*.22);
- }
- return float4(saturate(rgb),1);
-}
-float4 overlayPS(V v):SV_Target {float3 c=overlay.Load(int3(int2(v.p.xy),0)).rgb;if(all(abs(c-float3(1,0,1))<.001))discard;return float4(c,1);}
-)DISPLAY";
 struct F4{float x,y,z,w;};
+struct CinemaParams{F4 floor,grade,boss,death;float pulse;unsigned quality,mood,pad;};
 struct Params{uint32_t width,height,casterCount,fixtureCount,tracing,tileWidth,sourceMode,pad;float dt;uint32_t reset,mask,spawns;EffectSpawn commands[256];
  int floorX,floorY,panX,panY;float brassDt;unsigned clearBrass,foregroundCount,hudCount;
  F4 foreground[96]; RoomLamp fixtures[6]; ShadowCaster casters[420];HudRect hud[420];F4 bounds,gates;HudRect solids[420];unsigned tick,flowCount,visualLevels,roomMood;F4 vent,flowEvents[64];HudRect floorRect;int hudBanks[420];
- F4 cinemaGrade,cinemaAudio,cinemaBoss,cinemaDeath;unsigned cinemaFlags[4];};
+ CinemaParams cinema,previousCinema;unsigned floorPan,padding[3];};
 struct Display{float sw,sh,dw,dh;uint32_t mode;float glow,sharpen,curvature,dx,dy,pad[2];float hitFlash,vignette,chromatic,padding2;uint32_t sourceMode,pad3[3];};
 struct CombatGlyphGpu {float x,y,dx,dy,strength;uint32_t kind,family,color;};
 struct CombatParamsGpu {uint32_t count,tileWidth,tileCapacity,padding;};
@@ -93,6 +40,7 @@ struct CombatParamsGpu {uint32_t count,tileWidth,tileCapacity,padding;};
 struct ResidentEffects::Impl {
  ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> ctx;
  DxrLighting hardware;
+ RoomLightRig roomLighting;
  std::array<ComPtr<ID3D11ComputeShader>,8> cs;
  ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps,overlayPS;
  ComPtr<ID3D11Buffer> constants,displayConstants,combatConstants,pool,tiles,lights,cursors,combatGlyphs,combatTiles;
@@ -105,6 +53,10 @@ struct ResidentEffects::Impl {
  int indexWidth{},indexHeight{};
  // Sprite pixels for ray-traced billboard silhouettes, one bit per light-map pixel.
  std::vector<uint32_t> coverageBits;bool coverageValid{};
+ ComPtr<ID3D11Texture2D> shadowlessIndices;
+ ComPtr<ID3D11ShaderResourceView> shadowlessSRV;
+ bool hasShadowlessFrame{}, usesShadowlessFrame{};
+ std::vector<uint16_t> softenedIndices;
  // Room-space coverage survives transient particle resets and presentation resizes.
  ComPtr<ID3D11Texture2D> floorTexture,stainTexture;
  ComPtr<ID3D11Texture2D> bodyTexture;
@@ -153,11 +105,14 @@ struct ResidentEffects::Impl {
   D3D_FEATURE_LEVEL level;check(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,&level,&ctx),"Hardware D3D11");
   if(level<D3D_FEATURE_LEVEL_11_0)throw std::runtime_error("Feature level 11 required");
   ComPtr<IDXGIDevice> dx;device.As(&dx);ComPtr<IDXGIAdapter> ad;dx->GetAdapter(&ad);DXGI_ADAPTER_DESC desc{};ad->GetDesc(&desc);char text[256];WideCharToMultiByte(CP_UTF8,0,desc.Description,-1,text,sizeof(text),nullptr,nullptr);name=text;
-  const char* entries[]={"integrate","spawn","binParticles","composite","markHud","markReceiver","stepSmoke","stampBodies"};
-  for(int i=0;i<cs.size();i++){ComPtr<ID3DBlob> code,errors;HRESULT h=D3DCompile(effectsShader,strlen(effectsShader),"resident_effects",nullptr,nullptr,entries[i],"cs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);if(FAILED(h))throw std::runtime_error(errors?std::string((char*)errors->GetBufferPointer(),errors->GetBufferSize()):entries[i]);check(device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&cs[i]),entries[i]);}
-  for(auto entry:{"vs","ps","overlayPS"}){ComPtr<ID3DBlob> code,errors;HRESULT h=D3DCompile(displayShader,strlen(displayShader),"display",nullptr,nullptr,entry,entry[0]=='v'?"vs_5_0":"ps_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&errors);if(FAILED(h))throw std::runtime_error((char*)errors->GetBufferPointer());
-   if(entry[0]=='v')check(device->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&vs),entry);
-   else check(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,entry[0]=='p'?&ps:&overlayPS),entry);}
+  static_assert(std::size(resident_shader::compute) == std::tuple_size_v<decltype(cs)>);
+  for(size_t i=0;i<cs.size();++i){
+   const auto& shader=resident_shader::compute[i];
+   check(device->CreateComputeShader(shader.data,shader.size,nullptr,&cs[i]),shader.name);
+  }
+  check(device->CreateVertexShader(resident_shader::vs,sizeof(resident_shader::vs),nullptr,&vs),"vs");
+  check(device->CreatePixelShader(resident_shader::ps,sizeof(resident_shader::ps),nullptr,&ps),"ps");
+  check(device->CreatePixelShader(resident_shader::overlayPS,sizeof(resident_shader::overlayPS),nullptr,&overlayPS),"overlayPS");
   D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(Params);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&constants),"params");b.ByteWidth=sizeof(Display);check(device->CreateBuffer(&b,nullptr,&displayConstants),"display params");b.ByteWidth=sizeof(CombatParamsGpu);check(device->CreateBuffer(&b,nullptr,&combatConstants),"combat params");
   structured(1696,64,pool,poolSRV,poolUAV);structured(65,16,lights,lightSRV,lightUAV);
   {ComPtr<ID3D11UnorderedAccessView> unused;
@@ -191,9 +146,50 @@ struct ResidentEffects::Impl {
   texture(w,h,format,D3D11_BIND_SHADER_RESOURCE,tex);
   check(device->CreateShaderResourceView(tex.Get(),nullptr,view.ReleaseAndGetAddressOf()),"arcade source SRV");
  }
+ std::span<const uint16_t> softenTankShadows(std::span<const uint16_t> pixels,int stride,int w,int h,
+                                            std::span<const TankShadow> shadows){
+  softenedIndices.resize(size_t(w)*h);
+  for(int y=0;y<h;++y)
+   std::copy_n(pixels.data()+size_t(y)*stride,w,softenedIndices.data()+size_t(y)*w);
+  for(const auto& shadow:shadows){
+   const int left=std::max(shadow.x,0),right=std::min(shadow.x+shadow.w,w);
+   const int top=std::max(shadow.y,25),bottom=std::min(shadow.y+shadow.h,h);
+   const uint16_t ink=0x1000|shadow.pen;
+   // Compare the visible pen and sprite bit independently of HUD ownership.
+   const auto at=[&](int x,int y){return uint16_t(pixels[size_t(y)*stride+x]&0x1fff);};
+   for(int y=top;y<bottom;++y)for(int x=left;x<right;++x){
+    const uint16_t center=at(x,y);
+    if((center&0x1000) && center!=ink)continue;
+    unsigned dots=0,ground=0;
+    uint16_t floorPen=0;
+    // Read only the displayed frame, including when smoke or a blast obscures
+    // part of the shadow. Never borrow an adjacent foreground sprite's pen.
+    for(const auto& [dx,dy]:std::array<std::pair<int,int>,4>{{{-1,0},{1,0},{0,-1},{0,1}}}){
+     const int nx=x+dx,ny=y+dy;
+     if(nx<left || nx>=right || ny<top || ny>=bottom)continue;
+     const auto neighbor=at(nx,ny);
+     if(neighbor==ink)++dots;
+     if(!(neighbor&0x1000)){
+      if(!ground)floorPen=neighbor&0x0fff;
+      ++ground;
+     }
+    }
+    if(center==ink && ground>=2 && dots==0){
+     bool diagonalDot=false;
+     for(int ny=y-1;ny<=y+1;ny+=2)for(int nx=x-1;nx<=x+1;nx+=2)
+      if(nx>=left && nx<right && ny>=top && ny<bottom && at(nx,ny)==ink)diagonalDot=true;
+     if(diagonalDot)softenedIndices[size_t(y)*w+x]=0x2000|floorPen;
+    }else if(!(center&0x1000) && dots>=2)
+     softenedIndices[size_t(y)*w+x]=0x2000|center;
+   }
+  }
+  return softenedIndices;
+ }
  void updateArcade(std::span<const uint16_t> pixels,int stride,int w,int h,std::span<const uint32_t> pens,
-                   bool wide,bool title,const EffectPacket& packet,const PcSettings& s,bool coverage){
-  if(w<32||w>1024||h<32||h>512||stride<w||pixels.size()<size_t(h-1)*stride+w||pens.size()!=4096)
+                   bool wide,bool title,const EffectPacket& packet,const PcSettings& s,bool coverage,
+                   std::span<const uint16_t> withoutBlobs){
+  if(w<32||w>1024||h<32||h>512||stride<w||pixels.size()<size_t(h-1)*stride+w||pens.size()!=4096||
+     (!withoutBlobs.empty() && withoutBlobs.size()<size_t(h-1)*stride+w))
    throw std::runtime_error("Invalid indexed arcade frame");
   const bool padded=wide&&w==410&&h==256;
   init();resizeSource(padded?547:w,h);unbind();
@@ -203,27 +199,41 @@ struct ResidentEffects::Impl {
   pixelCoverage=coverage;sourceMode=padded?2:1;
   if(w!=indexWidth||h!=indexHeight){
    createSource(w,h,DXGI_FORMAT_R16_UINT,indices,indicesSRV);
+   shadowlessIndices.Reset();shadowlessSRV.Reset();
    indexWidth=w;indexHeight=h;
   }
+  hasShadowlessFrame=!withoutBlobs.empty();
+  if(hasShadowlessFrame && !shadowlessSRV)
+   createSource(w,h,DXGI_FORMAT_R16_UINT,shadowlessIndices,shadowlessSRV);
   if(!paletteSRV)createSource(4096,1,DXGI_FORMAT_R32_UINT,palette,paletteSRV);
-  coverageValid=coverage && s.hardware_rt;
+  const bool tankShadows=coverage && !packet.tankShadows.empty();
+  const bool soften=tankShadows && (s.enhance || s.hardware_rt || s.room_cinema);
+  if(soften){
+   pixels=softenTankShadows(pixels,stride,w,h,packet.tankShadows);
+  }
+  const int sourceStride=soften?w:stride;
+  ctx->UpdateSubresource(indices.Get(),0,nullptr,pixels.data(),sourceStride*2,0);
+  if(hasShadowlessFrame)
+   ctx->UpdateSubresource(shadowlessIndices.Get(),0,nullptr,withoutBlobs.data(),stride*2,0);
+  coverageValid=coverage && (s.hardware_rt || hasShadowlessFrame);
   if(coverageValid){
    // Bit coverage followed by packed displayed palette owners (four bytes per
    // word). A neighbouring sprite must not borrow another object's silhouette.
    const int shift=padded?68:0;coverageBits.assign(size_t(h)*(32+256),0);
-   for(int y=0;y<h;++y){const uint16_t* row=pixels.data()+size_t(y)*stride;uint32_t* bits=coverageBits.data()+size_t(y)*32;
+   const auto source=hasShadowlessFrame?withoutBlobs:pixels;
+   const int coverageStride=hasShadowlessFrame?stride:sourceStride;
+   for(int y=0;y<h;++y){const uint16_t* row=source.data()+size_t(y)*coverageStride;uint32_t* bits=coverageBits.data()+size_t(y)*32;
     uint32_t* owners=coverageBits.data()+size_t(h)*32+size_t(y)*256;
     for(int x=0;x<w;++x)if(row[x]&4096){const int at=x+shift;if(at<1024){
      bits[at>>5]|=1u<<(at&31);owners[at>>2]|=(1u+((row[x]&4032u)>>6))<<((at&3)*8);
     }}}
   }
-  ctx->UpdateSubresource(indices.Get(),0,nullptr,pixels.data(),stride*2,0);
   ctx->UpdateSubresource(palette.Get(),0,nullptr,pens.data(),4096*4,0);
   compose(packet,s);
  }
  void update(std::span<const uint32_t> pixels,int w,int h,const EffectPacket& packet,const PcSettings& s){
   if(w<32||h<32||w>1024||h>512||pixels.size()!=size_t(w)*h)throw std::runtime_error("Invalid resident source size");init();resizeSource(w,h);unbind();
-  pixelCoverage=false;sourceMode=0;coverageValid=false;
+  pixelCoverage=false;sourceMode=0;coverageValid=false;hasShadowlessFrame=false;
   ctx->UpdateSubresource(input.Get(),0,nullptr,pixels.data(),w*4,0);
   compose(packet,s);
  }
@@ -232,14 +242,25 @@ struct ResidentEffects::Impl {
   const auto& floor=packet.geometry.floor;
   // WAVE can change before SET_WAVE moves the camera or updates WAVEYX.
   const bool oldOrigin=floor.w>0 && floor.x+x==worldFloor.x && floor.y+y==worldFloor.y;
-  const bool same=inArena && packet.in_arena && packet.frame>=floorFrame &&
-      (packet.roomIntro || oldOrigin || floorRoom==packet.room);
-  if(same && packet.roomIntro){
+  const bool continuous=inArena && packet.in_arena && packet.frame>=floorFrame;
+  const int aperture=sourceMode==2 ? sw-137 : sw;
+  const bool outgoingVisible=worldFloor.w>0 &&
+      worldFloor.x+worldFloor.w+30>x && worldFloor.x-30<x+aperture &&
+      worldFloor.y+worldFloor.h+15>y && worldFloor.y-44<y+sh;
+  const bool departing=packet.roomIntro || floorRoom!=packet.room;
+  p.floorPan=continuous && departing && outgoingVisible && (packet.roomIntro || floor.w>0);
+  const bool same=continuous && (p.floorPan || oldOrigin || !departing);
+  if(p.floorPan){
    p.floorRect=worldFloor;p.floorRect.x-=x;p.floorRect.y-=y;
   }else if(floor.w>0){
    worldFloor=floor;worldFloor.x+=x;worldFloor.y+=y;
+  }else if(!same){
+   worldFloor={};
   }
   p.clearBrass=!same;
+  // Intro resets clear gameplay transients. Keep the visible outgoing effect
+  // pools and atlas until the camera has carried the room out of the aperture.
+  p.reset=(inArena && !same) || (p.reset && !p.floorPan);
   if(!same){floorTexture.Reset();floorSRV.Reset();floorUAV.Reset();stainTexture.Reset();stainSRV.Reset();stainUAV.Reset();}
   if(!same){bodyTexture.Reset();bodySRV.Reset();bodyUAV.Reset();pendingBodies.clear();}
   if(same){p.panX=cameraX-x;p.panY=cameraY-y;p.brassDt=float(std::min<uint64_t>(packet.frame-floorFrame,8))*.01827925f;}
@@ -275,7 +296,7 @@ struct ResidentEffects::Impl {
    }
   }
   inArena=packet.in_arena;
-  if(!same || (!packet.roomIntro && !oldOrigin))floorRoom=packet.room;floorFrame=packet.frame;cameraX=x;cameraY=y;
+  if(!p.floorPan && (!same || !oldOrigin))floorRoom=packet.room;floorFrame=packet.frame;cameraX=x;cameraY=y;
  }
  void stampBodies(const EffectPacket& packet,bool fresh){
   if(fresh)pendingBodies.insert(pendingBodies.end(),packet.remains.begin(),packet.remains.end());
@@ -302,37 +323,46 @@ struct ResidentEffects::Impl {
   p.dt=fresh?packet.dt:0;p.reset=fresh&&packet.reset;p.mask=s.enhance?((s.particles?1:0)|(s.blood?2:0)|(s.debris?4:0)|(s.smoke?8:0)|(s.fire?16:0)|(s.voxels?32:0)|arena_effect_mask(s)|environment_effect_mask(s)):0;
   p.visualLevels=s.enhance?environment_levels(s):0;
   p.roomMood=unsigned(room_theme(packet.room))|((packet.room&0xffffu)<<8);
-  if(packet.cinema.quality && packet.in_arena)p.mask|=RoomCinemaEffectMask;
-  const unsigned cinemaQuality=std::min(packet.cinema.quality,RoomCinemaQualityHigh);
-  p.cinemaFlags[0]=cinemaQuality;
-  const auto tint=room_cinema_tint(packet.room);
-  const float tintStrength=float(cinemaQuality)*.025f+
-      std::max(std::max(packet.cinema.bossIntro,packet.cinema.bossPower),packet.cinema.deathPower)*
-      .06f*float(cinemaQuality);
-  p.cinemaGrade={1.f+(tint[0]-1.f)*tintStrength,
-                 1.f+(tint[1]-1.f)*tintStrength,
-                 1.f+(tint[2]-1.f)*tintStrength,
-                 tintStrength};
-  p.cinemaAudio={packet.cinema.audioPulse,float(cinemaQuality),0,0};
-  const float cinemaOffset=sourceMode==2?68.f:0.f;
-  const float bossX=packet.cinema.bossX ? packet.cinema.bossX :
-      packet.geometry.floor.x+packet.geometry.floor.w*.5f;
-  const float bossY=packet.cinema.bossY ? packet.cinema.bossY :
-      packet.geometry.floor.y+packet.geometry.floor.h*.35f;
-  p.cinemaBoss={bossX+cinemaOffset,bossY,
-                packet.cinema.bossIntro+packet.cinema.bossPower,packet.cinema.bossPhase};
-  p.cinemaDeath={packet.cinema.deathX+cinemaOffset,packet.cinema.deathY,
-                 packet.cinema.deathPower,packet.cinema.deathRadius};
+  const int lightOffset=sourceMode==2?68:0;
+  LightingFrame lighting;
+  if(packet.in_arena && packet.geometry.floor.w>0 && packet.geometry.floor.h>0) {
+   lighting=roomLighting.build(packet,w,lightOffset);
+   auto cinemaParams=[](const RoomLightingLook& look,const std::array<float,4>& floor) {
+    const auto& cue=look.cinema;
+    const auto quality=std::min(cue.quality,RoomCinemaQualityHigh);
+    const auto tint=room_cinema_tint(look.room);
+    const float strength=float(quality)*(.025f+.06f*std::max({cue.bossIntro,cue.bossPower,cue.deathPower}));
+    return CinemaParams{{floor[0],floor[1],floor[2],floor[3]},
+      {1.f+(tint[0]-1.f)*strength,1.f+(tint[1]-1.f)*strength,1.f+(tint[2]-1.f)*strength,strength},
+      {cue.bossX,cue.bossY,cue.bossIntro+cue.bossPower,cue.bossPhase},
+      {cue.deathX,cue.deathY,cue.deathPower,cue.deathRadius},cue.audioPulse,quality,
+      unsigned(room_theme(look.room))|((look.room&0xffffu)<<8),0};
+   };
+   p.cinema=cinemaParams(lighting.look,lighting.floor);
+   if(lighting.previousVisible)p.previousCinema=cinemaParams(lighting.previousLook,lighting.previousFloor);
+   if(p.cinema.quality || p.previousCinema.quality)p.mask|=RoomCinemaEffectMask;
+   p.roomMood=p.cinema.mood;
+  } else if(!packet.in_arena) {
+   roomLighting.reset();
+  }
   ID3D11ShaderResourceView* dxr=nullptr;
   // Every arena room, its entry pan and room-to-room scrolls (room_lighting.cpp).
-  if(s.hardware_rt && packet.in_arena && packet.geometry.floor.w>0 &&
+  if(s.hardware_rt && lighting.floor[2]>0 &&
      hardware.prepare(device.Get(),ctx.Get())){
-      dxr=hardware.render(packet,w,h,sourceMode==2?68:0,
+      dxr=hardware.render(packet,std::move(lighting),w,h,lightOffset,
                           coverageValid?std::span<const uint32_t>(coverageBits):std::span<const uint32_t>());
       if(dxr)p.mask|=HardwareRayTracingEffectMask;
   }
+  if(s.hardware_rt){
+   p.mask&=~(1u<<24);
+   p.visualLevels&=~(3u<<4);
+  }
+  usesShadowlessFrame=s.hardware_rt && hasShadowlessFrame;
+  auto* arcadeIndices=usesShadowlessFrame?shadowlessSRV.Get():indicesSRV.Get();
   p.spawns=fresh&&s.enhance?unsigned(std::min(packet.spawns.size(),size_t(256))):0;
   std::copy_n(packet.spawns.begin(),p.spawns,p.commands);
+  if(sourceMode==2)for(unsigned i=0;i<p.spawns;++i)
+   if(p.commands[i].kind==10)p.commands[i].x+=68; // centered native aperture
   p.tick=unsigned(packet.frame);
   if(packet.in_arena && packet.studio.mountY!=0)p.vent={packet.studio.mountX-sw*.5f+66+(sourceMode==2?68.f:0.f),packet.studio.mountY+155,1,0};
   if(p.mask&(2048|32768|65536|(1u<<24))){
@@ -344,7 +374,8 @@ struct ResidentEffects::Impl {
    for(unsigned i=0;i<p.hudCount;++i){
     p.hud[i]=packet.hud[i];
     const auto& hud=packet.hud[i];
-    p.hudBanks[i]=hud.backdrop && hud.paletteBank>=0 ? -2-hud.paletteBank : hud.paletteBank;
+    const int bank=hud.paletteBank+(hud.scorePanel && hud.paletteBank>=0 ? 4096 : 0);
+    p.hudBanks[i]=hud.backdrop && bank>=0 ? -2-bank : bank;
    }
   }
   const auto& geo=packet.geometry;
@@ -355,7 +386,7 @@ struct ResidentEffects::Impl {
   if(p.mask&65536)for(unsigned i=0;i<p.spawns && p.flowCount<32;i++){
    auto c=p.commands[i];unsigned kind=unsigned(c.kind);
    if(kind!=15 && kind!=3 && kind!=13 && kind!=17)continue;
-   p.flowEvents[2*p.flowCount]={c.x,c.y,c.radius,c.power};
+   p.flowEvents[2*p.flowCount]={c.x+(sourceMode==2?68.f:0.f),c.y,c.radius,c.power};
    p.flowEvents[2*p.flowCount+1]={float(kind),c.pad0,c.pad1,0};++p.flowCount;
   }
   prepareBrass(packet,p);
@@ -395,7 +426,7 @@ struct ResidentEffects::Impl {
     const float kindScale=event.kind==WeaponFxKind::Muzzle?signature.muzzle:
                           event.kind==WeaponFxKind::Wake?signature.wake:
                           event.kind==WeaponFxKind::Impact?signature.impact:signature.ricochet;
-    addGlyph(event.x,event.y,event.dx,event.dy,event.strength*kindScale*signatureLevel,
+    addGlyph(event.x+(event.kind==WeaponFxKind::Muzzle?lightOffset:0),event.y,event.dx,event.dy,event.strength*kindScale*signatureLevel,
              uint32_t(event.kind),family);
    }
   }
@@ -440,28 +471,30 @@ struct ResidentEffects::Impl {
     check(device->CreateShaderResourceView(tex.Get(),nullptr,&flowSRV[i]),"smoke SRV");check(device->CreateUnorderedAccessView(tex.Get(),nullptr,&flowUAV[i]),"smoke UAV");
    }
    if(!flowActive || p.reset || p.clearBrass){constexpr float zero[4]{};ctx->ClearUnorderedAccessViewFloat(flowUAV[flowRead].Get(),zero);}
-   if(fresh && (p.dt>0 || p.flowCount)){
+   if(fresh && (p.dt>0 || p.flowCount || (p.floorPan && (p.panX || p.panY)))){
     auto src=flowSRV[flowRead].Get();auto dst=flowUAV[flowRead^1].Get();auto linear=sampler.Get();
     ctx->CSSetSamplers(0,1,&linear);ctx->CSSetShaderResources(13,1,&src);ctx->CSSetUnorderedAccessViews(0,1,&dst,nullptr);
     ctx->CSSetShader(cs[6].Get(),nullptr,0);ctx->Dispatch((w+31)/32,(h+31)/32,1);unbind();flowRead^=1;
    }
    flowActive=true;
   }else flowActive=false;
+  // The display pass also reads this mask on frames with no HUD or casters.
+  constexpr UINT zeroMask[4]{};
+  ctx->ClearUnorderedAccessViewUint(shadowUAV.Get(),zeroMask);
   if(p.casterCount || p.hudCount){
-   constexpr UINT zero[4]{};ctx->ClearUnorderedAccessViewUint(shadowUAV.Get(),zero);
     auto targetMask=shadowUAV.Get();ctx->CSSetUnorderedAccessViews(7,1,&targetMask,nullptr);
-    ID3D11ShaderResourceView* casterInputs[]={lightSRV.Get(),indicesSRV.Get()};
+    ID3D11ShaderResourceView* casterInputs[]={lightSRV.Get(),arcadeIndices};
     ctx->CSSetShaderResources(4,2,casterInputs);
     if(p.hudCount){ctx->CSSetShader(cs[4].Get(),nullptr,0);ctx->Dispatch(p.hudCount,1,1);}
     if(p.casterCount){
-     ctx->ClearUnorderedAccessViewUint(receiverUAV.Get(),zero);
+     ctx->ClearUnorderedAccessViewUint(receiverUAV.Get(),zeroMask);
      auto write=receiverUAV.Get();ctx->CSSetUnorderedAccessViews(0,1,&write,nullptr);
      ctx->CSSetShader(cs[5].Get(),nullptr,0);ctx->Dispatch(p.casterCount,1,1);
 
     }
     unbind();
   }
-  ID3D11ShaderResourceView* srvs[]={inputSRV.Get(),nullptr,tileSRV.Get(),poolSRV.Get(),lightSRV.Get(),indicesSRV.Get(),paletteSRV.Get(),nullptr,floorSRV.Get(),shadowSRV.Get(),nullptr,receiverSRV.Get(),stainSRV.Get(),flowActive?flowSRV[flowRead].Get():nullptr};auto linear=sampler.Get();ctx->CSSetSamplers(0,1,&linear);ctx->CSSetShaderResources(0,14,srvs);
+  ID3D11ShaderResourceView* srvs[]={inputSRV.Get(),nullptr,tileSRV.Get(),poolSRV.Get(),lightSRV.Get(),arcadeIndices,paletteSRV.Get(),nullptr,floorSRV.Get(),shadowSRV.Get(),nullptr,receiverSRV.Get(),stainSRV.Get(),flowActive?flowSRV[flowRead].Get():nullptr};auto linear=sampler.Get();ctx->CSSetSamplers(0,1,&linear);ctx->CSSetShaderResources(0,14,srvs);
   auto combatSrv=combatGlyphSRV.Get();ctx->CSSetShaderResources(16,1,&combatSrv);
   auto combatTileSrv=combatTileSRV.Get();ctx->CSSetShaderResources(17,1,&combatTileSrv);
   auto combatBuffer=combatConstants.Get();ctx->CSSetConstantBuffers(2,1,&combatBuffer);
@@ -493,7 +526,7 @@ struct ResidentEffects::Impl {
   d.sourceMode=sourceMode;
   ctx->UpdateSubresource(displayConstants.Get(),0,nullptr,&d,0,0);auto cb=displayConstants.Get();ctx->PSSetConstantBuffers(1,1,&cb);
   auto srv=outputSRV.Get();ctx->PSSetShaderResources(0,1,&srv);auto filtered=s.filter==9?postSRV.Get():filteredSRV.Get();ctx->PSSetShaderResources(2,1,&filtered);
-  ID3D11ShaderResourceView* protectedSources[]={indicesSRV.Get(),shadowSRV.Get()};
+  ID3D11ShaderResourceView* protectedSources[]={usesShadowlessFrame?shadowlessSRV.Get():indicesSRV.Get(),shadowSRV.Get()};
   ctx->PSSetShaderResources(3,2,protectedSources);
   auto sam=sampler.Get();ctx->PSSetSamplers(0,1,&sam);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(ps.Get(),nullptr,0);ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);ctx->Draw(3,0);unbind();
  }
@@ -552,8 +585,9 @@ bool ResidentEffects::prepare_dxr(){return prepare() && impl_->hardware.prepare(
 bool ResidentEffects::prepare(){STV_RESIDENT_TRY(impl_->init())}
 bool ResidentEffects::update(std::span<const uint32_t> p,int w,int h,const EffectPacket& packet,const PcSettings& s){STV_RESIDENT_TRY(impl_->update(p,w,h,packet,s))}
 bool ResidentEffects::update_arcade(std::span<const uint16_t> pixels,int stride,int w,int h,std::span<const uint32_t> pens,
-                                    bool wide,bool title,const EffectPacket& packet,const PcSettings& s,bool coverage){
- STV_RESIDENT_TRY(impl_->updateArcade(pixels,stride,w,h,pens,wide,title,packet,s,coverage))
+                                    bool wide,bool title,const EffectPacket& packet,const PcSettings& s,bool coverage,
+                                    std::span<const uint16_t> withoutBlobs){
+ STV_RESIDENT_TRY(impl_->updateArcade(pixels,stride,w,h,pens,wide,title,packet,s,coverage,withoutBlobs))
 }
 bool ResidentEffects::recompose(const EffectPacket& packet,const PcSettings& s){STV_RESIDENT_TRY(impl_->compose(packet,s))}
 bool ResidentEffects::draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings& s,bool overlay,bool one_shot,float dx,float dy){STV_RESIDENT_TRY(impl_->draw((HWND)window,cw,ch,x,y,w,h,s,overlay,one_shot,dx,dy))}

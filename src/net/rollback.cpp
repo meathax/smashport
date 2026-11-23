@@ -15,14 +15,16 @@ namespace stv::net {
 using stv::gsp::Machine;
 
 void apply_inputs(Machine& m, PlayerInput p1, PlayerInput p2) {
-    const u16 in0 = u16((p1 & 0xff) | ((p2 & 0xff) << 8));
+    u16 in0 = u16((p1 & 0xff) | ((p2 & 0xff) << 8));
     u16 in1 = 0;
     if (p1 & 0x100) in1 |= 0x0001;   // coin 1
     if (p2 & 0x100) in1 |= 0x0002;   // coin 2
     if (p1 & 0x200) in1 |= 0x0004;   // start 1
     if (p2 & 0x200) in1 |= 0x0020;   // start 2
     if (m.enhanced) {
-        m.move_inputs = {u16(p1>>16),u16(p2>>16)};
+        const u8 first = m.dash_input(0,u8(p1),u16(p1>>16));
+        const u8 second = m.dash_input(1,u8(p2),u16(p2>>16));
+        in0 = u16(first | (u16(second)<<8));
         m.aim_inputs = {u16(p1 & 0xfcf0),u16(p2 & 0xfcf0)};
     } else {
         m.move_inputs = {};
@@ -62,7 +64,7 @@ bool load_scripted_inputs(const std::string& path, u32 frames, std::vector<Playe
 
 FrameRunner::FrameRunner(Machine& m) : m_(m) {
     m_.on_vblank = [this] {
-        apply_inputs(m_, next_p1_, next_p2_);
+        if (!already_sampled_) apply_inputs(m_, next_p1_, next_p2_);
         at_vblank_ = true;
         m_.run_until_cycle = m_.c.cyc;   // l8_run returns at the next instruction boundary
         m_.recompute_next_event();
@@ -76,7 +78,8 @@ void FrameRunner::start() {
     frame_ = 0;
 }
 
-void FrameRunner::step(PlayerInput p1, PlayerInput p2) {
+void FrameRunner::step(PlayerInput p1, PlayerInput p2, bool already_sampled) {
+    already_sampled_ = already_sampled;
     next_p1_ = p1, next_p2_ = p2;
     at_vblank_ = false;
     sound_.clear();

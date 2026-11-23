@@ -50,6 +50,7 @@
 #include "stv/host/firing_point.hpp"
 #include "stv/host/drop_player.hpp"
 #include "stv/host/audio_fx.hpp"
+#include "stv/host/dash_audio.hpp"
 #include "stv/host/room_cinema.hpp"
 #include "stv/snd/voices.hpp"
 #include <algorithm>
@@ -81,6 +82,7 @@ std::unique_ptr<stv::snd::Mixer> g_mixer;
 stv::host::AudioOut g_audio;
 stv::host::AudioTelemetry g_audio_telemetry;
 std::vector<float> g_pcm;
+stv::host::DashAudio g_dash_audio;
 stv::host::AudioPeakObserver g_audio_peaks;
 // Enhanced sound output (presentation only; g_pcm stays the retail board PCM).
 stv::snd::VoiceBank g_voices;
@@ -207,7 +209,7 @@ bool g_keyboard_blocked = false;
 static_assert(ACTION_COUNT == stv::host::PadBindings::Count);
 stv::host::PadBindings g_pad_bindings;
 stv::host::PadRouter g_pad_router;
-stv::host::FireStartRouter g_fire_start;
+stv::host::ConfirmStartRouter g_confirm_start;
 int g_deadzone = 12000;
 bool g_pad_controls = false, g_pad_capture = false;
 int g_pad_player = 0, g_pad_selection = 0;
@@ -244,6 +246,7 @@ std::vector<u16> g_room_boot_cmos;
 std::optional<bool> g_host_mode;
 bool g_host_booting = false, g_start_together = false;
 struct RoomInputs { u32 p1, p2; u16 frames; std::optional<u16> local_switches; };
+std::array<u32,2> g_sampled_controls{};
 u32 g_room_frames = 0;
 std::vector<RoomInputs> g_room_history;
 void record_room_frame(u32 p1, u32 p2, std::optional<u16> local_switches = {}) {
@@ -258,12 +261,7 @@ void record_room_frame(u32 p1, u32 p2, std::optional<u16> local_switches = {}) {
 // original edge when reconstructing an already-running solo or couch game.
 void record_local_frame() {
     if (!g_record_local) return;
-    const u16 controls = ~g_m.ports[0], switches = ~g_m.ports[1];
-    const u32 p1 = (u32(g_m.move_inputs[0]) << 16) | g_m.aim_inputs[0] | (controls & 255) |
-        ((switches & 1) ? 0x100 : 0) | ((switches & 4) ? 0x200 : 0);
-    const u32 p2 = (u32(g_m.move_inputs[1]) << 16) | g_m.aim_inputs[1] | (controls >> 8) |
-        ((switches & 2) ? 0x100 : 0) | ((switches & 32) ? 0x200 : 0);
-    record_room_frame(p1,p2,g_m.ports[1]);
+    record_room_frame(g_sampled_controls[0],g_sampled_controls[1],g_m.ports[1]);
 }
 
 std::string g_room_guest;
@@ -293,7 +291,7 @@ void sync_menu_input() {
     static bool previous_menu = false;
     if (previous_menu != g_menu) {
         g_keyboard_blocked = true;
-        g_fire_start.reset();
+        g_confirm_start.reset();
         previous_menu = g_menu;
         frontend_event(g_menu ? "menu_open" : "menu_closed");
     }
@@ -341,8 +339,8 @@ bool pad_state(DWORD slot, XINPUT_STATE& s) {
     return ok;
 }
 
-bool needs_arcade_start(int player);
-bool online_play();
+enum class StartContext { Other, Attract, Continue };
+StartContext start_context(int player);
 
 // Keyboard and pads as Y-unit IN0/IN1 bits (active high).
 void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
@@ -360,7 +358,10 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
             if (key(k[b])) mv |= u16(1 << b);
             if (key(k[4 + b])) fr |= u16(1 << b);
         }
-        const auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
+        auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
+        const bool dash_button = g_enhanced && g_settings.dash_enabled && s.connected &&
+                                 (s.buttons & stv::host::PadLT);
+        if (dash_button) s.buttons &= ~stv::host::PadLT;
         if (s.connected) {
             mv |= s.move;
             fr |= s.fire;
@@ -369,9 +370,6 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
                 if (g_pad_bindings.held(p * 8 + 4 + b, s)) fr |= u16(1 << b);
             }
             if (g_pad_bindings.held(COIN1 + p, s)) in1 |= p ? 0x0002 : 0x0001;
-            // A (the explicit arcade-confirm binding) also remains available in
-            // operator dialogs. Physical START is reserved and cannot bind here.
-            if (g_pad_bindings.held(START1 + p, s)) in1 |= p ? 0x0020 : 0x0004;
 
         }
         if (g_enhanced && angles && s.motion) {
@@ -387,15 +385,25 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
         }
         // Host-only input policy. The translated game still owns credits and admission.
         if (!g_enhanced) { mv = arcade_contacts(mv); fr = arcade_contacts(fr); }
-        const bool eligible=g_enhanced && !online_play() && needs_arcade_start(p);
-        const bool fire=fr!=0;
-        if(g_fire_start.update(p,fire,eligible)) in1 |= p ? 0x0020 : 0x0004;
+        const auto context = start_context(p);
+        const bool start_key = key(g_keys[START1 + p]);
+        const bool confirm = start_key || (s.connected && (s.buttons & stv::host::PadA));
+        const bool attract_fire = context == StartContext::Attract && g_enhanced && fr != 0;
+        const bool fresh_confirm = g_confirm_start.update(p, confirm || attract_fire, context != StartContext::Other);
+        const bool mapped_start = start_key || g_pad_bindings.held(START1 + p, s);
+        if (fresh_confirm || (context != StartContext::Continue && mapped_start))
+            in1 |= p ? 0x0020 : 0x0004;
+        if (g_enhanced && angles) {
+            mv = arcade_contacts(mv);
+            if (dash_button) {
+                if (!s.motion) (*angles)[p] |= u32(stv::gsp::digital_motion(mv)) << 16;
+                mv = 15; // Reserved impossible cabinet contact combination in enhanced samples.
+            }
+        }
         in0 |= u16((mv | (fr << 4)) << (p * 8));
     }
     if (key(g_keys[COIN1])) in1 |= 0x0001;
     if (key(g_keys[COIN2])) in1 |= 0x0002;
-    if (key(g_keys[START1])) in1 |= 0x0004;
-    if (key(g_keys[START2])) in1 |= 0x0020;
     if (key(VK_F2) || g_test_frames > 0) in1 |= 0x0010;   // test switch (operator menus)
     if (g_test_frames > 0) --g_test_frames;
     if (key('9')) in1 |= 0x0040;          // service credit
@@ -409,7 +417,8 @@ std::vector<stv::net::PlayerInput> g_script1, g_script2;
 // lockstep harness; the scheduler only stops at the end of its timeslice.
 void apply_script(u64 frame) {
     const bool in = frame < g_script1.size();
-    stv::net::apply_inputs(g_m, in ? g_script1[frame] : 0, in ? g_script2[frame] : 0);
+    g_sampled_controls = {in ? g_script1[frame] : 0, in ? g_script2[frame] : 0};
+    stv::net::apply_inputs(g_m,g_sampled_controls[0],g_sampled_controls[1]);
 }
 
 void sample_inputs() {
@@ -417,20 +426,20 @@ void sample_inputs() {
     u16 in0, in1;
     std::array<u32,2> angles{};
     read_controls(in0, in1, &angles);
-    g_m.move_inputs = {u16(angles[0]>>16),u16(angles[1]>>16)};
-    g_m.aim_inputs = g_enhanced ? std::array<u16,2>{u16(angles[0] | (in0 & 0xf0)), u16(angles[1] | ((in0 >> 8) & 0xf0))} : std::array<u16,2>{};
-    g_m.ports[0] = u16(~in0);
+    g_sampled_controls = {angles[0] | (in0 & 255u) | ((in1 & 1) ? 256u : 0) | ((in1 & 4) ? 512u : 0),
+                          angles[1] | (in0 >> 8) | ((in1 & 2) ? 256u : 0) | ((in1 & 32) ? 512u : 0)};
+    stv::net::apply_inputs(g_m,g_sampled_controls[0],g_sampled_controls[1]);
     g_m.ports[1] = u16(~in1);
 }
 
 // Online co-op: this PC's player uses the player 1 controls (keys and pad 1).
-stv::net::PlayerInput online_join_input(stv::net::PlayerInput input, u16 in0);
+stv::net::PlayerInput online_join_input(stv::net::PlayerInput input);
 stv::net::PlayerInput local_player_input() {
     u16 in0, in1;
     std::array<u32,2> angles{};
     read_controls(in0, in1, &angles);
     auto input = stv::net::PlayerInput(angles[0] | (in0 & 0xff) | (in1 & 0x1 ? 0x100 : 0) | (in1 & 0x4 ? 0x200 : 0));
-    input = online_join_input(input, in0);
+    input = online_join_input(input);
     return input;
 }
 
@@ -444,8 +453,10 @@ bool g_resident_ready = false;
 void build_software_frame(const Machine& m) {
     g_frame_width = stv::gsp::scene_view_width(m);
     g_pixels.resize(std::size_t(g_frame_width) * VIS_H);
+    const auto& frame=g_settings.hardware_rt && !m.presentation_without_blobs.empty()
+        ? m.presentation_without_blobs : (m.presentation_frame.empty() ? m.frame : m.presentation_frame);
     for (int y = 0; y < VIS_H; ++y) {
-        const u16* src = &m.frame[std::size_t(y + VIS_MINY) * m.vram_w + VIS_MINX];
+        const u16* src = &frame[std::size_t(y + VIS_MINY) * m.vram_w + VIS_MINX];
         u32* dst = &g_pixels[std::size_t(y) * g_frame_width];
         for (int x = 0; x < g_frame_width; ++x) dst[x] = m.pens[src[x] & 0x0fff];
     }
@@ -547,16 +558,22 @@ void present_frame(const Machine& m) {
         if (obj.kind != stv::host::EffectKind::Projectile && obj.kind != stv::host::EffectKind::EnemyShot) continue;
         float x = 0, y = 0;
         if (!stv::host::firing_point(m, obj, scene.camera_x, scene.camera_y, x, y)) continue;
+        obj.raster_muzzle=m.spawn_anchor[(obj.slot-object_pool_base)/object_stride].raster_muzzle;
         obj.barrel = true;
         obj.muzzle_x = x;
         obj.muzzle_y = y;
     }
+    scene.visible_muzzles=m.visible_muzzles;
     scene.remains=g_enemy_remains.take(scene.room);
     scene.impacts=g_enemy_remains.take_impacts(scene.room);
     g_enhance_effects.advance(scene, g_settings, g_audio_peaks.pulse());
-    const auto visible = std::span<const u16>(m.presentation_frame.empty()?m.frame:m.presentation_frame).subspan(std::size_t(VIS_MINY)*m.vram_w + VIS_MINX);
+    const auto start=std::size_t(VIS_MINY)*m.vram_w + VIS_MINX;
+    const auto visible=std::span<const u16>(m.presentation_frame.empty()?m.frame:m.presentation_frame).subspan(start);
+    auto without_blobs=std::span<const u16>(m.presentation_without_blobs);
+    if(!without_blobs.empty())without_blobs=without_blobs.subspan(start);
     g_resident_ready = g_wnd && g_resident_effects.update_arcade(visible, m.vram_w, width, VIS_H, m.pens,
-                                                                wide, title, g_enhance_effects.packet(), g_settings,!m.presentation_frame.empty());
+                                                                wide, title, g_enhance_effects.packet(), g_settings,
+                                                                !m.presentation_frame.empty(),without_blobs);
     if (!g_resident_ready) {
         build_software_frame(m);
         if (g_wnd) g_menu_status = "GPU effects: " + g_resident_effects.error();
@@ -690,7 +707,7 @@ const Machine& local_video_frame() {
 struct NetPlay {
     std::string contestant;
     // Drop-in: a coin and START for this PC's player until it is in play.
-    bool auto_join = false, joining = false, fire_held = false;
+    bool auto_join = false, joining = false, confirm_held = false;
     unsigned join_frame = 0;
     bool on = false, host = false;
     std::string peer;
@@ -724,28 +741,26 @@ struct NetPlay {
     std::vector<ResyncTraceRow> resync_trace;
 } g_net;
 
-bool online_play() { return g_net.on; }
-
-stv::net::PlayerInput online_join_input(stv::net::PlayerInput input, u16 in0) {
+stv::net::PlayerInput online_join_input(stv::net::PlayerInput input) {
     if (!g_net.on || !g_net.mr) return input;
     {
         // Online drop-in, exactly like an arcade player walking up: a coin and
-        // START for this PC's player. Automatic on joining, and on Fire after
+        // START for this PC's player. Automatic on joining, and on confirmation after
         // a game over. Retried until the game admits the player (a departing
         // player's continue countdown can briefly hold the slot).
         const int me = g_net.host ? 0 : 1;
         const bool active = stv::host::player_active(*g_net.mr, me);
-        const bool fire = (in0 & 0xf0) != 0;
+        const bool confirm = (input & 0x200) != 0;
         if (active && g_net.joining) {
             frontend_event("player_joined", unsigned(me + 1), std::to_string(g_net.join_frame));
             g_toast = me ? "PLAYER 2 - YOU'RE IN" : "PLAYER 1 - YOU'RE IN"; g_toast_until = GetTickCount64() + 2500;
         }
         if (active) g_net.joining = g_net.auto_join = false;
-        else if ((g_net.auto_join || (fire && !g_net.fire_held)) && !g_net.joining && !g_menu && !g_paused) {
+        else if ((g_net.auto_join || (confirm && !g_net.confirm_held)) && !g_net.joining && !g_menu && !g_paused) {
             g_net.joining = true; g_net.join_frame = 0; g_net.auto_join = false;
             g_toast = me ? "JOINING AS PLAYER 2..." : "JOINING AS PLAYER 1..."; g_toast_until = GetTickCount64() + 15000;
         }
-        g_net.fire_held = fire;
+        g_net.confirm_held = confirm;
         if (g_net.joining && !active) {
             const auto pulse = stv::host::join_pulse(g_net.join_frame % 120);
             if (pulse.coin) input |= 0x100;
@@ -854,6 +869,7 @@ void frontend_event(const char* event, std::uint64_t value, const std::string& d
 }
 
 void connect_machine_callbacks() {
+    g_dash_audio={};
     g_m.enable_sprite_coverage();
     g_camera = {};
     g_enemy_remains={};
@@ -1059,7 +1075,9 @@ void deliver_audio(bool to_device) {
     if (extended && !g_voices.running() && g_snd.fault.empty())
         ++g_voice_starts, g_voices.start(g_snd, *g_mixer, g_sched->base(), stv::snd::VoiceBank::kMaxEffectVoices);
     if (!extended && g_voices.running()) g_voices.stop();
-    if (!extended && !want.any()) {
+    const bool ramjet=g_dash_audio.observe(g_m.enhanced && g_m.dash[0].burst==Machine::DashState::burst_frames,
+                                           g_m.enhanced && g_m.dash[1].burst==Machine::DashState::burst_frames);
+    if (!extended && !want.any() && !ramjet) {
         if (to_device) g_audio.push(g_pcm.data(), g_pcm.size());
         return;
     }
@@ -1083,6 +1101,7 @@ void deliver_audio(bool to_device) {
         for (std::size_t i = 0; i < frames; ++i) g_stereo[2 * i] = g_stereo[2 * i + 1] = g_pcm[i];
     }
     g_fx.process(g_stereo.data(), frames);
+    if (ramjet) g_dash_audio.mix(g_stereo.data(),frames,2,g_mixer ? g_mixer->out_rate() : 48000);
     if (to_device) g_audio.push_stereo(g_stereo.data(), frames);
 }
 
@@ -1326,6 +1345,7 @@ bool net_connect(const std::filesystem::path& zip) {
             return false;
         }
     }
+    if (g_net.mr->enhanced) g_net.mr->enable_sprite_coverage();
     g_net.runner = std::make_unique<stv::net::FrameRunner>(*g_net.mr);
     g_net.runner->start();
     // Drop-in: start both machines from the host's live game.
@@ -1375,7 +1395,7 @@ bool net_connect(const std::filesystem::path& zip) {
                     g_m.ports[1] = agreed_cmos[i+6];
                 }
             }
-            g_net.runner->step(p1,p2);
+            g_net.runner->step(p1,p2,before);
             if (before) g_net.mr->ports[1] = agreed_cmos[i+6];
             if (!resume_host) {
                 run_one_frame();
@@ -1578,6 +1598,7 @@ stv::host::PcMenuContext menu_context() {
     context.reduce_shake = g_settings.reduce_shake;
     context.reduce_flashing = g_settings.reduce_flashing;
     context.reduce_motion = g_settings.reduce_motion;
+    context.set_available(stv::host::PcMenuItem::Dash, g_enhanced);
     context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
@@ -2344,11 +2365,14 @@ bool service_frontend_requests() {
     return true;
 }
 
-bool needs_arcade_start(int player) {
+StartContext start_context(int player) {
     const Machine& owner=g_net.on && g_net.mr ? *g_net.mr : g_m;
+    if (g_net.on && player == 0) player = g_net.host ? 0 : 1;
     const auto scene=game_scene_state(owner);
     const auto lives=owner.ram[((player ? 0x01086520u : 0x01086360u)-0x01000000u)>>4];
-    return scene==0x30 || ((scene==0x10 || scene==0x18 || scene==0x50) && lives==0);
+    if (scene == 0x30 && !g_net.on) return StartContext::Attract;
+    if ((scene == 0x10 || scene == 0x18 || scene == 0x50) && lives == 0) return StartContext::Continue;
+    return StartContext::Other;
 }
 
 std::string menu_value(stv::host::PcMenuItem item) {
@@ -2418,6 +2442,7 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::SoundChannels: return g_settings.extended_sound ? "Extended" : "Arcade";
     case I::Reverb: return g_settings.reverb == 2 ? "Arena" : g_settings.reverb == 1 ? "Studio" : "Off";
     case I::StereoWidth: return g_settings.audio_wide ? "Wide" : "Mono";
+    case I::Dash: return g_settings.dash_enabled ? "on" : "off";
     case I::HiFiAudio: return g_settings.audio_hifi ? "on" : "off";
     case I::SwapPads: return g_swap_pads ? "pad 1 -> P2, pad 2 -> P1" : "pad 1 -> P1, pad 2 -> P2";
     case I::StickDeadzone: return std::to_string((g_deadzone * 100 + 16383) / 32767) + "%";
@@ -2465,8 +2490,8 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::Brass: return "SPINNING CASINGS BOUNCE AND SETTLE";
     case I::Voxels: return "3D CUBE FRAGMENTS / COSMETIC PHYSICS";
     case I::CombatFeedback: return "MASTER LEVEL / PRESENTATION ONLY / LOW SAVES GPU WORK";
-    case I::CameraShake: return "IMPACT TRAUMA / FINAL CAMERA ONLY / GAMEPLAY UNCHANGED";
-    case I::ZoomPunch: return "BRIEF CROP-ZOOM ON LARGE IMPACTS / NO TIMING CHANGE";
+    case I::CameraShake: return "CAMERA SHAKE ON BOSS PART BREAKS AND PLAYER DEATHS";
+    case I::ZoomPunch: return "BRIEF ZOOM ON BOSS PART BREAKS AND PLAYER DEATHS";
     case I::HitFlash: return "CONTROLLED IMPACT FLASH / REDUCED BY ACCESSIBILITY OPTION";
     case I::EdgeEffects: return "VIGNETTE + CHROMATIC EDGE SPLIT / COSMETIC POST ONLY";
     case I::WeaponSignatures: return "SIX WEAPON FAMILIES / MUZZLE, WAKE, IMPACT, RICOCHET";
@@ -2628,6 +2653,7 @@ void paint(HWND wnd) {
             }
         }
         std::vector<std::string> lines;
+        int footer_lines = 0;
         if (g_connecting) {
             lines={"SMASH T.V.", "[ CONNECTING CONTESTANTS ]", g_status, "B / ESC   CANCEL"};
         } else if (g_confirm != ConfirmAction::None) {
@@ -2721,19 +2747,24 @@ void paint(HWND wnd) {
                 else if (row.kind == stv::host::PcMenuRowKind::Submenu) label += " - >>";
                 lines.push_back(label);
             }
-            lines.push_back("");
             lines.push_back(menu_help(g_pc_menu.selected_item()));
             lines.push_back("D-PAD / ARROWS: MOVE   A / ENTER: SELECT");
             lines.push_back("B / ESC   BACK");
+            footer_lines = 3;
         }
-        if (!g_menu_status.empty()) { lines.push_back(""); lines.push_back(g_menu_status); }
+        if (!g_menu_status.empty()) {
+            lines.push_back("");
+            lines.push_back(g_menu_status);
+            if (footer_lines) footer_lines += 2;
+        }
         if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_status.empty()) {
             const auto layout=stv::host::arcade_title_layout(cw,ch);
             if(g_menu_font_ready)
                 stv::host::arcade_title_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced);
             else
                 stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),nullptr,&layout.controls);
-        } else stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),g_menu_font_ready?&g_menu_font:nullptr);
+        } else stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),g_menu_font_ready?&g_menu_font:nullptr,
+                                       nullptr,footer_lines);
     } else if (g_paused || g_m.stop || !g_status.empty()) {
         const char* msg = !g_status.empty() ? g_status.c_str() : "PAUSED (P)   START / F1: pause menu";
         TextOutA(dc, 8, 8, msg, int(std::strlen(msg)));
@@ -2955,7 +2986,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::Resume: g_paused = false; break;
             case I::LocalCoop:
                 g_title_submenu = false; g_paused = false;
-                g_toast = g_enhanced ? "Player 2: add a credit, then press fire / A to join"
+                g_toast = g_enhanced ? "Player 2: add a credit, then press A or Arcade Start to join"
                                      : "Player 2: add a credit, then press Arcade Start to join";
                 g_toast_until = GetTickCount64() + 5000;
                 break;
@@ -2967,7 +2998,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::PadBindings: g_pad_controls = true; g_pad_capture = false; break;
             case I::ResetControls:
                 std::copy(std::begin(kDefaultKeys), std::end(kDefaultKeys), g_keys);
-                g_pad_bindings.reset(); g_deadzone = 12000; g_swap_pads = false;
+                g_pad_bindings.reset(); g_settings.dash_enabled = true; g_deadzone = 12000; g_swap_pads = false;
                 save_keys(); save = true; g_pad_router.suppress_until_neutral(); break;
             case I::SwapPads: g_swap_pads = !g_swap_pads; break;
             case I::StickDeadzone:
@@ -3037,6 +3068,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::SoundChannels: g_settings.extended_sound = !g_settings.extended_sound; break;
             case I::Reverb: g_settings.reverb = (g_settings.reverb + event.delta + 3) % 3; break;
             case I::StereoWidth: g_settings.audio_wide = !g_settings.audio_wide; break;
+            case I::Dash: g_settings.dash_enabled = !g_settings.dash_enabled; break;
             case I::HiFiAudio: g_settings.audio_hifi = !g_settings.audio_hifi; break;
             case I::PlayerName:
                 g_name_edit = true; g_name_draft = g_settings.player_name; g_name_cursor = 0; break;
@@ -3227,6 +3259,12 @@ void service_window_focus() {
 
 LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_SETCURSOR:
+        if (reinterpret_cast<HWND>(wp) == wnd && LOWORD(lp) == HTCLIENT) {
+            SetCursor(nullptr);
+            return TRUE;
+        }
+        break;
     case WM_APP + 12: InvalidateRect(wnd, nullptr, FALSE); return 0;
     case WM_PAINT: paint(wnd); return 0;
     case WM_ERASEBKGND: return 1;
@@ -3837,7 +3875,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                 if (finished) break;
                 g_m.ports[0] = g_m.ports[1] = 0xffff;   // all controls released (active low)
                 if (g_host_solo) record_room_frame(0,0,u16(0xffff));
-                else record_local_frame();
+                else if (g_record_local) record_room_frame(0,0,u16(0xffff));
                 run_one_frame();
                 g_pcm.clear();                          // power-on sound is generated, not played
                 if (g_frame_done) { ++boot_skip_frames; ++g_simulation_steps; }

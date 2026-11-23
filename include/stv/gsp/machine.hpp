@@ -8,6 +8,7 @@
 #include "stv/gsp/object_lifecycle.hpp"
 #include <array>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,13 @@ struct Replay {
     virtual bool input(u32 bitaddr, u16& v) = 0;
 };
 
+inline u16 digital_motion(unsigned bits) {
+    const int x = int(bool(bits & 8)) - int(bool(bits & 4));
+    const int y = int(bool(bits & 2)) - int(bool(bits & 1));
+    const int scale = x && y ? 90 : 127;
+    return u16(u8(x * scale) | (unsigned(u8(y * scale)) << 8));
+}
+
 struct Machine {
     Cpu c;
     // memories
@@ -69,16 +77,36 @@ struct Machine {
     // Presentation only (not machine state): the retail spawn anchor of each
     // foreground object slot at INSOBJ, OXVAL/OYVAL plus its animation anchor,
     // in world pixels. Muzzle effects start from the real firing point.
-    struct SpawnAnchor { s16 x{}, y{}; bool valid{}; };
+    struct SpawnAnchor { s16 x{}, y{}; bool valid{}, raster_muzzle{}; };
     std::array<SpawnAnchor, 420> spawn_anchor{};
+    // Follow the firing cel through its clipped DMA record and the actual display page.
+    struct MuzzleMarker {
+        u32 torso{}, texel{}; u64 frame{},cycle{}; bool flipped{}; VisibleMuzzle flash{};
+        int page_x{}, page_y{-1};
+    };
+    std::vector<MuzzleMarker> muzzle_markers;
+    std::vector<VisibleMuzzle> visible_muzzles;
+    struct QueuedActor { u32 node{}; u64 cycle{}; };
+    std::vector<QueuedActor> display_queue_torso;
+    bool track_player_muzzle(u32 node);
     void object_inserted(u32 node);
     std::vector<u16> frame = std::vector<u16>(512 * SCREEN_H);  // pen indices per displayed line (vram_w wide)
     // Video line width. reference_l8: 512 (the Y-unit VRAM). enhanced_l8_16_9: a wider
     // line so DMA can draw past column 511, and vis_extra more displayed columns (PLAN D7).
     // Presentation-only coverage follows DMA writes and beam scanout. The game
     // and snapshots continue to see the original VRAM words and pen indices.
+    // Shifted into the high nibble of the presentation index at scanout.
+    // Bit 0 is sprite ink. Bit 2 identifies world ink that a same-palette
+    // HUD object must never claim. Bit 1 is reserved for host shadow blending.
+    static constexpr u8 overlay_ink=1, world_ink=5;
     std::vector<u8> sprite_coverage, display_queue_coverage;
     std::vector<u16> presentation_frame;
+    std::shared_ptr<const std::vector<u8>> retail_shadow_pixels;
+    // Indexed color and coverage before a blob pixel overwrote the display page.
+    std::vector<u16> shadow_underlay, presentation_without_blobs;
+    struct DashPixel { u16 x,y,pen; };
+    // Beam-visible player ink, current scanout and four preceding frames.
+    std::array<std::array<std::vector<DashPixel>,5>,2> dash_poses;
     void enable_sprite_coverage();
     u32 vram_w{512};
     u32 vis_extra{0};
@@ -91,9 +119,19 @@ struct Machine {
     // MUTOID.GETY: redirect an action that would press the tank into a wall.
     void mutoid_wall_action();
     std::array<u16,2> move_inputs{};
+    struct DashState {
+        u32 owner{};
+        u16 direction{}, locked{};
+        static constexpr u8 burst_frames=6, cooldown_frames=98;
+        u8 burst{}, cooldown{}, reserved{}, held{};
+        bool trail_visible() const { return burst || cooldown >= cooldown_frames-3; }
+    };
+    std::array<DashState,2> dash{};
+    void lock_dash_contacts();
+    u8 dash_input(unsigned player, u8 contacts, u16 motion);
     std::array<u16,2> aim_inputs{};
     std::array<u16,240> shot_aim{};
-    std::array<u32,240> shot_muzzles{}; // retained for existing enhanced snapshot compatibility
+    std::array<u32,240> shot_muzzles{}; // 1 selects the independent helper emitter; preserves the enhanced snapshot layout
     void latch_shot_aim();
     void bind_shot_compass();
     void queue_aimed_sprite();

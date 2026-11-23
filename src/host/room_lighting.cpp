@@ -500,6 +500,8 @@ void add_boss_lights(LightingFrame &frame, const EffectPacket &p, int offset) {
 LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) {
     LightingFrame frame;
     frame.lights.reserve(MaxLights);
+    // The particle system requests a reset on every intro frame.
+    if (!p.in_arena || (current_.anchor.valid && p.frame < current_.frame)) reset();
     const auto f = p.geometry.floor;
     frame.mood = room_mood(p.room);
     if (f.w <= 0 || f.h <= 0) return frame;
@@ -533,36 +535,65 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
             wy = float(p.camera_y) + 46.f;
         }
     }
-    if (!current_.valid || current_.room != p.room || std::abs(current_.x - wx) > .5f ||
-        std::abs(current_.y - wy) > .5f || current_.w != f.w) {
-        if (current_.valid && (current_.room != p.room || std::abs(current_.x - wx) > 8 || std::abs(current_.y - wy) > 8))
-            previous_ = current_;
-        current_ = {p.room, wx, wy, f.w, f.h, true};
+    const auto &anchor = current_.anchor;
+    const bool moved = std::abs(anchor.x - wx) > 8 || std::abs(anchor.y - wy) > 8;
+    const bool pendingOrigin = anchor.valid && anchor.room != p.room && !moved &&
+                               (p.roomIntro || p.frame > current_.frame);
+    if (anchor.valid && moved && (anchor.room != p.room || p.roomIntro))
+        previous_ = current_;
+    else if (!pendingOrigin && anchor.valid && anchor.room != p.room)
+        previous_ = {};
+
+    auto appendSnapshot = [&](const Snapshot &snapshot) {
+        const float dx = snapshot.cameraX - float(p.camera_x) + float(offset);
+        const float dy = snapshot.cameraY - float(p.camera_y);
+        for (size_t i = 0; i < snapshot.count; ++i) {
+            auto lamp = snapshot.lights[i];
+            lamp.x += dx;
+            lamp.y += dy;
+            frame.lights.push_back(lamp);
+        }
+    };
+    auto screenLook = [&](const Snapshot &snapshot) {
+        auto look = snapshot.look;
+        const float dx = snapshot.cameraX - float(p.camera_x) + float(offset);
+        const float dy = snapshot.cameraY - float(p.camera_y);
+        look.cinema.bossX += dx;
+        look.cinema.bossY += dy;
+        look.cinema.deathX += dx;
+        look.cinema.deathY += dy;
+        return look;
+    };
+    // The selector can publish before WAVEYX. Keep the old rig through that
+    // interval, then start the new rig once it has its own world position.
+    if (pendingOrigin) {
+        frame.floor = {anchor.x - float(p.camera_x) + float(offset),
+                       anchor.y - float(p.camera_y), anchor.w, anchor.h};
+        frame.mood = current_.mood;
+        frame.gates = current_.gates;
+        frame.leftGate = current_.leftGate;
+        frame.lightTime = float(current_.frame % 1000003);
+        frame.look = screenLook(current_);
+        frame.holdingOrigin = true;
+        appendSnapshot(current_);
+        frame.staticLights = unsigned(frame.lights.size());
+        return frame;
     }
+    current_.anchor = {p.room, wx, wy, f.w, f.h, true};
     frame.floor = {wx - float(p.camera_x) + float(offset), wy - float(p.camera_y), f.w, f.h};
     const float t = float(p.frame);
     const float W = float(width), H = 256.f;
     auto emit = [&](const std::vector<Lamp> &lamps, const Anchor &a, unsigned &counter) {
         const float sx = a.x - float(p.camera_x) + float(offset), sy = a.y - float(p.camera_y);
         for (const auto &lamp : lamps) {
-            if (frame.lights.size() >= MaxLights - MaxDynamic) return;
+            if (frame.lights.size() >= MaxRoomLights - MaxDynamic) return;
             auto g = realize(lamp, sx, sy, a.w, a.h, t);
-            if (!reaches(g, W, H) || g.intensity <= .002f) continue;
+            if (g.intensity <= .002f) continue;
             frame.lights.push_back(g);
             ++counter;
         }
     };
-    emit(roomLamps(p.room), current_, frame.staticLights);
-    // Retire the departing rig only after its room leaves the lighted viewport.
-    // State 0x18 can end before the camera has exposed the final wall, and later
-    // scripted camera movement must not switch off a still-visible room.
-    if (previous_.valid && previous_.room != current_.room) {
-        const float sx = previous_.x - float(p.camera_x) + float(offset), sy = previous_.y - float(p.camera_y);
-        if (sx + previous_.w + 200 > 0 && sx - 200 < W && sy + previous_.h + 200 > 0 && sy - 200 < H)
-            emit(roomLamps(previous_.room), previous_, frame.previousRoomLights);
-        else
-            previous_ = {};
-    }
+    emit(roomLamps(p.room), current_.anchor, frame.staticLights);
     if ((p.room & 0xffff) == 1) {
         auto studio = studioLamps();
         const auto &profile = room_lighting_profile(p.room);
@@ -573,7 +604,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
             lamp.intensity *= profile.intensity;
             lamp.phase += profile.phase;
         }
-        emit(studio, current_, frame.studioLights);
+        emit(studio, current_.anchor, frame.studioLights);
     }
     add_boss_lights(frame, p, offset);
     // Explosions outrank boss-room shot spill; retain slots for cinema cues.
@@ -591,7 +622,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
     const unsigned gameplayLightLimit = MaxDynamic - reservedCinemaLights;
     for (size_t i = 0; i < dynamicCount; ++i) {
         const auto &d = dynamic[i];
-        if (frame.dynamicLights >= gameplayLightLimit || frame.lights.size() >= MaxLights) break;
+        if (frame.dynamicLights >= gameplayLightLimit || frame.lights.size() >= MaxRoomLights) break;
         if (!(d.power > 0) || !(d.radius > 0)) continue;
         GpuLight g;
         g.x = d.x + float(offset); g.y = d.y; g.z = d.height; g.radius = d.radius;
@@ -602,7 +633,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         ++frame.dynamicLights;
     }
     auto emitCinema = [&](float x, float y, float z, float radius, float r, float g, float b, float power) {
-        if (frame.dynamicLights >= MaxDynamic || frame.lights.size() >= MaxLights ||
+        if (frame.dynamicLights >= MaxDynamic || frame.lights.size() >= MaxRoomLights ||
             !(power > 0) || !(radius > 0)) return;
         GpuLight light;
         light.x = x + float(offset); light.y = y; light.z = z; light.radius = radius;
@@ -630,6 +661,41 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         if (audioCinemaLights == 2)
             emitCinema(frame.floor[0] + frame.floor[2] * .82f, frame.floor[1] + 10.f,
                        42.f, 185.f, tint[2], tint[1], tint[0], power * .9f);
+    }
+    current_.mood = frame.mood;
+    current_.gates = frame.gates = p.geometry.openGates;
+    current_.leftGate = frame.leftGate = p.roomIntro ?
+        std::clamp((W - frame.floor[0]) / f.w, 0.f, 1.f) : float(frame.gates & 1);
+    current_.frame = p.frame;
+    frame.lightTime = float(p.frame % 1000003);
+    current_.look = {p.room, p.cinema};
+    if (!p.cinema.bossX) current_.look.cinema.bossX = frame.floor[0] - float(offset) + f.w * .5f;
+    if (!p.cinema.bossY) current_.look.cinema.bossY = frame.floor[1] + f.h * .35f;
+    frame.look = screenLook(current_);
+    current_.cameraX = float(p.camera_x);
+    current_.cameraY = float(p.camera_y);
+    current_.count = frame.lights.size();
+    for (size_t i = 0; i < current_.count; ++i) {
+        current_.lights[i] = frame.lights[i];
+        current_.lights[i].x -= float(offset);
+    }
+    const auto &old = previous_.anchor;
+    if (old.valid) {
+        const float sx = old.x - float(p.camera_x) + float(offset);
+        const float sy = old.y - float(p.camera_y);
+        if (sx + old.w + 30 > 0 && sx - 30 < W && sy + old.h + 15 > 0 && sy - 44 < H) {
+            frame.previousFloor = {sx, sy, old.w, old.h};
+            frame.previousMood = previous_.mood;
+            frame.previousGates = previous_.gates;
+            frame.previousLeftGate = previous_.leftGate;
+            frame.previousLightTime = float(previous_.frame % 1000003);
+            frame.previousLook = screenLook(previous_);
+            frame.previousVisible = true;
+            appendSnapshot(previous_);
+            frame.previousRoomLights = unsigned(previous_.count);
+        } else {
+            previous_ = {};
+        }
     }
     return frame;
 }

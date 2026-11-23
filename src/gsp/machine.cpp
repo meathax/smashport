@@ -1,7 +1,9 @@
 // Native Y-unit platform services (PLAN D5). Behaviour mirrors MAME 0.289
 // midyunit_v.cpp / midyunit_m.cpp / tms34010.cpp / screen.cpp for lockstep;
 // divergences from MAME are marked "MAME:" where MAME's own behaviour is kept.
+#include <map>
 #include "stv/gsp/machine.hpp"
+#include "sprite_shadows.hpp"
 #include "stv/gsp/ops.hpp"
 #include "stv/gsp/scene.hpp"
 #include "stv/zip.hpp"
@@ -126,6 +128,7 @@ void install(Machine& m, Chips& chips) {
     m.snd_u19 = std::move(chips[12]);
     m.snd_u20 = std::move(chips[13]);
     m.static_data_replaced();
+    if(!m.sprite_coverage.empty())m.enable_sprite_coverage();
 }
 }
 
@@ -144,11 +147,13 @@ void Machine::object_inserted(u32 node) {
     a.x = s16((s32(rlong(*this, node + 0x60)) >> 16) + x);
     a.y = s16((s32(rlong(*this, node + 0x80)) >> 16) + y);
     a.valid = true;
+    a.raster_muzzle=!sprite_coverage.empty() && track_player_muzzle(node);
 }
 
 void Machine::static_data_replaced() {
     static std::atomic<u64> next{0};
     static_revision = ++next;
+    retail_shadow_pixels.reset();
 }
 
 bool Machine::load_roms(const std::string& path, std::string& error) {
@@ -218,6 +223,7 @@ u32 Machine::reset_vector() const {
 void Machine::reset() {
     if(!sprite_coverage.empty())enable_sprite_coverage();
     move_inputs.fill(0);
+    dash = {};
     aim_inputs.fill(0);
     shot_aim.fill(0);
     shot_muzzles.fill(0);
@@ -284,11 +290,24 @@ namespace {
 // L8 NDSP1: BOTQ0/1 and TOPQ0/1, 420 five-longword records per queue.
 constexpr u32 display_queue_base=0x01033160, display_record_bits=0xa0;
 constexpr u32 display_records=4*420;
+constexpr u16 has_shadow_underlay=0x8000;
+
+u16 display_pen(u16 pixel) {
+    return u16(((pixel & 0xc000) >> 8) | (pixel & 0x0f3f));
+}
+
+
 }
 void Machine::enable_sprite_coverage() {
+    if(!retail_shadow_pixels && !gfx.empty())
+        retail_shadow_pixels=std::make_shared<const std::vector<u8>>(sprite_shadows::build(prog,gfx));
+    dash_poses = {};
     sprite_coverage.assign(vram.size(),0);
+    muzzle_markers.clear();visible_muzzles.clear();display_queue_torso.assign(display_records,{});
     display_queue_coverage.assign(display_records,0);
     presentation_frame=frame;
+    shadow_underlay.assign(vram.size(),0);
+    presentation_without_blobs=frame;
 }
 
 void Machine::set_wide(u32 line_width, u32 extra_columns) {
@@ -418,13 +437,74 @@ void Machine::scanline_callback(int vcount) {
     }
 }
 
+namespace {
+void composite_dash(Machine& m) {
+    // Same indexed presentation for software, normal GPU and shadowless RT.
+    // Resolve blends against the live palette, including room palette changes.
+    std::map<u32,u16> colors;
+    auto blend = [&](u16 dst, u32 tint, unsigned alpha) -> u16 {
+        u32 rgb=0;
+        for (unsigned shift : {0u,8u,16u}) {
+            const unsigned old=(m.pens[dst&4095]>>shift)&255, target=(tint>>shift)&255;
+            rgb |= ((old*(100-alpha)+target*alpha+50)/100)<<shift;
+        }
+        auto [it,fresh]=colors.try_emplace(rgb,0);
+        if (fresh) {
+            unsigned best=~0u;
+            for (unsigned i=0;i<m.pens.size();++i) {
+                const u32 color=m.pens[i];
+                const int r=int((color>>16)&255)-int(rgb>>16);
+                const int g=int((color>>8)&255)-int((rgb>>8)&255);
+                const int b=int(color&255)-int(rgb&255);
+                const unsigned error=2*r*r+3*g*g+b*b;
+                if(error<best){best=error;it->second=u16(i);if(!error)break;}
+            }
+        }
+        return (dst&0xf000)|it->second;
+    };
+    for(unsigned n=0;n<2;++n) {
+        const auto& state=m.dash[n];
+        const auto& pose=m.dash_poses[n];
+        if(!state.owner || !state.trail_visible())continue;
+        for(const int age : {4,2}) {
+            for(const auto& pixel:pose[age]) {
+                const auto at=std::size_t(pixel.y)*m.vram_w+pixel.x;
+                // Current actors and HUD ink occlude the echo.
+                if(m.presentation_frame[at]&0x1000)continue;
+                // Lighten the copied cel so dark clothing remains readable on dark floors.
+                const u32 source=m.pens[pixel.pen&4095];
+                const u32 accent=n ? 0xffbc9a : 0xa4deff;
+                const u32 tint=((source>>1)&0x7f7f7f)+((source>>2)&0x3f3f3f)+((accent>>2)&0x3f3f3f);
+                const unsigned strength=age==2?76:46;
+                const unsigned alpha=state.burst ? strength :
+                    strength*(4-(Machine::DashState::cooldown_frames-state.cooldown))/5;
+                m.presentation_frame[at]=blend(m.presentation_frame[at],tint,alpha);
+                m.presentation_without_blobs[at]=blend(m.presentation_without_blobs[at],tint,alpha);
+            }
+        }
+    }
+}
+}
+
 // midyunit scanline_update: draw the line, then autoerase the previous row.
 void Machine::render_line(int scanline) {
     if (scanline == VIS_MINY) frame_vis_extra = enhanced_scene(*this) ? vis_extra : 0;
+    if(scanline==VIS_MINY){
+        for (auto& history : dash_poses) {
+            for (auto age=history.size()-1; age>0; --age) history[age].swap(history[age-1]);
+            history[0].clear();
+        }
+        visible_muzzles.clear();
+        std::erase_if(muzzle_markers,[&](const auto& marker){return marker.frame+8<frame_number;});
+    }
     const bool enabled = io[DPYCTL] & 0x8000;
     u16* dest = &frame[usize(scanline) * vram_w];
     u16* shown=presentation_frame.empty()?nullptr:presentation_frame.data()+usize(scanline)*vram_w;
-    if(shown)std::fill_n(shown,vram_w,0);
+    u16* clean=shown?presentation_without_blobs.data()+usize(scanline)*vram_w:nullptr;
+    if(shown){
+        std::fill_n(shown,vram_w,0);
+        std::fill_n(clean,vram_w,0);
+    }
     if (!enabled) { std::fill(dest, dest + vram_w, 0); return; }
     u16 dpyadr = io[DPYADR];
     if (!(io[DPYCTL] & 0x0400)) dpyadr ^= 0xfffc;
@@ -434,13 +514,37 @@ void Machine::render_line(int scanline) {
     const u16* src = &vram[usize(rowaddr & 0x1ff) * vram_w];
     const int heblnk = io[HEBLNK] * 2, hsblnk = io[HSBLNK] * 2 + int(frame_vis_extra);
     const int wmask = (frame_vis_extra ? int(vram_w) : 512) - 1;
+    if(!muzzle_markers.empty()){
+        std::erase_if(muzzle_markers,[&](const MuzzleMarker& marker){
+            if(marker.page_y!=(rowaddr&511))return false;
+            auto flash=marker.flash;
+            const int screen_x=heblnk+((marker.page_x-coladdr)&wmask);
+            if(screen_x>=heblnk && screen_x<hsblnk){
+                flash.x=screen_x-VIS_MINX;flash.y=scanline-VIS_MINY;
+                visible_muzzles.push_back(flash);
+            }
+            return true;
+        });
+    }
     std::fill(dest, dest + vram_w, u16(0));
     for (int x = heblnk; x < hsblnk && x < int(vram_w); ++x) {
         const int column=coladdr++ & wmask;
         const u16 i = src[column];
-        dest[x] = u16(((i & 0xc000) >> 8) | (i & 0x0f3f));   // 6-bit pen map
-        if(shown)shown[x]=dest[x] | (u16(sprite_coverage[usize(rowaddr&511)*vram_w+column])<<12);
+        dest[x] = display_pen(i);
+        if(shown){
+            const auto cell=usize(rowaddr&511)*vram_w+column;
+            // Upper coverage bits are private raster ownership. Only the low
+            // nibble goes to the renderer; game-visible VRAM remains untouched.
+            const unsigned owner = (sprite_coverage[cell] >> 4) & 3;
+            if (owner && owner <= 2 && dash[owner-1].burst)
+                dash_poses[owner-1][0].push_back({u16(x),u16(scanline),dest[x]});
+            shown[x]=dest[x] | (u16(sprite_coverage[cell])<<12);
+            const u16 under=shadow_underlay[cell];
+            clean[x]=(under&has_shadow_underlay)?u16(under&~has_shadow_underlay):shown[x];
+        }
     }
+    if (shown && scanline==VIS_MAXY && enhanced && (dash[0].trail_visible() || dash[1].trail_visible()))
+        composite_dash(*this);
     autoerase_line(rowaddr - 1);
     // MAME also schedules a final-line autoerase after the last visible line;
     // it is applied here immediately because nothing observes VRAM in between.
@@ -449,7 +553,10 @@ void Machine::render_line(int scanline) {
 
 void Machine::autoerase_line(int scanline) {
     if (autoerase_enable && scanline >= 0 && scanline < 510) {
-        if(!sprite_coverage.empty())std::fill_n(sprite_coverage.data()+usize(scanline)*vram_w,vram_w,0);
+        if(!sprite_coverage.empty()){
+            std::fill_n(sprite_coverage.data()+usize(scanline)*vram_w,vram_w,0);
+            std::fill_n(shadow_underlay.data()+usize(scanline)*vram_w,vram_w,0);
+        }
         const u16* src = &vram[usize(vram_w) * usize(510 + (scanline & 1))];
         u16* dest = &vram[usize(vram_w) * usize(scanline)];
         if (enhanced_scene(*this) && vram_w > 512) {
@@ -521,11 +628,29 @@ void Machine::dma_draw(u16 command, int width, int height, int xpos, int ypos, s
     // DMAINT loads B14 past the five-longword record before launching it.
     const u32 record=c.b[14]-display_record_bits-display_queue_base;
     const u8 foreground=!display_queue_coverage.empty() && record<display_records*display_record_bits &&
-                        record%display_record_bits==0 && display_queue_coverage[record/display_record_bits];
+                        record%display_record_bits==0 ? display_queue_coverage[record/display_record_bits] : 0;
     const int dx = (command & 0x10) ? -1 : 1;
     const u16 color = pal | colorlo;
     u32 off = offset >> 3;
     command &= 0x0f;
+    const int txmask=(enhanced_scene(*this) ? int(vram_w) : 512)-1;
+    if(!muzzle_markers.empty() && record<display_records*display_record_bits && record%display_record_bits==0){
+        const auto torso=display_queue_torso[record/display_record_bits];
+        for(auto& marker:muzzle_markers){
+            if(marker.torso!=torso.node || marker.cycle>torso.cycle || marker.flipped!=(dx<0) || marker.page_y>=0)continue;
+            for(int row=0;row<height;++row){
+                const u32 column=marker.texel-(off+u32(row*rowbytes));
+                if(column>=u32(width))continue;
+                marker.page_x=(xpos+int(column)*dx)&txmask;
+                marker.page_y=(ypos+row)&511;
+                break;
+            }
+        }
+    }
+    const auto* atlas=sprite_coverage.empty()?nullptr:retail_shadow_pixels.get();
+    const auto shadow_pixel=[&](u32 at){
+        return atlas && at<atlas->size() && (*atlas)[at]==sprite_shadows::Shadow;
+    };
     for (int y = 0; y < height; ++y) {
         int tx = xpos;
         const int ty = (ypos + y) & 0x1ff;
@@ -534,20 +659,32 @@ void Machine::dma_draw(u16 command, int width, int height, int xpos, int ypos, s
         u16* dest = &vram[usize(ty) * vram_w];
         if (o >= 0x06000000u && command < 0x0c) continue;
         auto px = [&](u32 k) -> u8 { return k < gfx.size() ? gfx[k] : 0; };
-        const int txmask = (enhanced_scene(*this) ? int(vram_w) : 512) - 1;
-        auto put = [&](u16 v) {
-            const auto x=tx & txmask;dest[x]=v;
-            if(!sprite_coverage.empty())sprite_coverage[usize(ty)*vram_w+x]=foreground;
+
+        auto put = [&](u16 v, bool blob=false) {
+            const auto x=tx & txmask;
+            if(!sprite_coverage.empty()){
+                const auto cell=usize(ty)*vram_w+x;
+                auto& under=shadow_underlay[cell];
+                if(!blob)under=0;
+                else if(!under)under=has_shadow_underlay|display_pen(dest[x])|(u16(sprite_coverage[cell])<<12);
+                sprite_coverage[cell]=foreground;
+            }
+            dest[x]=v;
         };  // MAME indexes dest[tx] unchecked; x is clipped above
         switch (command) {
         case 0x00: break;
         case 0x01: for (int x = 0; x < width; ++x, tx += dx) if (px(o++) == 0) put(pal); break;
-        case 0x02: for (int x = 0; x < width; ++x, tx += dx) { u8 p = px(o++); if (p) put(u16(pal | p)); } break;
-        case 0x03: for (int x = 0; x < width; ++x, tx += dx) put(u16(pal | px(o++))); break;
+        case 0x02:
+            for(int x=0;x<width;++x,tx+=dx,++o){
+                const u8 p=px(o);
+                if(p)put(u16(pal|p),shadow_pixel(o));
+            }
+            break;
+        case 0x03: for (int x = 0; x < width; ++x, tx += dx,++o) put(u16(pal | px(o)),shadow_pixel(o)); break;
         case 0x04: case 0x05: for (int x = 0; x < width; ++x, tx += dx) if (px(o++) == 0) put(color); break;
-        case 0x06: case 0x07: for (int x = 0; x < width; ++x, tx += dx) { u8 p = px(o++); put(p == 0 ? color : u16(pal | p)); } break;
-        case 0x08: case 0x0a: for (int x = 0; x < width; ++x, tx += dx) if (px(o++) != 0) put(color); break;
-        case 0x09: case 0x0b: for (int x = 0; x < width; ++x, tx += dx) { u8 p = px(o++); put(p != 0 ? color : u16(pal | p)); } break;
+        case 0x06: case 0x07: for (int x = 0; x < width; ++x, tx += dx,++o) { u8 p = px(o); put(p == 0 ? color : u16(pal | p),shadow_pixel(o)); } break;
+        case 0x08: case 0x0a: for (int x = 0; x < width; ++x, tx += dx,++o) { u8 p=px(o); if(p)put(color,shadow_pixel(o)); } break;
+        case 0x09: case 0x0b: for (int x = 0; x < width; ++x, tx += dx,++o) { u8 p = px(o); put(p != 0 ? color : u16(pal | p),shadow_pixel(o)); } break;
         default: for (int x = 0; x < width; ++x, tx += dx) put(color); break;
         }
     }
@@ -658,7 +795,7 @@ void Machine::ww(u32 a, u16 v) {
             // DCLIPL queues A0's clipped image. Its return address identifies
             // OBJLST versus BAKLST even when a transparent image uses bank zero.
             const u32 node=c.a[0], sp=c.sp-0x01000000;
-            bool front=false;
+            u8 coverage=0;
             if(node-object_pool_base<object_slots*object_stride && (node-object_pool_base)%object_stride==0 && sp<=0xfffe0){
                 const auto caller=u32(ram[sp>>4]) | (u32(ram[(sp>>4)+1])<<16);
                 const auto field=[&](u32 off){return ram[(node+off-0x01000000)>>4];};
@@ -668,16 +805,28 @@ void Machine::ww(u32 a, u16 v) {
                 const u32 link=u32(field(0x160)) | (u32(field(0x170))<<16);
                 const bool roomTile=link-0x010dadd0u<10000u;
                 const bool lives=oid==6 && field(0xf0)==52 && field(0x100)==56;
-                front=!roomTile && ((caller==0xffe01530 && oid!=6 && ((oid>>8)&63)!=26) ||
+                const bool front=!roomTile && ((caller==0xffe01530 && oid!=6 && ((oid>>8)&63)!=26) ||
                       ((caller==0xffe01370 || caller==0xffe01530) && (lives || oid==2 || oid==3 || (oid>>8)==7)));
+                if(front){
+                    const bool overlay=lives || oid==1 || oid==2 || oid==3 || (oid&0x1f00)==0x0700;
+                    coverage=overlay ? overlay_ink : world_ink;
+                    if (enhanced && (oid==0x4101 || oid==0x4102)) {
+                        const unsigned player=oid-0x4101;
+                        coverage |= u8((player+1)<<4);
+                    }
+                }
             }
-            display_queue_coverage[q/display_record_bits]=front;
+            display_queue_torso[q/display_record_bits]={coverage?node:0,c.cyc};
+            display_queue_coverage[q/display_record_bits]=coverage;
         }
         dst=v;return;
     }
     if (a < 0x00200000u) {
         const usize off = vidx(usize(a >> 4) * 2);
-        if(!sprite_coverage.empty())sprite_coverage[off]=sprite_coverage[off+1]=0;
+        if(!sprite_coverage.empty()){
+            sprite_coverage[off]=sprite_coverage[off+1]=0;
+            shadow_underlay[off]=shadow_underlay[off+1]=0;
+        }
         if (videobank_select) {
             vram[off] = u16((v & 0x00ff) | (dma[DMA_PALETTE] << 8));
             vram[off + 1] = u16((v >> 8) | (dma[DMA_PALETTE] & 0xff00));

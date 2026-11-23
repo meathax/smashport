@@ -17,7 +17,7 @@ class DxrLighting {
     // coverage: one bit per light-map pixel (32 words per row) marking sprite
     // pixels, optionally followed by 256 words/row of packed palette-owner bytes.
     // Empty selects the elliptical fallback silhouette.
-    ID3D11ShaderResourceView *render(const EffectPacket &, int width, int height, int offset,
+    ID3D11ShaderResourceView *render(const EffectPacket &, LightingFrame, int width, int height, int offset,
                                      std::span<const uint32_t> coverage = {});
     const LightingFrame *last_frame() const;
     void consumed();
