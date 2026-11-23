@@ -56,13 +56,7 @@ if(STV_SANITIZE AND NOT MSVC)
 endif()
 # PC presentation and room UI, adapted from TMNT-port/arcade-lan. This library
 # owns no translated machine, simulation clock, snapshots or confirmed audio.
-# Embed the original Ramjet audition at build time in both private player hosts.
-set(ramjet_wav "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/ramjet.wav")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ramjet_wav}")
-file(READ "${ramjet_wav}" ramjet_pcm OFFSET 44 HEX)
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1,\n" ramjet_bytes "${ramjet_pcm}")
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ramjet_pcm.inc" CONTENT "${ramjet_bytes}")
-add_library(stv_pc_frontend STATIC src/host/dash_audio.cpp src/host/pc_menu.cpp src/host/pc_settings.cpp src/host/video_filter.cpp src/host/enhance.cpp src/host/gpu_effects.cpp src/host/ray_scene.cpp src/host/room_lighting.cpp src/host/audio_fx.cpp src/net/lobby.cpp)
+add_library(stv_pc_frontend STATIC src/host/pc_menu.cpp src/host/pc_settings.cpp src/host/video_filter.cpp src/host/enhance.cpp src/host/gpu_effects.cpp src/host/ray_scene.cpp src/host/room_lighting.cpp src/host/audio_fx.cpp src/net/lobby.cpp)
 target_include_directories(stv_pc_frontend PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(stv_pc_frontend PRIVATE STV_PLAYER_RELEASE=$<BOOL:${STV_PLAYER_RELEASE}>)
 if(WIN32)

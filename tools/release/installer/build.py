@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio snd/voices game/cosched
 net/rollback net/udp net/lobby host/pc_menu host/pc_settings host/video_filter
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
-host/win_main host/wasapi host/audio_fx host/dash_audio""".split()
+host/win_main host/wasapi host/audio_fx""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
 tools/gsp2cpp/codemap.py tools/gsp2cpp/decode.py tools/gsp2cpp/retail_tables.py
 tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
@@ -66,10 +66,6 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
     cpp = tc / "bin/clang++.exe"
     gen = temp / "shaders"
     gen.mkdir()
-    import wave
-    with wave.open(str(ROOT / "assets/audio/ramjet.wav"), "rb") as sample:
-        pcm = sample.readframes(sample.getnframes())
-    (gen / "ramjet_pcm.inc").write_text(",\n".join(f"0x{b:02x}" for b in pcm), encoding="ascii")
     fxc = dxc.with_name("fxc.exe")
     subprocess.run([sys.executable, HERE / "compile_shaders.py",
                     fxc if fxc.is_file() else "fxc.exe", gen / "resident_bytecode.hpp"], check=True)

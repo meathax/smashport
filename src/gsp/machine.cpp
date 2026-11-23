@@ -1,7 +1,6 @@
 // Native Y-unit platform services (PLAN D5). Behaviour mirrors MAME 0.289
 // midyunit_v.cpp / midyunit_m.cpp / tms34010.cpp / screen.cpp for lockstep;
 // divergences from MAME are marked "MAME:" where MAME's own behaviour is kept.
-#include <map>
 #include "stv/gsp/machine.hpp"
 #include "sprite_shadows.hpp"
 #include "stv/gsp/ops.hpp"
@@ -223,7 +222,6 @@ u32 Machine::reset_vector() const {
 void Machine::reset() {
     if(!sprite_coverage.empty())enable_sprite_coverage();
     move_inputs.fill(0);
-    dash = {};
     aim_inputs.fill(0);
     shot_aim.fill(0);
     shot_muzzles.fill(0);
@@ -301,7 +299,6 @@ u16 display_pen(u16 pixel) {
 void Machine::enable_sprite_coverage() {
     if(!retail_shadow_pixels && !gfx.empty())
         retail_shadow_pixels=std::make_shared<const std::vector<u8>>(sprite_shadows::build(prog,gfx));
-    dash_poses = {};
     sprite_coverage.assign(vram.size(),0);
     muzzle_markers.clear();visible_muzzles.clear();display_queue_torso.assign(display_records,{});
     display_queue_coverage.assign(display_records,0);
@@ -437,63 +434,10 @@ void Machine::scanline_callback(int vcount) {
     }
 }
 
-namespace {
-void composite_dash(Machine& m) {
-    // Same indexed presentation for software, normal GPU and shadowless RT.
-    // Resolve blends against the live palette, including room palette changes.
-    std::map<u32,u16> colors;
-    auto blend = [&](u16 dst, u32 tint, unsigned alpha) -> u16 {
-        u32 rgb=0;
-        for (unsigned shift : {0u,8u,16u}) {
-            const unsigned old=(m.pens[dst&4095]>>shift)&255, target=(tint>>shift)&255;
-            rgb |= ((old*(100-alpha)+target*alpha+50)/100)<<shift;
-        }
-        auto [it,fresh]=colors.try_emplace(rgb,0);
-        if (fresh) {
-            unsigned best=~0u;
-            for (unsigned i=0;i<m.pens.size();++i) {
-                const u32 color=m.pens[i];
-                const int r=int((color>>16)&255)-int(rgb>>16);
-                const int g=int((color>>8)&255)-int((rgb>>8)&255);
-                const int b=int(color&255)-int(rgb&255);
-                const unsigned error=2*r*r+3*g*g+b*b;
-                if(error<best){best=error;it->second=u16(i);if(!error)break;}
-            }
-        }
-        return (dst&0xf000)|it->second;
-    };
-    for(unsigned n=0;n<2;++n) {
-        const auto& state=m.dash[n];
-        const auto& pose=m.dash_poses[n];
-        if(!state.owner || !state.trail_visible())continue;
-        for(const int age : {4,2}) {
-            for(const auto& pixel:pose[age]) {
-                const auto at=std::size_t(pixel.y)*m.vram_w+pixel.x;
-                // Current actors and HUD ink occlude the echo.
-                if(m.presentation_frame[at]&0x1000)continue;
-                // Lighten the copied cel so dark clothing remains readable on dark floors.
-                const u32 source=m.pens[pixel.pen&4095];
-                const u32 accent=n ? 0xffbc9a : 0xa4deff;
-                const u32 tint=((source>>1)&0x7f7f7f)+((source>>2)&0x3f3f3f)+((accent>>2)&0x3f3f3f);
-                const unsigned strength=age==2?76:46;
-                const unsigned alpha=state.burst ? strength :
-                    strength*(4-(Machine::DashState::cooldown_frames-state.cooldown))/5;
-                m.presentation_frame[at]=blend(m.presentation_frame[at],tint,alpha);
-                m.presentation_without_blobs[at]=blend(m.presentation_without_blobs[at],tint,alpha);
-            }
-        }
-    }
-}
-}
-
 // midyunit scanline_update: draw the line, then autoerase the previous row.
 void Machine::render_line(int scanline) {
     if (scanline == VIS_MINY) frame_vis_extra = enhanced_scene(*this) ? vis_extra : 0;
     if(scanline==VIS_MINY){
-        for (auto& history : dash_poses) {
-            for (auto age=history.size()-1; age>0; --age) history[age].swap(history[age-1]);
-            history[0].clear();
-        }
         visible_muzzles.clear();
         std::erase_if(muzzle_markers,[&](const auto& marker){return marker.frame+8<frame_number;});
     }
@@ -533,18 +477,11 @@ void Machine::render_line(int scanline) {
         dest[x] = display_pen(i);
         if(shown){
             const auto cell=usize(rowaddr&511)*vram_w+column;
-            // Upper coverage bits are private raster ownership. Only the low
-            // nibble goes to the renderer; game-visible VRAM remains untouched.
-            const unsigned owner = (sprite_coverage[cell] >> 4) & 3;
-            if (owner && owner <= 2 && dash[owner-1].burst)
-                dash_poses[owner-1][0].push_back({u16(x),u16(scanline),dest[x]});
             shown[x]=dest[x] | (u16(sprite_coverage[cell])<<12);
             const u16 under=shadow_underlay[cell];
             clean[x]=(under&has_shadow_underlay)?u16(under&~has_shadow_underlay):shown[x];
         }
     }
-    if (shown && scanline==VIS_MAXY && enhanced && (dash[0].trail_visible() || dash[1].trail_visible()))
-        composite_dash(*this);
     autoerase_line(rowaddr - 1);
     // MAME also schedules a final-line autoerase after the last visible line;
     // it is applied here immediately because nothing observes VRAM in between.
@@ -810,10 +747,6 @@ void Machine::ww(u32 a, u16 v) {
                 if(front){
                     const bool overlay=lives || oid==1 || oid==2 || oid==3 || (oid&0x1f00)==0x0700;
                     coverage=overlay ? overlay_ink : world_ink;
-                    if (enhanced && (oid==0x4101 || oid==0x4102)) {
-                        const unsigned player=oid-0x4101;
-                        coverage |= u8((player+1)<<4);
-                    }
                 }
             }
             display_queue_torso[q/display_record_bits]={coverage?node:0,c.cyc};

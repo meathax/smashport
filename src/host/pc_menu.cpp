@@ -200,7 +200,6 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::PadBindings, "Controller bindings", Kind::Command);
         add(Item::SwapPads, "Controller order", Kind::Adjustment);
         add(Item::StickDeadzone, "Stick dead zone", Kind::Adjustment);
-        add(Item::Dash, "Widescreen dash (LT)", Kind::Adjustment);
         add(Item::ResetControls, "Restore control defaults", Kind::Command);
         break;
     case PcMenuPage::Multiplayer:

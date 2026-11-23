@@ -49,13 +49,6 @@ struct Replay {
     virtual bool input(u32 bitaddr, u16& v) = 0;
 };
 
-inline u16 digital_motion(unsigned bits) {
-    const int x = int(bool(bits & 8)) - int(bool(bits & 4));
-    const int y = int(bool(bits & 2)) - int(bool(bits & 1));
-    const int scale = x && y ? 90 : 127;
-    return u16(u8(x * scale) | (unsigned(u8(y * scale)) << 8));
-}
-
 struct Machine {
     Cpu c;
     // memories
@@ -104,9 +97,6 @@ struct Machine {
     std::shared_ptr<const std::vector<u8>> retail_shadow_pixels;
     // Indexed color and coverage before a blob pixel overwrote the display page.
     std::vector<u16> shadow_underlay, presentation_without_blobs;
-    struct DashPixel { u16 x,y,pen; };
-    // Beam-visible player ink, current scanout and four preceding frames.
-    std::array<std::array<std::vector<DashPixel>,5>,2> dash_poses;
     void enable_sprite_coverage();
     u32 vram_w{512};
     u32 vis_extra{0};
@@ -119,16 +109,6 @@ struct Machine {
     // MUTOID.GETY: redirect an action that would press the tank into a wall.
     void mutoid_wall_action();
     std::array<u16,2> move_inputs{};
-    struct DashState {
-        u32 owner{};
-        u16 direction{}, locked{};
-        static constexpr u8 burst_frames=6, cooldown_frames=98;
-        u8 burst{}, cooldown{}, reserved{}, held{};
-        bool trail_visible() const { return burst || cooldown >= cooldown_frames-3; }
-    };
-    std::array<DashState,2> dash{};
-    void lock_dash_contacts();
-    u8 dash_input(unsigned player, u8 contacts, u16 motion);
     std::array<u16,2> aim_inputs{};
     std::array<u16,240> shot_aim{};
     std::array<u32,240> shot_muzzles{}; // 1 selects the independent helper emitter; preserves the enhanced snapshot layout

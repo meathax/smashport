@@ -149,8 +149,8 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "reduce_motion") candidate.reduce_motion = n != 0;
         }
         else if (key == "dash_enabled") {
+            // Accept the retired setting from existing player profiles.
             if (n != 0 && n != 1) return invalid();
-            candidate.dash_enabled = n != 0;
         }
         else if (key == "extended_sound" || key == "audio_wide" || key == "audio_hifi") {
             if (n != 0 && n != 1) return invalid();
@@ -234,7 +234,6 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\nvsync=" << int(settings.vsync) << "\nfps=" << int(settings.show_fps)
            << "\nvolume=" << settings.volume << "\nmuted=" << int(settings.muted)
            << "\nextended_sound=" << int(settings.extended_sound) << "\nreverb=" << settings.reverb
-           << "\ndash_enabled=" << int(settings.dash_enabled)
            << "\naudio_wide=" << int(settings.audio_wide) << "\naudio_hifi=" << int(settings.audio_hifi)
            << "\nswap_pads=" << int(settings.swap_pads) << "\nname=" << settings.player_name << '\n';
     output.flush();

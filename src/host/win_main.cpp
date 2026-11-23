@@ -50,7 +50,6 @@
 #include "stv/host/firing_point.hpp"
 #include "stv/host/drop_player.hpp"
 #include "stv/host/audio_fx.hpp"
-#include "stv/host/dash_audio.hpp"
 #include "stv/host/room_cinema.hpp"
 #include "stv/snd/voices.hpp"
 #include <algorithm>
@@ -82,7 +81,6 @@ std::unique_ptr<stv::snd::Mixer> g_mixer;
 stv::host::AudioOut g_audio;
 stv::host::AudioTelemetry g_audio_telemetry;
 std::vector<float> g_pcm;
-stv::host::DashAudio g_dash_audio;
 stv::host::AudioPeakObserver g_audio_peaks;
 // Enhanced sound output (presentation only; g_pcm stays the retail board PCM).
 stv::snd::VoiceBank g_voices;
@@ -246,7 +244,6 @@ std::vector<u16> g_room_boot_cmos;
 std::optional<bool> g_host_mode;
 bool g_host_booting = false, g_start_together = false;
 struct RoomInputs { u32 p1, p2; u16 frames; std::optional<u16> local_switches; };
-std::array<u32,2> g_sampled_controls{};
 u32 g_room_frames = 0;
 std::vector<RoomInputs> g_room_history;
 void record_room_frame(u32 p1, u32 p2, std::optional<u16> local_switches = {}) {
@@ -261,7 +258,12 @@ void record_room_frame(u32 p1, u32 p2, std::optional<u16> local_switches = {}) {
 // original edge when reconstructing an already-running solo or couch game.
 void record_local_frame() {
     if (!g_record_local) return;
-    record_room_frame(g_sampled_controls[0],g_sampled_controls[1],g_m.ports[1]);
+    const u16 controls = ~g_m.ports[0], switches = ~g_m.ports[1];
+    const u32 p1 = (u32(g_m.move_inputs[0]) << 16) | g_m.aim_inputs[0] | (controls & 255) |
+        ((switches & 1) ? 0x100 : 0) | ((switches & 4) ? 0x200 : 0);
+    const u32 p2 = (u32(g_m.move_inputs[1]) << 16) | g_m.aim_inputs[1] | (controls >> 8) |
+        ((switches & 2) ? 0x100 : 0) | ((switches & 32) ? 0x200 : 0);
+    record_room_frame(p1,p2,g_m.ports[1]);
 }
 
 std::string g_room_guest;
@@ -358,10 +360,7 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
             if (key(k[b])) mv |= u16(1 << b);
             if (key(k[4 + b])) fr |= u16(1 << b);
         }
-        auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
-        const bool dash_button = g_enhanced && g_settings.dash_enabled && s.connected &&
-                                 (s.buttons & stv::host::PadLT);
-        if (dash_button) s.buttons &= ~stv::host::PadLT;
+        const auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
         if (s.connected) {
             mv |= s.move;
             fr |= s.fire;
@@ -393,13 +392,6 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
         const bool mapped_start = start_key || g_pad_bindings.held(START1 + p, s);
         if (fresh_confirm || (context != StartContext::Continue && mapped_start))
             in1 |= p ? 0x0020 : 0x0004;
-        if (g_enhanced && angles) {
-            mv = arcade_contacts(mv);
-            if (dash_button) {
-                if (!s.motion) (*angles)[p] |= u32(stv::gsp::digital_motion(mv)) << 16;
-                mv = 15; // Reserved impossible cabinet contact combination in enhanced samples.
-            }
-        }
         in0 |= u16((mv | (fr << 4)) << (p * 8));
     }
     if (key(g_keys[COIN1])) in1 |= 0x0001;
@@ -417,8 +409,7 @@ std::vector<stv::net::PlayerInput> g_script1, g_script2;
 // lockstep harness; the scheduler only stops at the end of its timeslice.
 void apply_script(u64 frame) {
     const bool in = frame < g_script1.size();
-    g_sampled_controls = {in ? g_script1[frame] : 0, in ? g_script2[frame] : 0};
-    stv::net::apply_inputs(g_m,g_sampled_controls[0],g_sampled_controls[1]);
+    stv::net::apply_inputs(g_m, in ? g_script1[frame] : 0, in ? g_script2[frame] : 0);
 }
 
 void sample_inputs() {
@@ -426,9 +417,9 @@ void sample_inputs() {
     u16 in0, in1;
     std::array<u32,2> angles{};
     read_controls(in0, in1, &angles);
-    g_sampled_controls = {angles[0] | (in0 & 255u) | ((in1 & 1) ? 256u : 0) | ((in1 & 4) ? 512u : 0),
-                          angles[1] | (in0 >> 8) | ((in1 & 2) ? 256u : 0) | ((in1 & 32) ? 512u : 0)};
-    stv::net::apply_inputs(g_m,g_sampled_controls[0],g_sampled_controls[1]);
+    g_m.move_inputs = {u16(angles[0]>>16),u16(angles[1]>>16)};
+    g_m.aim_inputs = g_enhanced ? std::array<u16,2>{u16(angles[0] | (in0 & 0xf0)), u16(angles[1] | ((in0 >> 8) & 0xf0))} : std::array<u16,2>{};
+    g_m.ports[0] = u16(~in0);
     g_m.ports[1] = u16(~in1);
 }
 
@@ -454,7 +445,7 @@ void build_software_frame(const Machine& m) {
     g_frame_width = stv::gsp::scene_view_width(m);
     g_pixels.resize(std::size_t(g_frame_width) * VIS_H);
     const auto& frame=g_settings.hardware_rt && !m.presentation_without_blobs.empty()
-        ? m.presentation_without_blobs : (m.presentation_frame.empty() ? m.frame : m.presentation_frame);
+        ? m.presentation_without_blobs : m.frame;
     for (int y = 0; y < VIS_H; ++y) {
         const u16* src = &frame[std::size_t(y + VIS_MINY) * m.vram_w + VIS_MINX];
         u32* dst = &g_pixels[std::size_t(y) * g_frame_width];
@@ -869,7 +860,6 @@ void frontend_event(const char* event, std::uint64_t value, const std::string& d
 }
 
 void connect_machine_callbacks() {
-    g_dash_audio={};
     g_m.enable_sprite_coverage();
     g_camera = {};
     g_enemy_remains={};
@@ -1075,9 +1065,7 @@ void deliver_audio(bool to_device) {
     if (extended && !g_voices.running() && g_snd.fault.empty())
         ++g_voice_starts, g_voices.start(g_snd, *g_mixer, g_sched->base(), stv::snd::VoiceBank::kMaxEffectVoices);
     if (!extended && g_voices.running()) g_voices.stop();
-    const bool ramjet=g_dash_audio.observe(g_m.enhanced && g_m.dash[0].burst==Machine::DashState::burst_frames,
-                                           g_m.enhanced && g_m.dash[1].burst==Machine::DashState::burst_frames);
-    if (!extended && !want.any() && !ramjet) {
+    if (!extended && !want.any()) {
         if (to_device) g_audio.push(g_pcm.data(), g_pcm.size());
         return;
     }
@@ -1101,7 +1089,6 @@ void deliver_audio(bool to_device) {
         for (std::size_t i = 0; i < frames; ++i) g_stereo[2 * i] = g_stereo[2 * i + 1] = g_pcm[i];
     }
     g_fx.process(g_stereo.data(), frames);
-    if (ramjet) g_dash_audio.mix(g_stereo.data(),frames,2,g_mixer ? g_mixer->out_rate() : 48000);
     if (to_device) g_audio.push_stereo(g_stereo.data(), frames);
 }
 
@@ -1345,7 +1332,6 @@ bool net_connect(const std::filesystem::path& zip) {
             return false;
         }
     }
-    if (g_net.mr->enhanced) g_net.mr->enable_sprite_coverage();
     g_net.runner = std::make_unique<stv::net::FrameRunner>(*g_net.mr);
     g_net.runner->start();
     // Drop-in: start both machines from the host's live game.
@@ -1395,7 +1381,7 @@ bool net_connect(const std::filesystem::path& zip) {
                     g_m.ports[1] = agreed_cmos[i+6];
                 }
             }
-            g_net.runner->step(p1,p2,before);
+            g_net.runner->step(p1,p2);
             if (before) g_net.mr->ports[1] = agreed_cmos[i+6];
             if (!resume_host) {
                 run_one_frame();
@@ -1598,7 +1584,6 @@ stv::host::PcMenuContext menu_context() {
     context.reduce_shake = g_settings.reduce_shake;
     context.reduce_flashing = g_settings.reduce_flashing;
     context.reduce_motion = g_settings.reduce_motion;
-    context.set_available(stv::host::PcMenuItem::Dash, g_enhanced);
     context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
@@ -2442,7 +2427,6 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::SoundChannels: return g_settings.extended_sound ? "Extended" : "Arcade";
     case I::Reverb: return g_settings.reverb == 2 ? "Arena" : g_settings.reverb == 1 ? "Studio" : "Off";
     case I::StereoWidth: return g_settings.audio_wide ? "Wide" : "Mono";
-    case I::Dash: return g_settings.dash_enabled ? "on" : "off";
     case I::HiFiAudio: return g_settings.audio_hifi ? "on" : "off";
     case I::SwapPads: return g_swap_pads ? "pad 1 -> P2, pad 2 -> P1" : "pad 1 -> P1, pad 2 -> P2";
     case I::StickDeadzone: return std::to_string((g_deadzone * 100 + 16383) / 32767) + "%";
@@ -2998,7 +2982,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::PadBindings: g_pad_controls = true; g_pad_capture = false; break;
             case I::ResetControls:
                 std::copy(std::begin(kDefaultKeys), std::end(kDefaultKeys), g_keys);
-                g_pad_bindings.reset(); g_settings.dash_enabled = true; g_deadzone = 12000; g_swap_pads = false;
+                g_pad_bindings.reset(); g_deadzone = 12000; g_swap_pads = false;
                 save_keys(); save = true; g_pad_router.suppress_until_neutral(); break;
             case I::SwapPads: g_swap_pads = !g_swap_pads; break;
             case I::StickDeadzone:
@@ -3068,7 +3052,6 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::SoundChannels: g_settings.extended_sound = !g_settings.extended_sound; break;
             case I::Reverb: g_settings.reverb = (g_settings.reverb + event.delta + 3) % 3; break;
             case I::StereoWidth: g_settings.audio_wide = !g_settings.audio_wide; break;
-            case I::Dash: g_settings.dash_enabled = !g_settings.dash_enabled; break;
             case I::HiFiAudio: g_settings.audio_hifi = !g_settings.audio_hifi; break;
             case I::PlayerName:
                 g_name_edit = true; g_name_draft = g_settings.player_name; g_name_cursor = 0; break;
@@ -3875,7 +3858,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                 if (finished) break;
                 g_m.ports[0] = g_m.ports[1] = 0xffff;   // all controls released (active low)
                 if (g_host_solo) record_room_frame(0,0,u16(0xffff));
-                else if (g_record_local) record_room_frame(0,0,u16(0xffff));
+                else record_local_frame();
                 run_one_frame();
                 g_pcm.clear();                          // power-on sound is generated, not played
                 if (g_frame_done) { ++boot_skip_frames; ++g_simulation_steps; }

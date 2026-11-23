@@ -172,95 +172,6 @@ void Machine::mutoid_wall_action() {
     }
 }
 
-static u8 movement_contacts(u16 vector) {
-    const auto x = s8(vector), y = s8(vector >> 8);
-    return u8((x<0 ? 4 : x>0 ? 8 : 0) | (y<0 ? 1 : y>0 ? 2 : 0));
-}
-
-// UPDATE_PLYRXY reads a buffered cabinet word before testing the retail walls.
-// Use the launch direction here even if that word still holds an earlier sample.
-void Machine::lock_dash_contacts() {
-    for (const auto& state : dash)
-        if (state.burst && state.owner==c.a[7]) {
-            c.a[2]=movement_contacts(state.locked);
-            return;
-        }
-}
-
-static std::array<u32,2> player_velocity(Machine& m, u32 legs, u32 owner, u16 motion, u32 ytable, int quarters) {
-    auto axis=[&](int value,u32 speed,u32 pos,u32 low,u32 high) {
-        const s32 coord=s32(rlong(m,legs+pos));
-        const s32 delta=s32(s64(value)*speed*quarters/(127*4));
-        const s64 limit=s32(rlong(m,owner+(delta>0 ? high : low)));
-        return u32(std::clamp<s64>(limit-coord,std::min(0,delta),std::max(0,delta)));
-    };
-    return {axis(s8(motion),rlong(m,ytable-0x140+4*32),0x60,0x280,0x2a0),
-            axis(s8(motion>>8),rlong(m,ytable+2*32),0x80,0x240,0x260)};
-}
-
-u8 Machine::dash_input(unsigned player, u8 contacts, u16 motion) {
-    auto& state = dash[player];
-    const bool pressed = (contacts & 15) == 15;
-    if (pressed) contacts = u8((contacts & 0xf0) | movement_contacts(motion));
-    move_inputs[player] = motion;
-    const u32 owner = rlong(*this,0x010de2b0u + player*32);
-    if (!enhanced_combat(*this) || firing_slot(owner)<0 || rw(owner+0x20)!=247+player ||
-        rb(*this,owner+0x1d8)!=player+1 || rb(*this,owner+0x208) || rb(*this,owner+0x210)) {
-        state = {};
-        state.held = pressed;
-        return contacts;
-    }
-    if (state.owner != owner) {
-        const auto held = state.held;
-        state = {};
-        state.held = held;
-        state.owner = owner;
-        // Retail P_DIR (unaligned, high bit means standing) supplies facing
-        // before the first movement sample of this life.
-        constexpr u8 facing[] = {0,1,2,0,8,9,10,4,5,6};
-        const unsigned dir = rb(*this,owner+0x178) & 31;
-        if (dir < std::size(facing)) state.direction = digital_motion(facing[dir]);
-    }
-    const bool ending=state.burst==1;
-    if (state.burst) --state.burst;
-    else if (state.cooldown) --state.cooldown;
-    const u16 desired = motion ? motion : digital_motion(contacts);
-    if (desired && !state.burst) state.direction = desired;
-    if (pressed && !state.held && !state.cooldown && !state.burst && state.direction) {
-        const int x = s8(state.direction), y = s8(state.direction >> 8);
-        const double scale = 127.0 / std::sqrt(double(x*x + y*y));
-        state.locked = u8(std::lround(x*scale)) | (u16(u8(std::lround(y*scale)))<<8);
-        state.burst = DashState::burst_frames;
-        state.cooldown = DashState::cooldown_frames;
-    }
-    state.held = pressed;
-    if (state.burst) {
-        move_inputs[player] = state.locked;
-        contacts = u8((contacts & 0xf0) | movement_contacts(state.locked));
-    }
-    if (state.burst || ending) {
-        // Retail animation can sleep through a velocity refresh. Stamp both
-        // moving objects at the simulation boundary, including the short last step.
-        const u32 legs=rlong(*this,owner+0x120), torso=rlong(*this,owner+0x100);
-        const auto player_part=[&](u32 obj){
-            const u32 offset=obj-object_pool_base;
-            return offset<object_slots*object_stride && offset%object_stride==0 && rw(obj+0x150)==0x4101+player;
-        };
-        if(player_part(legs) && player_part(torso)){
-            const int quarters=ending ? 4 : state.burst==1 ? 3 : 15;
-            const u32 leg_process=rlong(*this,legs+0x160);
-            const bool shoes=ending && firing_slot(leg_process)>=0 && rw(leg_process+0x180);
-            const u32 ytable=enhanced_data_address(shoes ? 0xffe1fc60u : 0xffe1f9e0u);
-            const auto velocity=player_velocity(*this,legs,owner,ending ? desired : state.locked,ytable,quarters);
-            for(auto obj:{legs,torso}){
-                wlong(*this,obj+0x20,velocity[0]);
-                wlong(*this,obj+0x40,velocity[1]);
-            }
-        }
-    }
-    return contacts;
-}
-
 void Machine::analog_walk_facing() {
     const unsigned direction=c.a[3];
     if((!move_inputs[0] && !move_inputs[1]) || game_scene_state(*this)!=0x10 ||
@@ -281,15 +192,17 @@ void Machine::analog_velocity() {
     if(firing_slot(proc)<0)return;
     const unsigned n=rb(*this,proc+0x1d8)-1u;
     if(n>=2 || !move_inputs[n] || rlong(*this,0x010de2b0+n*32)!=proc)return;
-    // Five full steps at 15/4 run speed plus a final 3/4 step give
-    // exactly 19.5 run steps, 30% farther than the original 15.
-    const auto& burst=dash[n];
-    const u32 ytable=burst.burst ? enhanced_data_address(0xffe1f9e0u) : c.a[2]-c.a[6];
-    const u16 direction=burst.burst ? burst.locked : move_inputs[n];
-    const int quarters=burst.burst==0 ? 4 : burst.burst==1 ? 3 : 15;
-    const auto velocity=player_velocity(*this,c.a[8],proc,direction,ytable,quarters);
-    c.a[0]=velocity[0];
-    c.a[1]=velocity[1];
+    const u32 ytable=c.a[2]-c.a[6]; // selected by retail shoe timer
+    const int dx=static_cast<std::int8_t>(move_inputs[n]&255);
+    const int dy=static_cast<std::int8_t>(move_inputs[n]>>8);
+    const auto component=[&](int axis,u32 speed,u32 pos,u32 low,u32 high) {
+        const s32 coord=s32(rlong(*this,c.a[8]+pos));
+        const s32 delta=s32(s64(axis)*speed/127);
+        if(delta>0)return std::clamp<s64>(s64(s32(rlong(*this,proc+high)))-coord,0,delta);
+        return std::clamp<s64>(s64(s32(rlong(*this,proc+low)))-coord,delta,0);
+    };
+    c.a[0]=u32(component(dx,rlong(*this,ytable-0x140+4*32),0x60,0x280,0x2a0));
+    c.a[1]=u32(component(dy,rlong(*this,ytable+2*32),0x80,0x240,0x260));
 }
 
 void Machine::queue_aimed_sprite() {

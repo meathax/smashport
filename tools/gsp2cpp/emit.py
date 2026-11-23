@@ -809,9 +809,6 @@ def main():
                     if note != "MPROC.ASM:219":
                         raise SystemExit("Changed retail process allocation owner")
                     body.insert(0, "if (m.enhanced && c.a[1]==286) m.latch_shot_aim();")
-                if i.pc == 0xffe1f3d0:  # UPDATE_PLYRXY movement nibble, before wall tests
-                    if i.text != "ANDI {~L1},A2": raise SystemExit("Changed retail movement contact test")
-                    body.insert(0, "if (m.enhanced) m.lock_dash_contacts();")
                 if i.pc == 0xffe1f840:  # UPDATE_PLYRXY after both axis-boundary checks
                     if i.text != "MOVE A3,A5": raise SystemExit("Changed retail walk direction")
                     body.insert(0, "if (m.enhanced) m.analog_walk_facing();")

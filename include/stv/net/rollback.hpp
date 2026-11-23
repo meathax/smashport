@@ -27,8 +27,6 @@ using stv::gsp::u64;
 // One player's controls for a frame: stick (bits 0..3 up/down/left/right),
 // fire (bits 4..7), coin (bit 8), start (bit 9). Active high.
 // Bits 10..15 encode fine aim; bits 16..23 and 24..31 carry signed movement X/Y.
-// Enhanced 0xf movement contacts mean LT held; the signed axes still
-// carry the desired movement, including zero for a stationary dash.
 using PlayerInput = u32;
 
 // Port values for a frame from both players (Y-unit IN0/IN1, active low).
@@ -44,7 +42,7 @@ public:
     explicit FrameRunner(stv::gsp::Machine& m);
     void start();                                  // from reset
     void begin_session() { frame_ = 0; } // current machine becomes the new connection epoch
-    void step(PlayerInput p1, PlayerInput p2, bool already_sampled = false);     // run to the next vblank, apply the inputs there, stop
+    void step(PlayerInput p1, PlayerInput p2);     // run to the next vblank, apply the inputs there, stop
     u32 pc() const { return pc_; }
     u32 frame() const { return frame_; }           // frames stepped so far
     void save(std::vector<u8>& out) const;         // snapshot without the program image
@@ -56,7 +54,7 @@ public:
 private:
     stv::gsp::Machine& m_;
     u32 pc_ = 0, frame_ = 0;
-    bool at_vblank_ = false, already_sampled_ = false;
+    bool at_vblank_ = false;
     PlayerInput next_p1_ = 0, next_p2_ = 0;
     std::vector<std::pair<u64, u16>> sound_;
 };
