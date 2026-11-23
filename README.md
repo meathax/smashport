@@ -1,4 +1,4 @@
-# Smash T.V. for Windows
+# Smash T.V. Widescreen Recomp
 
 Play Smash T.V. in its original 4:3 format or take on a rebalanced campaign in a shared 16:9 arena.
 
