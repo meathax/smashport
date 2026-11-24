@@ -1,6 +1,7 @@
 """Prepare native player sources using only the ROM selected for this installation."""
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "docs/reference-rom-profile.json"
@@ -27,28 +29,68 @@ def read_chips(selected):
     profile = json.loads(PROFILE.read_bytes())["roms"]
     expected = {(r["size"], r["crc32"]): r for r in profile}
     found = {}
+    sizes = {r["size"] for r in profile}
+    clone_crcs = {0x33b626c3, 0x5f6fbc25, 0xa50ccb71, 0xef0b0279,
+                  0x81f564b9, 0xe5017d25, 0xf1666017, 0x908aca5d}
+
+    def offer(data):
+        """Match one candidate file by content (size, CRC32, SHA-1), never by name."""
+        record = expected.get((len(data), zlib.crc32(data)))
+        if record and record["name"] not in found and hashlib.sha1(data).hexdigest() == record["sha1"]:
+            found[record["name"]] = data
+
+    def collect_zip(archive, depth):
+        """Merged, split, non-merged and renamed sets; clone subfolders and
+        ZIPs inside the ZIP (collection packs) are searched too."""
+        clone = False
+        members = archive.infolist()
+        if len(members) > 4096:
+            raise ValueError("Too many members in ROM archive")
+        for item in members:
+            if item.is_dir():
+                continue
+            if item.CRC in clone_crcs and item.file_size == 0x20000:
+                clone = True
+            if (item.file_size, item.CRC) in expected:
+                offer(archive.read(item))
+            elif (depth < 2 and item.filename.lower().endswith(".zip")
+                  and item.file_size <= 64 * 1024 * 1024):
+                try:
+                    with zipfile.ZipFile(io.BytesIO(archive.read(item))) as inner:
+                        clone |= collect_zip(inner, depth + 1)
+                except zipfile.BadZipFile:
+                    pass
+        return clone
 
     def collect(path):
-        if path.stat().st_size > 64 * 1024 * 1024:
-            raise ValueError(f"ROM archive exceeds 64 MiB: {path.name}")
+        if path.is_dir():
+            # An extracted set: loose chip files and/or ZIPs in the folder tree.
+            clone = False
+            for child in sorted(path.rglob("*")):
+                if not child.is_file():
+                    continue
+                if child.suffix.lower() == ".zip":
+                    try:
+                        clone |= collect(child)
+                    except (zipfile.BadZipFile, ValueError, OSError):
+                        pass
+                elif child.stat().st_size in sizes:
+                    offer(child.read_bytes())
+            return clone
+        if path.stat().st_size > 256 * 1024 * 1024:
+            raise ValueError(f"ROM archive exceeds 256 MiB: {path.name}")
         with zipfile.ZipFile(path) as archive:
-            if len(archive.infolist()) > 1024:
-                raise ValueError("Too many members in ROM archive")
-            for item in archive.infolist():
-                record = expected.get((item.file_size, item.CRC))
-                if record and record["name"] not in found:
-                    data = archive.read(item)
-                    if hashlib.sha1(data).hexdigest() == record["sha1"]:
-                        found[record["name"]] = data
-            return any(item.CRC in {0x33b626c3,0x5f6fbc25,0xa50ccb71,0xef0b0279,
-                                    0x81f564b9,0xe5017d25,0xf1666017,0x908aca5d}
-                       and item.file_size == 0x20000 for item in archive.infolist())
+            return collect_zip(archive, 0)
 
     clone = collect(selected)
-    if (found or clone) and len(found) < len(profile):
-        for sibling in sorted(selected.parent.glob("smashtv*.zip")):
-            if sibling != selected:
-                collect(sibling)
+    if (found or clone) and len(found) < len(profile) and selected.is_file():
+        # Split clone sets keep their parent beside them; MAME parent names vary.
+        for sibling in sorted(selected.parent.glob("*.zip")):
+            if sibling != selected and "smash" in sibling.name.lower():
+                try:
+                    collect(sibling)
+                except (zipfile.BadZipFile, ValueError, OSError):
+                    pass
             if len(found) == len(profile):
                 break
     missing = [r["name"] for r in profile if r["name"] not in found]

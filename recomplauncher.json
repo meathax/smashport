@@ -5,13 +5,16 @@
   "repo": "meathax/smashport",
   "inputs": [
     {
-      "id": "rom",
-      "label": "Your legally obtained retail Smash T.V. revision L8 ROM ZIP (merged or split set)",
+      "id": "game",
+      "label": "Your Smash T.V. ROM set (MAME smashtv.zip with revision L8, merged, split or non-merged; a split clone needs its parent beside it), or the folder holding it",
       "role": "game",
       "formats": [
         {
           "type": "file",
           "extensions": ["zip"]
+        },
+        {
+          "type": "folder"
         }
       ]
     }
@@ -20,11 +23,12 @@
     "program": ["SmashTV.exe"],
     "args": [
       "--prepare",
-      "--rom={input:rom}",
+      "--rom={input:game}",
       "--data={data}"
     ],
     "label": "Translating and building Smash T.V. from your L8 ROM",
     "timeout": 900,
+    "keeps_copy": true,
     "done": ["{data}/native-player/player.json"],
     "version": "1.0.0"
   },

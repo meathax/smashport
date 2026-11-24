@@ -73,7 +73,8 @@ internal static class PlayerSetup {
         // A ROM ZIP dropped onto SmashTV.exe (or passed on the command line).
         string dropped = null;
         foreach (var arg in args)
-            if (arg.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(arg)) dropped = Path.GetFullPath(arg);
+            if ((arg.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(arg)) || Directory.Exists(arg))
+                dropped = Path.GetFullPath(arg);
         if (dropped != null) {
             if (Build(kit, dropped, "Building Smash T.V. from your ROM...")) {
                 var built = Player.Load(State);
@@ -129,11 +130,19 @@ internal static class PlayerSetup {
         string kit = ExtractKit(kitRoot, false);
         if (prepare) {
             string rom = Argument(args, "--rom") ?? Argument(args, "--game");
-            if (string.IsNullOrEmpty(rom) || !File.Exists(rom)) {
+            if (!string.IsNullOrEmpty(rom) && (File.Exists(rom) || Directory.Exists(rom)))
+                return BuildHeadless(kit, state, Path.GetFullPath(rom)) ? 0 : ExitPrepare;
+            // prepare.keeps_copy: the launcher reruns this step without the copy.
+            // Rebuild from the normalized L8 set kept by the previous build.
+            var kept = Player.Load(state);
+            if (kept == null || !kept.RomIntact()) {
                 Console.Error.WriteLine("The complete retail L8 ROM ZIP was not selected.");
                 return ExitUsage;
             }
-            return BuildHeadless(kit, state, Path.GetFullPath(rom)) ? 0 : ExitPrepare;
+            string previous = Path.Combine(Path.GetTempPath(), "SmashTV-" + Guid.NewGuid().ToString("N") + ".zip");
+            File.Copy(kept.Rom, previous);
+            try { return BuildHeadless(kit, state, previous) ? 0 : ExitPrepare; }
+            finally { try { File.Delete(previous); } catch (IOException) {} }
         }
         var player = Player.Load(state);
         if (player == null || !player.Verify()) {

@@ -31,7 +31,7 @@ Play Smash T.V. in its original 4:3 format or take on a rebalanced campaign in a
 
 On Windows x64, extract the release ZIP. In [RecompLauncher](https://recomplauncher.com), use Easy Setup and select your retail L8 ROM ZIP. For standalone setup, open `SmashTV.exe` and select the same ZIP. Setup builds a native player locally from your copy.
 
-Merged and non-merged sets are supported. For a split set, keep the parent `smashtv.zip` and clone ZIPs in the same folder during setup. The importer checks the chip contents for the L8 program, graphics and sound.
+Merged, non-merged and split sets are supported, whatever the ZIP or file names are. Clone subfolders, ZIPs inside a ZIP and an extracted folder also work. For a split set, keep the parent ZIP (any name containing "smash") beside the clone ZIP during setup. The importer checks the chip contents for the L8 program, graphics and sound.
 
 ## Build from source
 
