@@ -18,7 +18,10 @@ public:
                     const EffectPacket&,const PcSettings&,bool pixelCoverage=false,
                     std::span<const uint16_t> withoutBlobs={});
  bool recompose(const EffectPacket&,const PcSettings&);
- bool draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings&,bool overlay=false,bool one_shot=false,float camera_dx=0,float camera_dy=0);
+ // base_w/base_h: the unzoomed destination size (zoom punch); 0 uses w/h.
+ bool draw(void* window,int cw,int ch,int x,int y,int w,int h,const PcSettings&,bool overlay=false,bool one_shot=false,float camera_dx=0,float camera_dy=0,int base_w=0,int base_h=0);
+ bool device_lost() const;
+ bool recover(bool dxr);
  void* overlay_dc();
  bool present();
  bool filter_ready(int mode) const;

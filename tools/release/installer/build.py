@@ -23,6 +23,9 @@ tools/gsp2cpp/emit.py tools/gsp2cpp/isa_table.json
 tools/m6809_aot/codemap6809.py tools/m6809_aot/decode6809.py tools/m6809_aot/emit6809.py
 docs/reference-rom-profile.json src/gsp/enhanced.cpp src/net/handshake.cpp""".split()
 GRAPHICS = ROOT / "third_party/graphics"
+LEADERBOARD = ROOT / "third_party/recomp_leaderboard"
+# Keep in step with CMakeLists.txt STV_LEADERBOARD_URL (STV_LEADERBOARD_URL env overrides at run time).
+LEADERBOARD_URL = "https://recomp-leaderboard.meathax.workers.dev"
 
 
 def sha(path):
@@ -75,6 +78,7 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
                 GRAPHICS / "third_party/librashader/include", gen]
     achievements = ROOT / "third_party/recomp_achievements"
     includes.append(achievements / "include")
+    includes.append(LEADERBOARD / "include")
     if sdl:
         includes.append(sdl / "include")
     if eos:
@@ -92,12 +96,13 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
     flags = ["-std=c++20", "-O2", "-DNDEBUG", "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN", "-DUNICODE",
              "-D_UNICODE", "-DWINVER=0x0a00", "-D_WIN32_WINNT=0x0a00",
              "-DSTV_HAS_EOS=" + ("1" if eos else "0"), "-DSTV_PLAYER_RELEASE=1",
-             "-DSTV_RECOMP_ACHIEVEMENTS"]
+             "-DSTV_RECOMP_ACHIEVEMENTS", "-DSTV_LEADERBOARD_URL=L\"" + LEADERBOARD_URL + "\""]
     if sdl:
         flags.append("-DSTV_SDL_PADS")
     owners = HOST + (["net/epic_rooms"] if eos else [])
     sources = [ROOT / "src" / (n + ".cpp") for n in owners] + [
-        ROOT / "third_party/ymfm/ymfm_opm.cpp", GRAPHICS / "runtime/post/post_chain.cpp"]
+        ROOT / "third_party/ymfm/ymfm_opm.cpp", GRAPHICS / "runtime/post/post_chain.cpp",
+        LEADERBOARD / "src/rl_leaderboard.cpp"]
     (stage / "host").mkdir()
     def compile_one(src):
         subprocess.run([cpp, *flags, *["-I" + str(p) for p in includes],

@@ -64,7 +64,8 @@ struct DxrLighting::Impl {
         UINT64 serial{};
     };
     std::array<Slot, 3> slots{};
-    UINT64 submitted{}, released{};
+    UINT64 submitted{}, released{}, awaited{};
+    bool simultaneous{};
     LightingFrame lastFrame;
     D3D12_RAYTRACING_GEOMETRY_DESC geometry{}, quadGeometry{};
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom{}, quadBottom{}, top{};
@@ -177,6 +178,10 @@ struct DxrLighting::Impl {
                                           nullptr, &handle.value),
                 "share light map");
         require(device->OpenSharedHandle(handle.value, IID_PPV_ARGS(&image)), "open DXR light map");
+        // A cross-API shared texture starts in COMMON. Textures are not
+        // implicitly promoted to UNORDERED_ACCESS unless simultaneous access
+        // was granted, so the trace brackets its writes with explicit barriers.
+        simultaneous = (image->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS) != 0;
         require(owner->CreateShaderResourceView(texture.Get(), nullptr, &view), "DXR light view");
         D3D12_DESCRIPTOR_HEAP_DESC dh{};
         dh.NumDescriptors = 1;
@@ -405,7 +410,20 @@ struct DxrLighting::Impl {
         list->SetComputeRootConstantBufferView(2, slot.constants->GetGPUVirtualAddress());
         list->SetComputeRootShaderResourceView(3, slot.coverage->GetGPUVirtualAddress());
         list->SetComputeRootShaderResourceView(4, slot.actors->GetGPUVirtualAddress());
+        auto transition = [&](D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
+            if (simultaneous)
+                return;
+            D3D12_RESOURCE_BARRIER b{};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = image.Get();
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            b.Transition.StateBefore = from;
+            b.Transition.StateAfter = to;
+            list->ResourceBarrier(1, &b);
+        };
+        transition(D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         list->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+        transition(D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
         require(list->Close(), "close DXR list");
         if (released)
             require(queue->Wait(consumed.Get(), released), "wait for light-map reader");
@@ -413,8 +431,16 @@ struct DxrLighting::Impl {
         queue->ExecuteCommandLists(1, commands);
         slot.serial = ++submitted;
         require(queue->Signal(produced.Get(), submitted), "publish DXR map");
-        require(context->Wait(produced11.Get(), submitted), "wait for DXR map");
+        // The D3D11 wait is deferred to acquire(), immediately before the
+        // composite reads the map, so independent D3D11 particle, smoke-flow
+        // and shadow-mask passes overlap the trace instead of queuing behind it.
         return view.Get();
+    }
+    void acquire() {
+        if (awaited == submitted)
+            return;
+        require(context->Wait(produced11.Get(), submitted), "wait for DXR map");
+        awaited = submitted;
     }
     void finishRead() {
         require(context->Signal(consumed11.Get(), released + 1), "release DXR map");
@@ -455,6 +481,15 @@ ID3D11ShaderResourceView *DxrLighting::render(const EffectPacket &p, LightingFra
     }
 }
 const LightingFrame *DxrLighting::last_frame() const { return impl_ ? &impl_->lastFrame : nullptr; }
+void DxrLighting::acquire() {
+    if (!impl_ || !error_.empty())
+        return;
+    try {
+        impl_->acquire();
+    } catch (const std::exception &e) {
+        error_ = e.what();
+    }
+}
 void DxrLighting::consumed() {
     try {
         impl_->finishRead();

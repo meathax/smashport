@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.16)
+project(rl_leaderboard CXX)
+
+add_library(rl_leaderboard STATIC src/rl_leaderboard.cpp)
+target_include_directories(rl_leaderboard PUBLIC include)
+target_compile_features(rl_leaderboard PUBLIC cxx_std_17)
+if(WIN32)
+  target_compile_definitions(rl_leaderboard PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN)
+  target_link_libraries(rl_leaderboard PUBLIC winhttp bcrypt shell32 ole32)
+endif()

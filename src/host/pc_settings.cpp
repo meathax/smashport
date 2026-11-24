@@ -49,7 +49,7 @@ bool valid(const PcSettings& s) {
            s.combat_feedback >= 0 && s.combat_feedback <= 3 &&
            s.camera_shake >= 0 && s.camera_shake <= 3 && s.zoom_punch >= 0 && s.zoom_punch <= 3 &&
            s.hit_flash >= 0 && s.hit_flash <= 3 && s.edge_effects >= 0 && s.edge_effects <= 3 &&
-           s.weapon_signatures >= 0 && s.weapon_signatures <= 3 && s.temporal_trails >= 0 && s.temporal_trails <= 3 &&
+           s.weapon_signatures >= 0 && s.weapon_signatures <= 3 &&
            s.volume >= 0 && s.volume <= 100 && s.reverb >= 0 && s.reverb <= 2 &&
            s.player_name == pc_player_name(s.player_name);
 }
@@ -79,6 +79,7 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
     std::istringstream lines(text);
     std::string line;
     bool version = false, hasVisualOptions = false, hasRoomCinema = false;
+    std::set<std::string> legacyOn; // retired keys an old build saved as 1 (migration only)
     int versionNumber = 0;
     auto invalid = [&] { error = "Invalid PC setting: " + line.substr(0, 80); return SettingsLoad::Invalid; };
     while (std::getline(lines, line)) {
@@ -115,19 +116,17 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "debris") candidate.debris = n != 0;
             if (key == "smoke") candidate.smoke = n != 0;
             if (key == "fire") candidate.fire = n != 0;
-            if (key == "lighting") candidate.lighting = n != 0;
+            // Retired options that never rendered anything: accepted, remembered for migration, not saved.
+            if (key == "lighting" || key == "ray_tracing" || key == "tracers" || key == "room_lights") { if (n) legacyOn.insert(key); }
             if (key == "hardware_rt") candidate.hardware_rt = n != 0;
-            if (key == "ray_tracing") candidate.ray_tracing = n != 0;
             if (key == "shockwaves") candidate.shockwaves = n != 0;
-            if (key == "tracers") candidate.tracers = n != 0;
             if (key == "persistent_gore") { candidate.persistent_gore = n != 0; hasVisualOptions = true; }
-            if (key == "materials") { candidate.materials = n != 0; hasVisualOptions = true; }
+            if (key == "materials") hasVisualOptions = true; // retired preference
             if (key == "destruction") { candidate.destruction = n != 0; hasVisualOptions = true; }
             if (key == "studio") hasVisualOptions = true; // retired preference
             if (key == "weapon_impacts") { candidate.weapon_impacts = n != 0; hasVisualOptions = true; }
             if (key == "fluid_smoke") { candidate.fluid_smoke = n != 0; hasVisualOptions = true; }
             if (key == "explosive_debris") candidate.explosive_debris = n != 0;
-            if (key == "room_lights") candidate.room_lights = n != 0;
             if (key == "muzzle_flash") candidate.muzzle_flash = n != 0;
             if (key == "brass") candidate.brass = n != 0;
             if (key == "voxels") candidate.voxels = n != 0;
@@ -140,7 +139,7 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
         else if (key == "hit_flash") candidate.hit_flash = n;
         else if (key == "edge_effects") candidate.edge_effects = n;
         else if (key == "weapon_signatures") candidate.weapon_signatures = n;
-        else if (key == "temporal_trails") candidate.temporal_trails = n;
+        else if (key == "temporal_trails") { if (n < 0 || n > 3) return invalid(); } // retired preference
         else if (key == "reverb") candidate.reverb = n;
         else if (key == "reduce_shake" || key == "reduce_flashing" || key == "reduce_motion") {
             if (n != 0 && n != 1) return invalid();
@@ -174,15 +173,16 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
         has("contact_shadows") && has("wet_materials") && has("heat_distortion") &&
         has("emissive_spill") && has("cinematic_grade") && has("combat_feedback") &&
         has("camera_shake") && has("zoom_punch") && has("hit_flash") &&
-        has("edge_effects") && has("weapon_signatures") && has("temporal_trails") &&
+        has("edge_effects") && has("weapon_signatures") &&
         has("reduce_shake") && has("reduce_flashing") && has("reduce_motion");
     if (!version || (versionNumber >= 2 && !hasRoomCinema) ||
         (versionNumber == 3 && !hasIntegratedSettings) || !valid(candidate)) {
         error = "PC settings version or range is invalid"; return SettingsLoad::Invalid;
     }
     if (versionNumber == 1 && !hasRoomCinema) candidate.room_cinema = 0;
-    if (!hasVisualOptions && candidate.enhance && candidate.shockwaves && candidate.tracers && candidate.brass && candidate.voxels && candidate.ray_tracing && candidate.lighting && candidate.particles && candidate.blood && candidate.smoke && candidate.fire && candidate.debris && candidate.room_lights && candidate.muzzle_flash)
-        candidate.persistent_gore = candidate.materials = candidate.destruction = candidate.weapon_impacts = candidate.fluid_smoke = true;
+    // A file from before the visual options, saved with every effect on, turns the later effects on too.
+    if (!hasVisualOptions && candidate.enhance && candidate.shockwaves && legacyOn.count("tracers") && candidate.brass && candidate.voxels && legacyOn.count("ray_tracing") && legacyOn.count("lighting") && candidate.particles && candidate.blood && candidate.smoke && candidate.fire && candidate.debris && legacyOn.count("room_lights") && candidate.muzzle_flash)
+        candidate.persistent_gore = candidate.destruction = candidate.weapon_impacts = candidate.fluid_smoke = true;
     settings = candidate;
     return SettingsLoad::Loaded;
 }
@@ -201,13 +201,11 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\ndebris=" << int(settings.debris)
            << "\nsmoke=" << int(settings.smoke)
            << "\nfire=" << int(settings.fire)
-           << "\nlighting=" << int(settings.lighting)
            << "\nhardware_rt=" << int(settings.hardware_rt)
-           << "\nray_tracing=" << int(settings.ray_tracing) << "\nvoxels=" << int(settings.voxels)
-           << "\nshockwaves=" << int(settings.shockwaves) << "\ntracers=" << int(settings.tracers) << "\nbrass=" << int(settings.brass) << "\nmuzzle_flash=" << int(settings.muzzle_flash) << "\nroom_lights=" << int(settings.room_lights)
+           << "\nvoxels=" << int(settings.voxels)
+           << "\nshockwaves=" << int(settings.shockwaves) << "\nbrass=" << int(settings.brass) << "\nmuzzle_flash=" << int(settings.muzzle_flash)
            << "\npersistent_gore=" << int(settings.persistent_gore)
            << "\nexplosive_debris=" << int(settings.explosive_debris)
-           << "\nmaterials=" << int(settings.materials)
            << "\ndestruction=" << int(settings.destruction)
            << "\nweapon_impacts=" << int(settings.weapon_impacts)
            << "\nfluid_smoke=" << int(settings.fluid_smoke)
@@ -225,7 +223,6 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\nhit_flash=" << settings.hit_flash
            << "\nedge_effects=" << settings.edge_effects
            << "\nweapon_signatures=" << settings.weapon_signatures
-           << "\ntemporal_trails=" << settings.temporal_trails
            << "\nreduce_shake=" << int(settings.reduce_shake)
            << "\nreduce_flashing=" << int(settings.reduce_flashing)
            << "\nreduce_motion=" << int(settings.reduce_motion)

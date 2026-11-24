@@ -627,7 +627,22 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         GpuLight g;
         g.x = d.x + float(offset); g.y = d.y; g.z = d.height; g.radius = d.radius;
         g.r = d.r; g.g = d.g; g.b = d.b; g.intensity = d.power;
-        g.softness = 2; g.samples = 1;
+        // A small area source: the adaptive disk sampler keeps this at two
+        // rays outside penumbrae, and explosions get soft-edged shadows.
+        g.softness = 4; g.samples = 2;
+        // Like wall fixtures, a light inside a wall proxy (rear 44 high, sides
+        // 30, front lip 14) would have every shadow ray blocked: keep it in the arena.
+        {
+            const float fx = frame.floor[0], fy = frame.floor[1], fw = frame.floor[2], fh = frame.floor[3];
+            if (fw > 0 && fh > 0) {
+                if (g.z < 48 && g.y < fy + 5 && g.y > fy - 40) g.y = fy + 5;
+                if (g.z < 34 && g.y >= fy && g.y <= fy + fh) {
+                    if (g.x < fx + 5 && g.x > fx - 40) g.x = fx + 5;
+                    if (g.x > fx + fw - 5 && g.x < fx + fw + 40) g.x = fx + fw - 5;
+                }
+                if (g.z < 18 && g.y > fy + fh - 5 && g.y < fy + fh + 30) g.y = fy + fh - 5;
+            }
+        }
         if (!reaches(g, W, H)) continue;
         frame.lights.push_back(g);
         ++frame.dynamicLights;

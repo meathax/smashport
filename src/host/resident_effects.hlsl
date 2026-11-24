@@ -29,9 +29,12 @@ RWTexture2D<uint> shadowBits : register(u7);
 Texture2D<uint> arcade : register(t5);
 
 // Shape in native pixels, indexed by projectile family in both flight and floor passes.
+// Muzzle size per player weapon family + 1 (0 = hostile), matching weapon_fx_signatures.
+static const float muzzleScale[7]={1.,1.,1.18,.92,1.42,.82,1.10};
+// x = half length of the straight wall, y = radius (a capsule ~2-4 px long, ~1 px wide).
 static const float2 caseShape[8]={
- float2(.32,.80),float2(.46,.82),float2(.58,.80),float2(.69,.97),
- float2(.81,.86),float2(.58,.91),float2(.34,.87),float2(.64,.83)
+ float2(.85,.48),float2(.95,.50),float2(1.0,.52),float2(1.25,.74),
+ float2(1.15,.58),float2(.95,.56),float2(.60,.50),float2(1.0,.55)
 };
 static const float3 caseTint[8]={
  float3(.96,.69,.22),float3(.82,.53,.24),float3(.83,.68,.44),float3(.52,.57,.30),
@@ -40,7 +43,22 @@ static const float3 caseTint[8]={
 uint visualLevel(uint index) { return (visualLevels >> (index * 2)) & 3; }
 float casingCoverage(float2 delta,float2 axis,uint family){
  float2 shape=caseShape[family];
- return saturate(shape.y-length(delta-axis*clamp(dot(delta,axis),-shape.x,shape.x)));
+ float d=length(delta-axis*clamp(dot(delta,axis),-shape.x,shape.x));
+ return saturate((shape.y-d)*1.6+.5); // solid core, one anti-aliased edge pixel
+}
+// Lit cylinder: a moving specular band as the case turns about its own axis,
+// a darker open mouth and a rim groove at the primer end.
+float casingShade(float2 delta,float2 axis,uint family,float roll){
+ float2 shape=caseShape[family];
+ float t=dot(delta,axis)/(shape.x+shape.y);
+ float s=clamp(dot(delta,float2(-axis.y,axis.x))/max(shape.y,.01),-1.,1.);
+ float band=.55*sin(roll);
+ float diffuse=.58+.42*sqrt(saturate(1-s*s))*(.75+.25*cos(roll));
+ float spec=pow(saturate(1-abs(s-band)*1.35),5)*(.55+.45*cos(roll*.5));
+ float shade=diffuse+spec*.75;
+ if(t<-.62)shade*=.55;       // open mouth
+ else if(t>.70)shade*=.80;   // extractor rim
+ return shade;
 }
 bool spritePixel(int2 p,int4 rect,uint bank){
  if(any(p<rect.xy)||any(p>=rect.xy+rect.zw)||any(p<0)||p.x>=int(width)||p.y>=int(height))return false;
@@ -115,6 +133,10 @@ SamplerState smokeSampler : register(s0);
 uint originalPixel(uint2 pos);
 float lum(uint c){return dot(float3((c>>16)&255,(c>>8)&255,c&255),float3(.25,.55,.20))/255.;}
 float wetness(uint mark){return mark?saturate(1-float(((tick&1048575)-(mark>>12))&1048575)/520.):0.;}
+float stainAge(uint mark){return float(((tick&1048575)-(mark>>12))&1048575);}
+// Boots still lift pigment from a pool that has only skinned over (about 25 s).
+float tacky(uint mark){return mark?saturate(1-stainAge(mark)/1400.):0.;}
+bool bloodType(uint type){return type==0 || type==2 || type==3;}
 float hash(float2 p) { return frac(sin(dot(p,float2(127.1,311.7)))*43758.5453); }
 float noise(float2 p) {
  float2 i=floor(p),f=frac(p);f=f*f*(3-2*f);
@@ -181,7 +203,42 @@ float tissueFace(float2 delta,float angle,float size,float tissue){
  return saturate(.55-uv.y*.56+uv.x*.14);
 }
 float3 fleshColor(float face){
- return lerp(float3(.16,.029,.041),float3(.67,.31,.24),face*face);
+ return lerp(float3(.13,.012,.022),float3(.66,.17,.14),face*face);
+}
+// About one torn piece in twelve is a bloodied bone shard rather than meat.
+bool boneShard(float tissue){return frac(tissue*7.31+.137)<.08;}
+float3 boneColor(float face){return lerp(float3(.30,.21,.17),float3(.84,.75,.62),saturate(face*1.15));}
+float goreCov(int2 c){
+ uint m=stains.Load(int3(c,0)),t=(m>>8)&15;
+ return (bloodType(t) || (t>=5 && t<=12))?(m&255)/255.:0;
+}
+// Blood is a thin absorptive film with its own height field: pools are thick and
+// dark in the middle, translucent at the edge, glossy while wet, and oxidise from
+// arterial red to brown-maroon with a darker dried rim. Only computed where a
+// deposit exists (4 extra loads).
+float3 shadeGore(float3 rgb,int2 cell,uint type,float coverage,float age,float wet){
+ float l=goreCov(cell-int2(1,0)),r=goreCov(cell+int2(1,0)),u=goreCov(cell-int2(0,1)),d=goreCov(cell+int2(0,1));
+ float around=(l+r+u+d)*.25;
+ float thick=saturate(coverage*(.3+.85*around))*(type==2?.55:1.);
+ float edge=saturate(coverage-min(min(l,r),min(u,d)));
+ float fresh=pow(saturate(1-age/2400.),2.);
+ float cure=smoothstep(600.,6000.,age);
+ float3 thinC=lerp(float3(.56,.032,.034),float3(.33,.07,.048),cure);
+ float3 thickC=lerp(float3(.33,.006,.016),float3(.15,.032,.024),cure);
+ float3 blood=lerp(thinC,thickC,thick);
+ if(type>=5 && type<=12){blood=fleshColor(float((type-5)%4)/3.)*(.8+.2*fresh);thick=max(thick,.7);}
+ if(type==3){thick=min(thick,.3);blood=lerp(thinC,thickC,.5);}
+ float base=dot(rgb,float3(.3,.55,.15));
+ // The surface shows through thin blood stained red; it never lifts the pigment.
+ float3 col=lerp(rgb*float3(.86,.3,.28),blood*(.84+.34*base),saturate(.45+thick*.75));
+ col*=1-.4*edge*cure;
+ float2 grain=float2(noise(float2(cell)*.71),noise(float2(cell)*.71+17.3))-.5;
+ float3 n=normalize(float3((l-r)*1.7+grain.x*.35,(u-d)*1.7+grain.y*.35,1));
+ float facing=saturate(dot(n,normalize(float3(-.38,-.52,1.75))));
+ float gloss=(.25+.75*wet)*(.3+.7*fresh)*saturate(thick*1.7);
+ // Broad wet sheen plus a sharp highlight where the meniscus faces the light.
+ col+=float3(.55,.10,.10)*pow(facing,6)*gloss*.35+float3(1,.82,.78)*pow(facing,48)*gloss*1.15;
+ return lerp(rgb,col,saturate(coverage*(type==2?.84:.97)));
 }
 // Mirror-polished steel reflects a fake arena: dark warm floor below a near-black
 // horizon line, cool blue-grey ceiling above, and one narrow specular hotspot.
@@ -206,7 +263,7 @@ bool floorPixel(float2 xy){
  return true;
 }
 // Only contact drips and attached tissue can mark raised surfaces.
-bool wallStain(uint type){return type==3 || (type>=9 && type<=12);}
+bool wallStain(uint type){return type==3 || (type>=9 && type<=12) || type==14;}
 float floorCoverage(float2 xy){
  if(floorRect.z<=0)return 1;
  float2 local=xy+.5-floorRect.xy;
@@ -323,14 +380,33 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    groundLight+=dxrLight.Load(int3(at,0)).rgb*((2-abs(tx))*(2-abs(ty))/16.);
   }
   groundLight-=1;
-  if(id.y<256)groundSpec=dxrLight.Load(int3(id.xy+uint2(0,256),0)).rgb;
+  // The specular row carries the same penumbra dither: resolve it with the
+  // same tent so floor highlights do not sparkle.
+  if(id.y<256){
+   [unroll]for(int sy=-1;sy<=1;++sy)[unroll]for(int sx=-1;sx<=1;++sx){
+    int2 at=clamp(int2(id.xy)+int2(sx,sy),int2(0,0),int2(width-1,min(height,256)-1));
+    if(frontWall)at.y=max(at.y,int(ceil(roomFloor.y+roomFloor.w-.5)));
+    groundSpec+=dxrLight.Load(int3(at+int2(0,256),0)).rgb*((2-abs(sx))*(2-abs(sy))/16.);
+   }
+  }
   if(visibleSprite){
    float4 body=dxrLight.Load(int3(id.xy+uint2(1024,0),0));
    uint tag=uint(round(body.a*255));
    float3 inkColor=float3((original>>16)&255,(original>>8)&255,original&255)/255.;
    float3 lit;
    if(tag && (tag&127)==1+((ink&4032)>>6)){
-    float3 shine=id.y<256?dxrLight.Load(int3(id.xy+uint2(1024,256),0)).rgb:0;
+    // Edge-aware tent: average only receivers of this same sprite, so the
+    // body light loses its shadow dither without bleeding across actors.
+    float3 shine=0;float weight=0;float3 bodySum=0;
+    [unroll]for(int by=-1;by<=1;++by)[unroll]for(int bx=-1;bx<=1;++bx){
+     int2 at=clamp(int2(id.xy)+int2(bx,by),int2(0,0),int2(width-1,height-1));
+     float4 n=dxrLight.Load(int3(at+int2(1024,0),0));
+     if(uint(round(n.a*255))!=tag)continue;
+     float w=(2-abs(bx))*(2-abs(by))/16.;
+     bodySum+=n.rgb*w;weight+=w;
+     if(at.y<256)shine+=dxrLight.Load(int3(at+int2(1024,256),0)).rgb*w;
+    }
+    body.rgb=bodySum/max(weight,1e-4);shine/=max(weight,1e-4);
     lit=inkColor*body.rgb+shine*((tag&128)?.55:.16);
    }else{
     float k=.55*(1-smoothstep(.55,.95,max(inkColor.r,max(inkColor.g,inkColor.b))));
@@ -385,26 +461,49 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   if(mark && (((mark>>8)&15)==4 ? (mask&32768) : (mask&2048)) &&
      (wallStain((mark>>8)&15) || floorPixel(id.xy))){
    uint type=(mark>>8)&15;float coverage=(mark&255)/255.;float wet=wetness(mark);
-   float3 pigment=type==4?float3(.048,.034,.030):type==1||type==13?oilColor(float2(int2(id.xy)+floorOrigin),wet):
-      lerp(float3(.19,.043,.040),float3(.54,.019,.047),wet);
-   if(type>=5 && type!=13)pigment=fleshColor(float((type-5)%4)/3.)*(.72+.28*wet);
+   float age=stainAge(mark);
    if(type!=3 && type!=4 && type<9)coverage*=floorCoverage(id.xy);
-   if(type==3)coverage*=saturate(float(((tick&1048575)-(mark>>12))&1048575)*.07-(1-coverage));
+   if(type==3)coverage*=saturate(age*.07-(1-coverage));
    surface=drawnSurface(id.xy);coverage*=surface;
    wetDeposit=max(wetDeposit,wet*coverage);
-   rgb=lerp(rgb,pigment*(.7+dot(rgb,float3(.4,.45,.15))),coverage*(type==2?.73:.91));
+   if(type==14){
+    // Wall film: absorptive, so the wall's panels and rivets stay readable.
+    // Fresh spray is glossy arterial red; it oxidises brown over ~2 minutes and
+    // the run grows downward as lower (fainter) cells are revealed.
+    float reveal=saturate(age*.05-(1-coverage)*1.6);
+    float c=coverage*reveal;
+    float fresh=pow(saturate(1-age/2400.),2.),cure=smoothstep(600.,6000.,age);
+    float3 film=lerp(float3(.62,.05,.05),float3(.40,.10,.07),cure);
+    float3 stained=rgb*lerp(float3(1,1,1),film,saturate(c*1.15))*(1-.25*c*cure);
+    stained+=float3(.30,.03,.03)*c*fresh*(1-dot(rgb,float3(.3,.55,.15)));   // shows on dark panels too
+    float glint=goreCov(int2(id.xy)+floorOrigin-int2(0,1))<.05 && c>.5?1:0; // wet top edge of each mark
+    stained+=float3(.9,.75,.7)*glint*fresh*wet*.35;
+    rgb=lerp(rgb,stained,saturate(c*1.2));
+   }else if(bloodType(type) || (type>=5 && type<=12)){
+    rgb=shadeGore(rgb,int2(id.xy)+floorOrigin,type,coverage,age,wet);
+   }else{
+    float3 pigment=type==4?float3(.048,.034,.030):oilColor(float2(int2(id.xy)+floorOrigin),wet);
+    rgb=lerp(rgb,pigment*(.7+dot(rgb,float3(.4,.45,.15))),coverage*.91);
+   }
   }
  }
  if((mask&2048) && ground){
-  uint piece=restingBodies.Load(int3(int2(id.xy)+floorOrigin,0));
+  int2 bodyCell=int2(id.xy)+floorOrigin;
+  uint piece=restingBodies.Load(int3(bodyCell,0));
   if(piece){
    if(surface<0)surface=drawnSurface(id.xy);
-   // Settled fragments are matte, partially covering the floor. The packed
-   // coverage was previously ignored, so sustained boss fire accumulated a
-   // fully opaque sheet of the brightest chrome samples.
+   // Settled fragments: the packed coverage is honoured (sustained boss fire
+   // must not become an opaque chrome sheet) and brightness stays capped. Each
+   // chunk is bevelled against the upper-left light so it reads as a solid piece.
    float3 debris=float3((piece>>16)&255,(piece>>8)&255,piece&255)/255.;
-   debris*=min(1.,.48/max(.001,max(debris.r,max(debris.g,debris.b))));
+   debris*=min(1.,.54/max(.001,max(debris.r,max(debris.g,debris.b))));
+   bool lit=restingBodies.Load(int3(bodyCell-int2(1,1),0))==0;
+   bool shaded=restingBodies.Load(int3(bodyCell+int2(1,1),0))==0;
+   float wetGlint=debris.r>debris.g*1.6 && lit ? .5 : .18;
+   debris=debris*(lit?1.16:1)*(shaded?.58:1)+float3(1,.8,.75)*(lit && !shaded?wetGlint*.22:0);
    rgb=lerp(rgb,debris,(float(piece>>24)/255.)*floorCoverage(id.xy)*surface);
+  }else if(floorPixel(id.xy) && restingBodies.Load(int3(bodyCell-int2(1,1),0))){
+   rgb*=.62; // soft contact shadow down-right of each chunk
   }
  }
  if(materialLevel && wetDeposit>0){
@@ -437,7 +536,11 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
     float4 box=foreground[i];
     covered=all(id.xy>=box.xy)&&all(id.xy<box.zw);
    }
-   if(!covered)rgb=lerp(rgb,caseTint[mark&7]*(((mark>>3)&255)/255.),(mark>>11)/255.);
+   if(!covered){
+    float shade=((mark>>3)&255)/160.;
+    float3 brass=caseTint[mark&7]*min(shade,1.)+float3(1,.93,.74)*max(0,shade-1)*.6;
+    rgb=lerp(rgb,brass*sceneTint,(mark>>11)/255.);
+   }
   }
  }
  if((!visibleSprite || scorePanel) && (mask&65536)){
@@ -488,7 +591,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   float2 delta=float2(id.xy)+.5-p.shape.xy;
   float size=p.shape.z;
   uint heatLevel=visualLevel(4);
-  float heatRange=kind==4?size+1+heatLevel*1.5:size+1;
+  float heatRange=kind==4?size+1+heatLevel*1.5:kind==1?size*2.6+1:size+1;
   if(any(abs(delta)>heatRange))continue;
   float alpha=p.color.a;float3 color=p.color.rgb;
   // Airborne pieces project above the floor, including in front of wall faces.
@@ -496,7 +599,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    if(kind==18 && !(mask&2))continue;
    if(state.misc.y>.5){
     float face=tissueFace(delta,state.misc.w,size,state.misc.z);
-    if(face>=0)rgb=fleshColor(face)*sceneTint;
+    if(face>=0)rgb=(boneShard(state.misc.z)?boneColor(face):fleshColor(face))*sceneTint;
    }else{
     float2 axis=normalize(float2(state.vel.x,state.vel.y-state.vel.z)+.0001);
     float2 uv=float2(dot(delta,axis),dot(delta,float2(-axis.y,axis.x)));
@@ -545,6 +648,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    float face=saturate(.48-uv.y*.65+uv.x*.21);
    float3 c=metal?chromeColor(face,state.misc.w*2.3):
                   lerp(float3(.15,.005,.018),lerp(float3(.77,.06,.09),float3(.91,.42,.34),state.misc.z),face);
+   if(!metal && boneShard(state.misc.z))c=boneColor(face);
    if(metal && p.phase.x>.72){
     float arc=abs(uv.y-.28*sin(uv.x*8+floor(tick*.4)));
     if(arc<.15 && abs(uv.x)<.6)c=float3(.26,.68,.76);
@@ -581,30 +685,51 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    }
    continue;
   }
-  if(kind==8) {
-   float2 axis=state.misc.yz;
-   float along=clamp(dot(delta,axis)/max(dot(axis,axis),.01),-1.,1.);
-   float coverage=saturate(1.25-length(delta-axis*along));
-   rgb+=float3(1,.47,.12)*coverage*p.phase.x*(.27+.22*along);
-   continue;
-  }
   if(kind==10){
    if(!(mask&1024))continue;
-   float2 axis=state.misc.yz;
-   float along=dot(delta,axis),side=abs(dot(delta,float2(-axis.y,axis.x)));
-   float reach=size*(.35+.65*p.phase.x);
-   if(along>=0 && along<=reach && side<=.45+1.65*(1-saturate(along/reach))){
-    float core=saturate(1-(side*.65+max(0,along)/reach));
-    rgb=lerp(rgb,lerp(float3(1,.40,.08),float3(1,.98,.81),core),saturate(p.phase.x*3));
+   // Origin is the centre of the first empty pixel past the scanned barrel tip.
+   // A white-hot core, a ragged forward plume, two short side prongs and a
+   // warm glow; the shape is re-rolled per shot so held fire flickers.
+   float2 axis=state.misc.yz,normal=float2(-axis.y,axis.x);
+   float along=dot(delta,axis)+.5,side=dot(delta,normal);
+   uint family=(uint)state.color.y;
+   float energy=family==5?1.:0.;
+   float life=saturate(p.phase.x*2.2);
+   float reach=size*(.45+.55*p.phase.x);
+   uint seed=asuint(state.misc.w);
+   float cut=frac(sin(floor(along)*12.9898+state.misc.w*78.233)*43758.5453);
+   float spread=family==1?1.55:1.;
+   float width=(.22+1.30*pow(saturate(1-along/reach),.9))*spread*(.80+.40*cut);
+   float plume=along>=-.1 && along<=reach ? saturate((width-abs(side))*1.4+.5) : 0;
+   float prongAngle=.72+.24*frac(state.misc.w*3.7);
+   float prong=0;
+   for(int k=-1;k<=1;k+=2){
+    float2 dir=axis*cos(prongAngle)+normal*(sin(prongAngle)*k);
+    float a=dot(delta,dir),o=abs(dot(delta,float2(-dir.y,dir.x)));
+    float len=reach*(.40+.16*frac(state.misc.w*(k>0?5.3:9.1)));
+    if(a>0 && a<len)prong=max(prong,saturate((.80*(1-a/len)-o)*1.8+.5));
    }
+   float r=length(delta-axis*.8);
+   float core=along>=0?saturate((1.1-r)*1.3):0; // never paints back over the barrel
+   float heat=saturate(max(core,plume*(1-saturate(along/reach))*.9));
+   float shape=saturate(max(max(plume,prong),core));
+   float3 hot=lerp(float3(1,.97,.86),float3(.86,.98,1),energy);
+   float3 mid=lerp(float3(1,.78,.26),float3(.45,.92,1),energy);
+   float3 tip=lerp(float3(.98,.34,.06),float3(.20,.52,1),energy);
+   float3 flame=lerp(tip,lerp(mid,hot,saturate(heat*1.6-.6)),saturate(heat*2));
+   // Forward-only glow: nothing is painted behind the first empty pixel.
+   float glow=along>=0?saturate(1-length(float2(along/reach,side/(reach*.45))))*.32:0;
+   rgb=lerp(rgb,flame,shape*life)+lerp(float3(1,.52,.16),float3(.3,.62,1),energy)*glow*glow*life;
    continue;
   }
   if(kind==9) {
    if(!(mask&512))continue;
    float2 axis=state.misc.yz;
-   float coverage=casingCoverage(delta,axis,(uint)state.color.x);
-   float glint=.65+.35*abs(axis.x);
-   float3 brass=caseTint[(uint)state.color.x]*glint;
+   uint family=(uint)state.color.x;
+   float coverage=casingCoverage(delta,axis,family);
+   if(coverage<=0)continue;
+   float shade=casingShade(delta,axis,family,state.color.y);
+   float3 brass=caseTint[family]*shade+float3(1,.93,.74)*saturate(shade-1)*.6;
    rgb=lerp(rgb,brass*sceneTint,coverage*p.color.a);
    continue;
   }
@@ -633,8 +758,17 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   } else {
    // Small asymmetric flesh flecks. Analytic coverage preserves subpixel pieces.
    float2 q=delta/float2(size,kind==5?size*.65:size);
+   if(kind==1 && !oilDrop(color)){
+    // Airborne blood: a streak along the projected screen velocity with a bright head.
+    float2 v=float2(state.vel.x,state.vel.y-state.vel.z);float speed=length(v);
+    float2 axis=speed>1?v/speed:float2(1,0);
+    float stretch=1+min(speed,160.)/45.;
+    float along=dot(delta,axis);
+    q=float2((along+size*(stretch-1))/(size*stretch),dot(delta,float2(-axis.y,axis.x))/size);
+    color=lerp(color,float3(1,.42,.40),saturate(along/size-.1)*.45);
+   }
    float shape=length(q)+.12*sin(q.x*5+p.phase.y);
-   alpha*=saturate((1-shape)*size+.5);
+   alpha*=saturate((1-shape)*max(size,.7)+.5);
    if(kind==2||kind==5)color*=.65+.45*saturate(.5-delta.y/(size*2));
    if(kind==1 && oilDrop(color))color+=float3(.30,.33,.38)*saturate(1-length(q+float2(.3,.4))*2.4);
   }
@@ -709,33 +843,55 @@ void collideArena(inout State p,float2 old){
   }
  }
 }
+// misc.w in-plane angle, misc.z in-plane spin (rad/s), color.y roll about the
+// case's own axis, color.z roll rate. Airborne tumble, bouncing tinkle, then a
+// short roll across its axis before it settles.
 bool stepBrass(inout State p,float step){
- p.misc.w+=step*15;
+ p.misc.w+=step*p.misc.z;
  p.misc.yz=float2(cos(p.misc.w),sin(p.misc.w));
+ p.color.y+=step*p.color.z;
  float2 before=p.pos.xy;
  p.pos.xyz+=p.vel.xyz*step;
  collideArena(p,before);
- p.vel.z-=180*step;
- if(p.pos.z>0)return false;
+ if(p.pos.z>0){p.vel.z-=320*step;return false;}
  p.pos.z=0;
- p.vel.xy*=.55;p.vel.z=abs(p.vel.z)*.28;
- return p.vel.z<4;
+ if(p.vel.z<-14){
+  uint seed=asuint(p.pos.x*131.7+p.pos.y)^asuint(p.misc.w);
+  p.vel.z=-p.vel.z*(.30+.12*random(seed));
+  p.vel.xy=p.vel.xy*.58+float2(random(seed)-.5,random(seed)-.5)*12;
+  p.misc.z=(random(seed)-.5)*42;          // a hit on the rim flips it end over end
+  p.color.z=(random(seed)-.5)*60;
+  return false;
+ }
+ p.vel.z=0;
+ float2 axis=p.misc.yz,across=float2(-axis.y,axis.x);
+ float roll=dot(p.vel.xy,across)*exp(-step*6.5),slide=dot(p.vel.xy,axis)*exp(-step*16);
+ p.vel.xy=across*roll+axis*slide;
+ p.misc.z*=exp(-step*9);
+ p.misc.z+=roll*.06;                       // the bottleneck makes it roll in an arc
+ p.color.z=roll/max(caseShape[(uint)p.color.x].y,.3);
+ return dot(p.vel.xy,p.vel.xy)<1.7 && abs(p.misc.z)<1.5;
 }
 
 void settleBrass(State p){
  int2 base=int2(floor(p.pos.xy))+floorOrigin;
- float glint=.65+.35*abs(p.misc.y);
+ uint family=(uint)p.color.x;
  uint w,h;brassFloor.GetDimensions(w,h);
- for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){
+ for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
   int2 cell=base+int2(x,y);
   if(any(cell<0)||any(cell>=int2(w,h)))continue;
   float2 delta=float2(cell-floorOrigin)+.5-p.pos.xy;
-  float coverage=casingCoverage(delta,p.misc.yz,(uint)p.color.x);
+  float coverage=casingCoverage(delta,p.misc.yz,family);
   uint opacity=uint(round(coverage*255));
-  if(opacity)InterlockedMax(brassFloor[cell],(opacity<<11)|(uint(round(glint*255))<<3)|(uint)p.color.x);
+  uint shade=uint(round(saturate(casingShade(delta,p.misc.yz,family,p.color.y)/1.6)*255));
+  // A faint contact shadow just below the case grounds it on the floor.
+  float contact=casingCoverage(delta-float2(.35,.8),p.misc.yz,family)*.38;
+  if(uint(round(contact*255))>opacity){opacity=uint(round(contact*255));shade=14;}
+  if(opacity)InterlockedMax(brassFloor[cell],(opacity<<11)|(shade<<3)|family);
  }
 }
 void storeStain(int2 xy,uint type,float opacity);
+void settlePlayerGore(State p);
 bool stickToWall(State p,float2 old){
  if(!(mask&2048) || floorRect.z<=0 || !floorPixel(old) || floorPixel(p.pos.xy))return false;
  uint kind=uint(p.misc.x);
@@ -750,25 +906,54 @@ bool stickToWall(State p,float2 old){
  if(side && localY>=111 && localY<169 && (open&(travel.x<0?1:2)))return false;
  if(!side && travel.y<0 && (open&4) && hit.x>=gates.x && hit.x<gates.y)return false;
  float height=min(max(1,p.pos.z),16);
- if(side)hit+=float2(sign(travel.x)*min(6,height*.4),-height*.55);
- else hit.y+=sign(travel.y)*min(height,travel.y<0?16:4);
+ // Wall art stays untouched: a wall hit splashes back onto the floor along the
+ // wall's base, so every deposit stays strictly inside the floor and the
+ // floor/wall boundary keeps a crisp edge.
+ float2 inward=side?float2(-sign(travel.x),0):float2(0,-sign(travel.y));
+ float2 base=placeOnFloor(hit,0)+inward*.5;
  uint seed=asuint(p.misc.w)^asuint(p.pos.x)^tick;
- for(int drop=0;drop<5;drop++){
-  float2 jitter=float2(random(seed)-.5,random(seed)-.5);
-  int2 start=int2(hit+jitter*(drop?9:2));
-  int run=1+int(random(seed)*(drop?4:8));
+ float2 along=side?float2(0,1):float2(1,0);
+ for(int drop=0;drop<4;drop++){
+  float2 start=base+along*(random(seed)-.5)*(drop?8:2);
+  int run=1+int(random(seed)*(drop?2:min(height*.3,4.)));
   for(int dy=0;dy<run;dy++){
-   storeStain(start+int2(0,dy),3,.92-.55*dy/run);
-   if(!drop && dy<run/2)storeStain(start+int2(1,dy),3,.76);
+   int2 cell=int2(start+inward*dy);
+   if(floorPixel(cell))storeStain(cell,3,.8-.45*dy/run);
   }
  }
- // A fleshy fragment leaves a raised, shaded piece at the head of its drip.
- if(kind==13 || ((kind==18 || kind==19) && p.misc.y>.5) || kind==2 || kind==5){
-  float size=clamp(p.color.w,1.25,3.5);
-  for(int y=-4;y<=4;y++)for(int x=-4;x<=4;x++){
-   float face=tissueFace(float2(x,y),p.misc.w,size,p.misc.z);
-   if(face>=0)storeStain(int2(hit)+int2(x,y),9+uint(round(face*3)),.93);
+ // Spray that reaches the rear or a side wall marks the wall face where the
+ // drop actually struck: screen height = its flight height above the floor.
+ // Type 14 is a translucent film multiplied into the wall art; each splat
+ // carries a run that is revealed downward over time (gravity).
+ bool tissueHit=kind==13 || ((kind==18 || kind==19) && p.misc.y>.5) || kind==2 || kind==5;
+ if(!tissueHit && (side || travel.y<0) && height>1.5){
+  float2 spot=side?float2(hit.x+sign(travel.x)*min(2.+height*.35,9.),hit.y-height*.6)
+                  :float2(hit.x,floorRect.y-height);
+  float lean=side?0:clamp(travel.x/max(1.,abs(travel.y)),-1.5,1.5);
+  float drop=clamp(p.color.w,.6,2.4);
+  for(int k=0;k<5;k++){
+   // An elongated impact mark leaning along the drop's travel, plus satellite specks.
+   float2 at=spot+(k?float2(random(seed)-.5,random(seed)-.5)*float2(4+drop*3,3):0);
+   float r=k?.5+random(seed)*.6:drop*.9;
+   for(int dy=-2;dy<=2;dy++)for(int dx=-2;dx<=2;dx++){
+    float2 q=float2(dx-lean*dy*.5,dy*.8)/max(r,.5);
+    float c=saturate(1.25-length(q));
+    if(c>0)storeStain(int2(at)+int2(dx,dy),14,c*(k?.6:.85));
+   }
   }
+  // Heavier hits run: decreasing opacity down the wall reveals the run over time.
+  int run=int(drop*3+random(seed)*6);
+  float2 head=spot+float2(random(seed)-.5,0);
+  for(int dy=1;dy<=run;dy++){
+   float2 at=head+float2(sin(dy*.7+head.x)*.35,dy);
+   if(!side && at.y>=floorRect.y-1)break;          // stops at the floor edge
+   storeStain(int2(at),14,.82-.6*dy/max(run,1));
+  }
+ }
+ // Meat does not stick to the wall: it drops at the wall's base.
+ if(kind==13 || ((kind==18 || kind==19) && p.misc.y>.5) || kind==2 || kind==5){
+  State fallen=p;fallen.pos.xy=placeOnFloor(old+travel*saturate(t),1);fallen.vel.xy*=-.2;
+  settlePlayerGore(fallen);
  }
  return true;
 }
@@ -786,18 +971,37 @@ void settlePlayerGore(State p){
  bool metal=(kind==13 && p.misc.y>.5) || (kind==19 && p.misc.y>1.5);
  float size=clamp(p.color.w,.6,3.2);
  uint w,h;bodyWrite.GetDimensions(w,h);
+ bool oil=oilDrop(p.color.rgb);
+ // A droplet striking at speed lands as an elongated splat pointing along its
+ // travel, with a satellite drop flung ahead of it.
+ float speed=length(p.vel.xy);
+ // Spray leaves the wound as a cone, not a parallel sheet: jitter each splat's axis.
+ float heading=(speed>.5?atan2(p.vel.y,p.vel.x):0)+(frac(p.misc.w*13.7+p.color.w*5.1)-.5)*1.3;
+ float2 axis=float2(cos(heading),sin(heading));
+ float stretch=1+saturate(speed/140.)*.85;
+ float2 satellite=axis*size*(1.6+stretch);
+ bool bone=tissue && !metal && boneShard(p.misc.z);
  for(int y=-4;y<=4;y++)for(int x=-4;x<=4;x++){
   int2 cell=int2(floor(p.pos.xy))+int2(x,y);
   if(!floorPixel(cell)||any(cell+floorOrigin<0)||any(cell+floorOrigin>=int2(w,h)))continue;
   float2 delta=float2(cell)+.5-p.pos.xy;
   if(tissue || kind==2 || kind==5){
    float face=tissueFace(delta,p.misc.w,size,p.misc.z);
-   if(face<0)continue;
+   if(face<0){
+    // Torn meat sits in its own small pool.
+    if(tissue && !metal && !bone)storeStain(cell,0,saturate(1.25-length(delta)/(size*1.75))*.85);
+    continue;
+   }
    float3 color=metal?chromeColor(face,p.misc.w*2.3):p.color.rgb;
-   if(tissue && !metal)color=fleshColor(face);
+   if(tissue && !metal)color=bone?boneColor(face):fleshColor(face);
    uint3 rgb=(uint3)round(saturate(color)*255);
-   InterlockedMax(bodyWrite[cell+floorOrigin],(120u<<24)|(rgb.r<<16)|(rgb.g<<8)|rgb.b);
-  }else storeStain(cell,oilDrop(p.color.rgb)?1:0,saturate(1.35-length(delta*float2(.85,1.25))/size));
+   InterlockedMax(bodyWrite[cell+floorOrigin],((metal?170u:220u)<<24)|(rgb.r<<16)|(rgb.g<<8)|rgb.b);
+  }else{
+   float2 uv=float2(dot(delta,axis)/stretch,dot(delta,float2(-axis.y,axis.x)));
+   float splat=saturate(1.35-length(uv*float2(.85,1.25))/size);
+   if(!oil && size>.9)splat=max(splat,saturate(1.2-length(delta-satellite)/(size*.45))*.8);
+   storeStain(cell,oil?1:0,splat);
+  }
  }
 }
 [numthreads(64,1,1)] void integrate(uint id:SV_DispatchThreadID) {
@@ -815,13 +1019,26 @@ void settlePlayerGore(State p){
    collideFloor(p,old);
    p.vel.z-=230*step;
    p.misc.w+=step*(4+8*p.misc.z);
+   // Heavy meat and debris tumble, bounce and slide; steel rings off the floor.
+   bool chunk=((kind==19 || kind==18) && p.misc.y>.5) || kind==13;
+   bool steel=(kind==19 && p.misc.y>1.5) || (kind==13 && p.misc.y>.5);
+   bool bleeds=chunk && !steel && !boneShard(p.misc.z);
+   if(bleeds && (mask&2048) && p.pos.z>1){
+    // Torn pieces shed a dotted blood trail beneath their flight.
+    uint drip=asuint(p.misc.w*977.)^id*0x9e3779b9u^tick;
+    if(random(drip)<.32)storeStain(int2(p.pos.xy+float2(random(drip)-.5,random(drip)-.5)*1.6),0,.42+.4*random(drip));
+   }
    if(p.pos.z<=0){
-    if(kind==19 && p.misc.y>.5){
+    if(chunk){
      p.pos.z=0;
-     bool steel=p.misc.y>1.5;
      p.vel.z=p.vel.z< -24 ? -p.vel.z*(steel?.37:.16) : 0;
      p.vel.xy*=exp(-step*(steel?4.7:7.5));
-     if((mask&2048) && !steel)storeStain(int2(p.pos.xy),0,.65);
+     if((mask&2048) && bleeds){
+      // Smear the width of the piece along its slide.
+      float2 across=normalize(float2(-p.vel.y,p.vel.x)+.0001);
+      storeStain(int2(p.pos.xy),0,.8);
+      if(p.color.w>2)storeStain(int2(p.pos.xy+across),0,.6);
+     }
      if(dot(p.vel.xy,p.vel.xy)>20 || p.vel.z>1){
       remaining-=step;continue;
      }
@@ -865,7 +1082,7 @@ void settlePlayerGore(State p){
   }
   pool[id]=p;return;
  }
- if(kind==6||kind==7||kind==8||kind==10||kind==15){pool[id]=p;return;}
+ if(kind==6||kind==7||kind==10||kind==15){pool[id]=p;return;}
  float2 before=p.pos.xy;
  p.pos.xyz+=p.vel.xyz*dt;
  if(kind==16){
@@ -887,8 +1104,25 @@ void storeStain(int2 xy,uint type,float opacity){
  int2 cell=xy+floorOrigin;uint w,h;stainWrite.GetDimensions(w,h);
  if(!wallStain(type) && !floorPixel(xy))return;
  if(opacity<.07 || any(cell<0)||any(cell>=int2(w,h)))return;
- uint mark=((tick&1048575)<<12)|(type<<8)|uint(saturate(opacity)*255);
- InterlockedMax(stainWrite[cell],mark);
+ // Deposits accumulate. A newer, fainter mark (a speck, a boot print) used to
+ // replace the packed coverage of an older thick pool and visibly erase it.
+ uint add=uint(saturate(opacity)*255),now=tick&1048575;
+ uint prior=stainWrite[cell];
+ [allow_uav_condition] for(uint attempt=0;attempt<4;attempt++){
+  uint next=(now<<12)|(type<<8)|add;
+  if(prior){
+   uint oldType=(prior>>8)&15,oldCov=prior&255;
+   if(type==2 && oldType!=2 && oldCov>=add)return; // a print never thins a pool
+   uint cov=min(255u,oldCov+add-(oldCov*add)/255u);
+   uint keep=add*2>=oldCov?type:oldType;
+   uint stamp=add*3>=oldCov?now:(prior>>12);
+   next=(stamp<<12)|(keep<<8)|cov;
+   if(next==prior)return;
+  }
+  uint seen;InterlockedCompareExchange(stainWrite[cell],prior,next,seen);
+  if(seen==prior)return;
+  prior=seen;
+ }
 }
 struct BodyStamp {float2 pos;float scale;uint oid;uint seed,upper,lower,flags;};
 cbuffer BodyBatch : register(b2){BodyStamp bodies[256];};
@@ -905,13 +1139,24 @@ cbuffer BodyBatch : register(b2){BodyStamp bodies[256];};
  float2 center=placeOnFloor(b.pos-floorOrigin+dir*random(seed)*spread,4)+floorOrigin;
  float size=(part<12?.8+random(seed)*1.5:1.2+random(seed)*2)*(boss?1.2:1);
  if(part>=12){
-  for(int y=-4;y<=4;y++)for(int x=-4;x<=4;x++){
+  // Four overlapping lobes form the main pool under the kill; the rest spatter.
+  bool pool=part<16 && !metal;
+  if(pool){
+   center=placeOnFloor(b.pos-floorOrigin+dir*random(seed)*(boss?9:5),4)+floorOrigin;
+   size=(boss?4.4:3.4)+random(seed)*1.8;
+  }
+  int reach=pool?7:4;
+  float2 lobe=float2(.8,1.2)*(pool?float2(.9,1.):1);
+  for(int y=-reach;y<=reach;y++)for(int x=-reach;x<=reach;x++){
    int2 cell=int2(center)+int2(x,y);
+   float wobble=pool?.22*noise(float2(x,y)*.6+angle*3):0;
    if(floorPixel(cell-floorOrigin))storeStain(cell-floorOrigin,metal?1:0,
-      saturate(1.3-length(float2(x,y)*float2(.8,1.2))/size)*.8);
+      saturate((1.3+wobble)-length(float2(x,y)*lobe)/size)*(pool?.95:.8));
   }
   return;
  }
+ // Ordinary organic kills stamp five resting chunks; the flying gibs add the rest.
+ if(!metal && !boss && part>=5)return;
  uint w,h;bodyWrite.GetDimensions(w,h);
  for(int y=-4;y<=4;y++)for(int x=-4;x<=4;x++){
   int2 cell=int2(center)+int2(x,y);
@@ -920,7 +1165,7 @@ cbuffer BodyBatch : register(b2){BodyStamp bodies[256];};
   if(abs(uv.x)+abs(uv.y)*1.45>1.15)continue;
   float face=saturate(.52-uv.y*.4);
   float3 color=metal?chromeColor(face,angle):
-                    lerp(float3(.16,.027,.039),float3(.60,.24,.20),face);
+                    lerp(float3(.13,.012,.022),float3(.62,.15,.13),face);
   if(boss && metal){
    if(family==24 && component<=2){
     color=lerp(float3(.055,.06,.065),float3(.29,.31,.29),face);
@@ -934,9 +1179,10 @@ cbuffer BodyBatch : register(b2){BodyStamp bodies[256];};
    if(family==10 && part%4==0)color=lerp(float3(.48,.39,.22),float3(.79,.72,.52),face);
    else if(family==24)color=lerp(float3(.17,.026,.045),float3(.64,.23,.23),face);
   }
+  if(!metal && !boss && part==4)color=boneColor(face);
   color*=.72+.28*noise(d*.9+angle);
   uint3 rgb=(uint3)round(saturate(color)*255);
-  InterlockedMax(bodyWrite[cell],(120u<<24)|(rgb.r<<16)|(rgb.g<<8)|rgb.b);
+  InterlockedMax(bodyWrite[cell],((metal?170u:220u)<<24)|(rgb.r<<16)|(rgb.g<<8)|rgb.b);
  }
 }
 void stampStain(float2 pos,float4 b,inout uint seed){
@@ -958,7 +1204,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    uint mark=stainWrite[sampleCell],kind=(mark>>8)&15;
    // Fresh pools and flesh/tissue smears, never the tracks themselves.
    if((kind==0 || (kind>=5 && kind<=12)) && (mark&255)>32)
-    soak=max(soak,(mark&255)/255.*saturate(wetness(mark)*1.6));
+    soak=max(soak,(mark&255)/255.*saturate(tacky(mark)*1.6));
    if(all(sampleCell<int2(bw,bh))){
     uint piece=bodyWrite[sampleCell];
     uint r=(piece>>16)&255,g=(piece>>8)&255;
@@ -986,7 +1232,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    // Drying tracks break up: fewer, lighter cells towards the end of the trail.
    float grain=hash(float2(cell)+uv+float2(lane*17,remaining*3));
    if(!all(uv==0) && grain>.22+.78*ink)continue;
-   storeStain(int2(pos)+int2(x,y),2,.16+.72*ink);
+   storeStain(int2(pos)+int2(x,y),2,.3+.68*ink);
   }
   cursors[lane]=remaining-1;return;
  }
@@ -1111,23 +1357,41 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    }else if(kind==15){
     p.pos.z=0;p.misc.yz=b.xy/max(.01,length(b.xy));p.misc.w=b.z;p.color.w=b.z==2?26:13;p.pos.w=b.z==2?.31:.095;
    }else if(kind==10){
-    p.pos.xy=floor(a.xy)+.5;p.pos.z=0;p.pos.w=b.z==1?.001:.042;p.color.w=5+random(seed)*3;p.misc.yz=b.xy;
-   }else if(kind==7||kind==8){
-    p.pos.z=0;p.pos.w=kind==7?.32:.065;
-    p.color.w=kind==7?4:length(b.xy)+1;p.misc.yz=b.xy;
+    // b.w carries the player weapon family + 1 (0 = hostile); scale follows its signature.
+    uint fam=uint(clamp(b.w,0.,6.));
+    p.pos.xy=floor(a.xy)+.5;p.pos.z=0;p.pos.w=b.z==1?.001:.042;
+    p.color.w=(5.5+random(seed)*2.5)*muzzleScale[fam];p.color.y=fam?fam-1:0;
+    p.misc.yz=dot(b.xy,b.xy)>.0001?normalize(b.xy):float2(1,0);p.misc.w=random(seed)*97.;
+   }else if(kind==7){
+    p.pos.z=0;p.pos.w=.32;p.color.w=4;p.misc.yz=b.xy;
    }else{
     float angle=random(seed)*6.2831853,speed=12+random(seed)*48;
     p.vel=float4(cos(angle)*speed+b.x*12,sin(angle)*speed+b.y*12,25+random(seed)*60,0);
     if(kind==0){p.pos.z=0;p.pos.w=.12+random(seed)*.18;p.color=float4(1,.843,.541,.28);}
-    if(kind==1){p.pos.w=4+random(seed)*3;p.color=float4(.753,.09,.133,.3+random(seed)*.35);}
+    if(kind==1){
+     // Mostly fine spray, with a share of heavy drops that land as real splats.
+     bool heavy=random(seed)<.3;
+     p.pos.w=4+random(seed)*3;
+     p.color=float4(lerp(float3(.50,.012,.03),float3(.86,.07,.09),random(seed)),
+                    heavy?1.05+random(seed)*1.05:.42+random(seed)*.4);
+    }
     if(kind==2){p.pos.w=3+random(seed)*3;p.color=float4(lerp(float3(.64,.055,.125),float3(.88,.278,.318),step(.5,random(seed))),.3+random(seed)*.45);}
     if(kind==3){p.pos.w=2.8+random(seed)*1.8;p.color=float4(.467,.443,.42,3+random(seed)*2);p.vel.xy*=.28;p.vel.z=7;}
     if(kind==4){p.pos.w=1.3+random(seed)*1.3;p.color=float4(1,.46,.125,1.3+random(seed)*1.4);p.vel.xy*=.12;p.vel.z=14;}
-    if(kind==9){p.pos.w=1;p.color.x=b.z;p.color.w=2;
-     float2 sideways=float2(-b.y,b.x)/max(.01,length(b.xy));
-     p.vel.xy=p.vel.xy*.46+sideways*16;
-     if(b.z==3 || b.z==4)p.vel.xyz*=.8;
-     p.misc.yz=float2(cos(angle),sin(angle));p.misc.w=angle;}
+    if(kind==9){p.pos.w=1;p.color.x=b.z;p.color.w=2.5;
+     // Ejected from the right-hand port: mostly sideways, a little back, up in an arc.
+     float fa=random(seed)*6.2831853;
+     float2 fwd=dot(b.xy,b.xy)>.0001?normalize(b.xy):float2(cos(fa),sin(fa)); // atan2(0,0) would be NaN
+     float2 side=float2(-fwd.y,fwd.x);
+     float lift=8;                         // gun height above the floor beneath it
+     p.pos.y+=lift;p.pos.z=lift;
+     p.vel.xy=side*(19+random(seed)*12)-fwd*(3+random(seed)*7)+float2(random(seed)-.5,random(seed)-.5)*7;
+     p.vel.z=48+random(seed)*30;
+     if(b.z==3 || b.z==4)p.vel.xyz*=.8;  // heavy shells
+     float axisAngle=atan2(fwd.y,fwd.x)+(random(seed)-.5)*.7; // leaves the port along the barrel
+     p.misc.yz=float2(cos(axisAngle),sin(axisAngle));p.misc.w=axisAngle;
+     p.misc.z=(16+random(seed)*16)*(random(seed)<.5?-1:1);
+     p.color.y=random(seed)*6.283;p.color.z=(random(seed)-.5)*70;}
     if(kind==5){p.pos.w=4+random(seed)*3;p.color=float4(lerp(float3(.557,.063,.125),float3(.827,.208,.259),step(.5,random(seed))),.28+random(seed)*.42);}
     if(kind==1 && b.z>.5)p.color.rgb=float3(.028,.026,.034); // oil/grease spray from machines (flag 1)
     if((kind==2 || kind==5) && b.z!=0)p.color.rgb=lerp(float3(.18,.19,.21),float3(.48,.45,.40),random(seed));
@@ -1155,7 +1419,7 @@ void stampStain(float2 pos,float4 b,inout uint seed){
  State p=pool[slot];
  if(p.pos.w>0){
   float2 centre=float2(p.pos.x,p.pos.y-p.pos.z);
-  float radius=p.color.w+1;
+  float radius=p.misc.x==1?p.color.w*2.6+1:p.color.w+1;
   int2 lo=max(int2(0,0),int2(ceil((centre-radius)/16.))-1);
   int2 hi=min(int2(tileWidth,(height+15)/16)-1,int2(floor((centre+radius)/16.)));
   uint group=(brass?index-1024:index)/32;
@@ -1166,17 +1430,6 @@ void stampStain(float2 pos,float4 b,inout uint seed){
    InterlockedOr(bins[base],1u<<group);
    InterlockedOr(bins[base+1+group],1u<<(slot%32));
   }
- }
- if(slot==0 && (mask&64)) {
-  uint count=0;
-  for(uint i=1024;i<1056;i++){
-   State light=pool[i];
-   if(light.pos.w<=0)continue;
-   selectedLights[2*count]=float4(light.pos.xyz,light.color.w);
-   selectedLights[2*count+1]=float4(light.misc.w*saturate(light.pos.w/.06),light.misc.z,0,0);
-   ++count;
-  }
-  selectedLights[64]=float4(count,0,0,0);
  }
 }
 

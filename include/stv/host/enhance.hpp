@@ -68,9 +68,9 @@ struct EffectScene {
     std::vector<TankShadow> tankShadows;
 };
 EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, int width, int height, bool observe_objects=true);
-enum class ArenaEffect { Shockwave=7, Tracer=8, Brass=9, Muzzle=10, PlayerBurst=18, EnemyBlast=19, MachineWound=20 };
+enum class ArenaEffect { Shockwave=7, Brass=9, Muzzle=10, PlayerBurst=18, EnemyBlast=19, MachineWound=20 };
 inline unsigned arena_effect_mask(const PcSettings& s) {
-    return (s.shockwaves ? 128u : 0u) | (s.tracers ? 256u : 0u) | (s.brass ? 512u : 0u) | (s.muzzle_flash ? 1024u : 0u) |
+    return (s.shockwaves ? 128u : 0u) | (s.brass ? 512u : 0u) | (s.muzzle_flash ? 1024u : 0u) |
         (s.persistent_gore ? 2048u : 0u) | (s.destruction ? (8192u | (1u<<20)) : 0u) | (s.weapon_impacts ? 32768u : 0u) | (s.fluid_smoke ? 65536u : 0u) |
         ((s.blood || s.persistent_gore) ? 1u<<18 : 0u) | (s.explosive_debris ? 1u<<19 : 0u);
 }
@@ -110,28 +110,14 @@ struct WeaponFxEvent {
     WeaponFamily family{WeaponFamily::Family1};
     WeaponFxKind kind{WeaponFxKind::Wake};
 };
-struct ProjectileHistorySample {
-    uint32_t slot{};
-    float x{},y{},vx{},vy{};
-    WeaponFamily family{WeaponFamily::Family1};
-};
-struct ProjectileHistoryFrame {
-    static constexpr size_t SampleCapacity = 48;
-    uint64_t frame{};
-    std::array<ProjectileHistorySample,SampleCapacity> samples{};
-    uint32_t sample_count{};
-};
 struct WeaponFxPacket {
     static constexpr size_t EventCapacity = 96;
-    static constexpr size_t HistoryFrameCapacity = 6; // bounded Low/Medium/High 2/4/6-frame context
     ImpactDirectorState director;
     std::array<WeaponFxEvent,EventCapacity> events{};
     uint32_t event_count{};
-    std::array<ProjectileHistoryFrame,HistoryFrameCapacity> history{}; // newest first
-    uint32_t history_count{};
 };
 struct EffectPacket { std::vector<RoomLamp> dxrLights; // ray-traced gameplay lights, screen space
-     float dt{}; bool reset{}; unsigned mask{}; uint64_t serial{}; std::vector<EffectSpawn> spawns; std::vector<RayBox> boxes;
+     float dt{}; bool reset{}; uint64_t serial{}; std::vector<EffectSpawn> spawns; std::vector<RayBox> boxes;
     bool in_arena{}; uint32_t room{}; uint64_t frame{}; int camera_x{},camera_y{};
     uint64_t roomAge{}; bool roomIntro{};
     std::vector<EnemyRemains> remains;
@@ -171,7 +157,7 @@ private:
     float random();
     bool enabled(Kind, const PcSettings&) const;
     EffectScene previous_{};
-    uint64_t roomStart_{};std::array<float,4> stepDistance_{};std::array<unsigned,2> nextFoot_{};
+    uint64_t roomStart_{},roomClockFrame_{};uint32_t roomClockRoom_{};bool roomClock_{};std::array<float,4> stepDistance_{};std::array<unsigned,2> nextFoot_{};
     bool primed_{};
     bool bossSmokeDeath_{};
     BossCinemaTracker roomCinema_;

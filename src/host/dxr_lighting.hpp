@@ -20,6 +20,8 @@ class DxrLighting {
     ID3D11ShaderResourceView *render(const EffectPacket &, LightingFrame, int width, int height, int offset,
                                      std::span<const uint32_t> coverage = {});
     const LightingFrame *last_frame() const;
+    // Insert the D3D11 wait for the newest trace; call just before the map is read.
+    void acquire();
     void consumed();
     const std::string &error() const { return error_; }
 

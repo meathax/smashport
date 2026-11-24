@@ -24,10 +24,10 @@ bool protectedPixel(float2 uv){
  return (arcadePixels.Load(int3(p,0))&4096)!=0;
 }
 float4 ps(V v):SV_Target{
- float2 originalUv=saturate(v.uv+pan/float2(sw,sh));
- bool protect=protectedPixel(originalUv);
  float2 uv=v.uv;if(mode>=4&&curvature>0){float2 p=uv*2-1;p*=1+curvature*.04*dot(p,p);uv=p*.5+.5;if(any(uv<0)||any(uv>1))return float4(0,0,0,1);}
  uv=saturate(uv+pan/float2(sw,sh));
+ // Protect the HUD pixel actually displayed here, after the tube warp.
+ bool protect=protectedPixel(uv);
  float3 rgb=sampleImage(uv);
  if(!protect && chromatic>0){
   float edge=smoothstep(.26,.70,length(v.uv-.5));

@@ -13,19 +13,19 @@ struct PcSettings {
     int filter = 0;        // matches VideoFilterMode: Nearest, Linear, Sharp, CRT
     int glow = 0, sharpen = 0, curvature = 0; // optional GPU effects: off/low/medium/high
     bool enhance = false;
-    bool particles = true, blood = true, debris = true, smoke = true, fire = true, lighting = true;
+    bool particles = true, blood = true, debris = true, smoke = true, fire = true;
     bool hardware_rt = false;
-    bool ray_tracing = false, voxels = false;
-    bool shockwaves = false, tracers = false, brass = false, muzzle_flash = true, room_lights = true;
+    bool voxels = false;
+    bool shockwaves = false, brass = false, muzzle_flash = true;
     int room_cinema = 2; // 0 off, 1 low, 2 medium, 3 high
-    bool persistent_gore = false, materials = false, destruction = false, weapon_impacts = false, fluid_smoke = false;
+    bool persistent_gore = false, destruction = false, weapon_impacts = false, fluid_smoke = false;
     bool explosive_debris = true;
     int atmosphere = 2, sprite_rim = 1, contact_shadows = 2, wet_materials = 2;
     int heat_distortion = 1, emissive_spill = 2, cinematic_grade = 2;
     // Cosmetic combat feedback. Levels are 0 = off, 1 = low, 2 = medium, 3 = high.
     int combat_feedback = 1;
     int camera_shake = 1, zoom_punch = 1, hit_flash = 0, edge_effects = 0;
-    int weapon_signatures = 1, temporal_trails = 0;
+    int weapon_signatures = 1;
     bool reduce_shake = false, reduce_flashing = false, reduce_motion = false;
     bool smooth_motion = true;
     int run_ahead = 0; // offline speculative video frames, 0..3
@@ -71,18 +71,16 @@ inline unsigned environment_effect_mask(const PcSettings& settings) {
 inline void enable_all_visual_effects(PcSettings& settings) {
     settings.enhance = true;
     settings.particles = settings.blood = settings.debris = true;
-    settings.smoke = settings.fire = settings.lighting = true;
+    settings.smoke = settings.fire = true;
     settings.voxels = settings.shockwaves = true;
-    settings.tracers = false;
-    settings.brass = settings.muzzle_flash = settings.room_lights = true;
-    settings.persistent_gore = settings.materials = settings.destruction = true;
+    settings.brass = settings.muzzle_flash = true;
+    settings.persistent_gore = settings.destruction = true;
     settings.weapon_impacts = settings.fluid_smoke = settings.explosive_debris = true;
     settings.atmosphere = settings.sprite_rim = settings.contact_shadows = 3;
     settings.wet_materials = settings.heat_distortion = settings.emissive_spill = 3;
     settings.cinematic_grade = settings.room_cinema = 3;
     settings.combat_feedback = settings.camera_shake = settings.zoom_punch = 3;
     settings.hit_flash = settings.edge_effects = settings.weapon_signatures = 3;
-    settings.temporal_trails = 0;
 }
 
 enum class SettingsLoad { Defaults, Loaded, Invalid };

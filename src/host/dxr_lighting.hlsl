@@ -117,6 +117,15 @@ float gobo(uint pattern, float3 P, Light L, float t) {
     }
     return 1;
 }
+float3 diskOffset(uint k, float rot, float3 t1, float3 t2) {
+    float r = sqrt((float(k) + .5) / 8.), th = float(k) * 2.39996323 + rot;
+    return (t1 * cos(th) + t2 * sin(th)) * r;
+}
+float shadowRay(float3 P, float3 N, float3 target, uint self, uint occluders) {
+    float3 d = target - P;
+    float len = max(length(d), 1e-3);
+    return visibility(P + N * .35, d / len, len - .5, self, occluders);
+}
 void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine, float2 seed,
                 float time, uint occluders, inout float3 diffuse, inout float3 spec) {
     Light L = lights[i];
@@ -141,15 +150,24 @@ void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine,
     if (samples) {
         float3 t1 = normalize(cross(dir, abs(dir.z) < .95 ? float3(0, 0, 1) : float3(1, 0, 0)));
         float3 t2 = cross(dir, t1);
-        float a = hash2(seed) * Tau, radius = samples > 1 ? L.shape.y * .75 : 0;
-        vis = 0;
-        for (uint k = 0; k < samples; ++k) {
-            float ang = a + Tau * k / samples;
-            float3 target = L.pos.xyz + (t1 * cos(ang) + t2 * sin(ang)) * radius - P;
-            float len = length(target);
-            vis += visibility(P + N * .35, target / len, len - .5, self, occluders);
+        float rot = hash2(seed) * Tau, radius = samples > 1 ? L.shape.y * .82 : 0;
+        if (radius <= 0) {
+            vis = shadowRay(P, N, L.pos.xyz, self, occluders);
+        } else {
+            // Area light: golden-angle (Vogel) disk with a per-pixel rotation.
+            // Probe the rim first; fully lit or fully shadowed pixels stop
+            // there, and only penumbra pixels refine to eight samples
+            // (nine smooth levels instead of the old two or three).
+            static const uint order[8] = {7, 3, 5, 1, 6, 2, 4, 0};
+            float sum = 0;
+            uint k = 0;
+            for (; k < samples; ++k)
+                sum += shadowRay(P, N, L.pos.xyz + diskOffset(order[k], rot, t1, t2) * radius, self, occluders);
+            if (sum > 0 && sum < float(samples))
+                for (; k < 8; ++k)
+                    sum += shadowRay(P, N, L.pos.xyz + diskOffset(order[k], rot, t1, t2) * radius, self, occluders);
+            vis = sum / float(k);
         }
-        vis /= samples;
     }
     diffuse += L.color.rgb * att * wrap * vis;
     spec += L.color.rgb * att * s * vis;

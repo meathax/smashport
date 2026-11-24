@@ -424,7 +424,6 @@ void EnhanceEffects::advance_weapon_fx(const EffectScene& scene,float dt,const P
         reset_weapon_fx();
         return;
     }
-    fx.history_count=0;
     (void)scene;
 }
 void EnhanceEffects::queue_weapon_fx(WeaponFxKind kind,WeaponFamily family,
@@ -467,7 +466,14 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     packet_.in_arena=scene.in_arena || scene.valid;
     packet_.roomIntro=scene.roomIntro;packet_.room=scene.room;packet_.frame=scene.frame;
     packet_.camera_x=scene.camera_x;packet_.camera_y=scene.camera_y;
-    if(!primed_ || scene.room!=previous_.room || scene.frame<previous_.frame){roomStart_=scene.frame;stepDistance_.fill(0);nextFoot_.fill(0);}
+    // Room age is cinema timing, independent of the effect simulation: it must
+    // keep counting when Enhancements is off (reset() runs every frame then).
+    // It starts with the room (including its intro: the boss-intro cue fades
+    // over the first 42 frames). A backward frame is a new power-on.
+    if(!roomClock_ || scene.room!=roomClockRoom_ || scene.frame<roomClockFrame_){
+        roomStart_=scene.frame;stepDistance_.fill(0);nextFoot_.fill(0);
+    }
+    roomClock_=true;roomClockRoom_=scene.room;roomClockFrame_=scene.frame;
     packet_.roomAge=scene.frame-roomStart_;packet_.studio=scene.studio;
     packet_.foreground=scene.targets;
     packet_.tankShadows=scene.tankShadows;
@@ -521,7 +527,6 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     }
     packet_.spawns.clear();packet_.dt=0;packet_.reset=false;++packet_.serial;
     packet_.weaponFx.event_count=0;
-    packet_.mask=(settings.particles?1:0)|(settings.blood?2:0)|(settings.debris?4:0)|(settings.smoke?8:0)|(settings.fire?16:0)|(settings.voxels?32:0)|arena_effect_mask(settings);
     packet_.boxes=scene.blockers;
     if(!settings.enhance || !scene.valid || scene.roomIntro) {
         reset();
@@ -671,6 +676,18 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         if(x<0 || x>=scene.width || y<24 || y>=scene.height)continue;
         bool metal=body.flags&MachinePart,boss=body.flags&BossPart,blast=body.flags&BlastDeath;
         if(blast && settings.explosive_debris && resident_)continue;
+        if(!metal && resident_ && settings.explosive_debris && settings.persistent_gore && packet_.spawns.size()<250){
+            // Every organic kill bursts: torn meat and bone fan out along the
+            // killing shot (the nearest observed hit), with an exit-wound spray.
+            float dx=0,dy=0,best=28.f*28.f;
+            for(const auto& hit:scene.impacts){
+                const float hx=hit.x-scene.camera_x-x,hy=hit.y-scene.camera_y-y,d2=hx*hx+hy*hy,len=std::hypot(hit.dx,hit.dy);
+                if(d2<best && len>.01f){best=d2;dx=hit.dx/len;dy=hit.dy/len;}
+            }
+            const float scale=std::clamp(body.scale,.85f,1.6f);
+            packet_.spawns.push_back({x,y-3,float(ArenaEffect::EnemyBlast),std::round((boss?32.f:16.f)*scale),dx,dy,0,.52f});
+            if(settings.blood)command(1,x,y-4,boss?48:30,dx*4,dy*4,0,0);
+        }
         if(metal){
             if(settings.particles)emit(Kind::Spark,x,y-4,boss?64:blast?40:18);
             if(settings.blood)command(1,x,y-4,boss?64:blast?32:12,0,0,1,0);
@@ -712,9 +729,15 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
         }
     }
     for(const auto& flash:scene.visible_muzzles){
+        // Player brass leaves the gun on the displayed firing cel, a few pixels
+        // behind the scanned tip. One casing per volley, like the flash.
+        if(settings.brass && flash.weapon>=0x4201 && flash.weapon<=0x4206)
+            command(unsigned(ArenaEffect::Brass),float(flash.x)-flash.dx*3.f,float(flash.y)-flash.dy*3.f,1,
+                    flash.dx,flash.dy,float(flash.weapon-0x4201u),0);
         if(!settings.muzzle_flash)continue;
         if(resident_ && packet_.spawns.size()<256)
-            packet_.spawns.push_back({float(flash.x),float(flash.y),float(ArenaEffect::Muzzle),1,flash.dx,flash.dy,1});
+            packet_.spawns.push_back({float(flash.x),float(flash.y),float(ArenaEffect::Muzzle),1,flash.dx,flash.dy,1,
+                                      flash.weapon>=0x4201 && flash.weapon<=0x4206 ? float(flash.weapon-0x4200u) : 0.f});
         WeaponFamily family{};
         if(settings.combat_feedback && settings.weapon_signatures && projectile_weapon_family(flash.weapon,family))
             queue_weapon_fx(WeaponFxKind::Muzzle,family,float(flash.x),float(flash.y),flash.dx,flash.dy,1);
@@ -727,11 +750,23 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             return old.slot==obj.slot && old.kind==obj.kind && old.weapon==obj.weapon && std::abs(old.x-obj.x)<32 && std::abs(old.y-obj.y)<32;});
         bool newly_visible=prior==previous_.objects.end();
         bool launched=newly_visible || (prior->vx==0 && prior->vy==0 && (obj.vx!=0 || obj.vy!=0));
+        // Brass ejects from the gun for every shot, including the standard 0x4201
+        // whose retail sprite owns the rest of its flight. Start a few pixels behind
+        // the measured firing tip (the ejection port), not at the bullet sprite.
+        if(newly_visible && settings.brass && !obj.raster_muzzle &&
+           (obj.kind==EffectKind::Projectile || obj.kind==EffectKind::EnemyShot)) {
+            const unsigned casing=obj.kind==EffectKind::EnemyShot ? (obj.weapon==0x8500 ? 6u : 7u) :
+                (obj.weapon>=0x4201 && obj.weapon<=0x4206 ? obj.weapon-0x4201u : 0u);
+            const float speed=std::hypot(obj.vx,obj.vy);
+            float ex=obj.barrel?obj.muzzle_x:obj.x-obj.vx, ey=obj.barrel?obj.muzzle_y:obj.y-obj.vy;
+            if(speed>.1f){ex-=obj.vx/speed*3.f;ey-=obj.vy/speed*3.f;}
+            command(unsigned(ArenaEffect::Brass),ex,ey,1,obj.vx,obj.vy,float(casing),0);
+        }
         if(obj.kind==EffectKind::Projectile && obj.weapon!=0x4206){
             const float speed=std::hypot(obj.vx,obj.vy);
             if(!obj.raster_muzzle && launched && settings.muzzle_flash && speed>.1f)
-                spawn_arena(ArenaEffect::Muzzle,obj.barrel?obj.muzzle_x:obj.x-obj.vx,
-                            obj.barrel?obj.muzzle_y:obj.y-obj.vy,obj.vx/speed,obj.vy/speed);
+                command(unsigned(ArenaEffect::Muzzle),obj.barrel?obj.muzzle_x:obj.x-obj.vx,
+                        obj.barrel?obj.muzzle_y:obj.y-obj.vy,1,obj.vx/speed,obj.vy/speed,0,float(obj.weapon-0x4200u));
             if(obj.weapon==0x4201)continue; // its retail sprite owns the rest of its flight
         }
         if(!newly_visible && scene.studio.boss && obj.kind==EffectKind::EnemyShot &&
@@ -807,11 +842,6 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             if(settings.destruction)command(13,obj.x,obj.y,metal?6:8,obj.vx,obj.vy,metal?1:0,0);
             if(settings.persistent_gore)command(11,obj.x,obj.y,1,obj.vx,obj.vy,metal?1:0,metal?5:9);
         }
-        if(newly_visible && settings.brass && (obj.kind==EffectKind::Projectile || obj.kind==EffectKind::EnemyShot)) {
-            const unsigned casing=obj.kind==EffectKind::EnemyShot ? (obj.weapon==0x8500 ? 6u : 7u) :
-                (obj.weapon>=0x4201 && obj.weapon<=0x4206 ? obj.weapon-0x4201u : 0u);
-            command(unsigned(ArenaEffect::Brass),obj.x-obj.vx,obj.y-obj.vy,1,obj.vx,obj.vy,float(casing),0);
-        }
         // Player bullets already have their retail sprite, including at analog bearings.
         if(obj.kind==EffectKind::Projectile) {
             if(newly_visible && settings.particles) emit(Kind::Spark,obj.x,obj.y,1);
@@ -821,7 +851,8 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             if(newly_visible && settings.debris) emit(Kind::Debris,obj.x,obj.y,5);
         } else if(obj.kind==EffectKind::Explosion) {
             if(newly_visible && settings.combat_feedback)impact(ImpactTier::Large);
-            if(newly_visible && settings.weapon_impacts && !settings.fluid_smoke)command(15,obj.x,obj.y,1,0,0,2,0);
+            // The pressure ring and scorch belong to Weapon impacts; Dynamic smoke adds its plume separately.
+            if(newly_visible && settings.weapon_impacts)command(15,obj.x,obj.y,1,0,0,2,0);
             if(newly_visible && settings.shockwaves) spawn_arena(ArenaEffect::Shockwave,obj.x,obj.y);
             if(newly_visible && settings.voxels) emit(Kind::Voxel,obj.x,obj.y,8,true);
             if(newly_visible && settings.debris) emit(Kind::Debris,obj.x,obj.y,6,true);

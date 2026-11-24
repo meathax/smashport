@@ -445,11 +445,11 @@ void Machine::render_line(int scanline) {
     u16* dest = &frame[usize(scanline) * vram_w];
     u16* shown=presentation_frame.empty()?nullptr:presentation_frame.data()+usize(scanline)*vram_w;
     u16* clean=shown?presentation_without_blobs.data()+usize(scanline)*vram_w:nullptr;
-    if(shown){
-        std::fill_n(shown,vram_w,0);
-        std::fill_n(clean,vram_w,0);
+    if (!enabled) {
+        std::fill(dest, dest + vram_w, 0);
+        if(shown){std::fill_n(shown,vram_w,0);std::fill_n(clean,vram_w,0);}
+        return;
     }
-    if (!enabled) { std::fill(dest, dest + vram_w, 0); return; }
     u16 dpyadr = io[DPYADR];
     if (!(io[DPYCTL] & 0x0400)) dpyadr ^= 0xfffc;
     const int rowaddr = dpyadr >> 4;
@@ -470,7 +470,16 @@ void Machine::render_line(int scanline) {
             return true;
         });
     }
-    std::fill(dest, dest + vram_w, u16(0));
+    // Clear only the columns outside the displayed span; the loop below writes
+    // every column inside it (same contents as a full-line clear first).
+    const int first = std::clamp(heblnk, 0, int(vram_w));
+    const int last = std::clamp(hsblnk, first, int(vram_w));
+    std::fill(dest, dest + first, u16(0));
+    std::fill(dest + last, dest + vram_w, u16(0));
+    if(shown){
+        std::fill(shown, shown + first, u16(0)); std::fill(shown + last, shown + vram_w, u16(0));
+        std::fill(clean, clean + first, u16(0)); std::fill(clean + last, clean + vram_w, u16(0));
+    }
     for (int x = heblnk; x < hsblnk && x < int(vram_w); ++x) {
         const int column=coladdr++ & wmask;
         const u16 i = src[column];

@@ -132,9 +132,9 @@ inline void arcade_title_controls(HDC dc,int cw,int ch,const ArcadeMenuFont& fon
     font.draw(dc,{x+pad,top+unit,x+w-pad,top+mode_h/3},enhanced ? "CUSTOM MODE" : "CLASSIC ARCADE EXPERIENCE",false,steel,selection==0?red:dark);
     font.draw(dc,{x+pad,top+mode_h/2,x+w-pad,top+mode_h-unit},
               std::string("< ") + game_mode_label(enhanced) + " >",true,gold,selection==0?red:dark);
-    const char* actions[]={"START","MULTIPLAYER","OPTIONS","EXIT"};
-    const int first=top+mode_h+h/32,row=h/9;
-    for(int i=0;i<4;++i) {
+    const char* actions[]={"START","MULTIPLAYER","OPTIONS","GLOBAL LEADERBOARDS","EXIT"};
+    const int first=top+mode_h+h/32,row=h*2/21;
+    for(int i=0;i<5;++i) {
         const int t=first+i*row;
         const bool on=selection==i+1;
         if(on){fill(x+unit,t,x+w-unit,t+row-1,red);fill(x+unit,t,x+4*unit,t+row-1,gold);}

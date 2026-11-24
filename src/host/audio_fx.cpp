@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
+#include <xmmintrin.h>
+#define STV_AUDIO_FTZ 1
+#endif
 
 namespace stv::host {
 
@@ -80,6 +84,16 @@ void AudioFx::reset() {
 
 void AudioFx::process(float* lr, std::size_t frames) {
     if (!s_.any()) return;
+#ifdef STV_AUDIO_FTZ
+    // Reverb tails and filter states decay into denormals during quiet
+    // passages, which made this the hottest host function. Flush them to zero
+    // for this output-only stage and restore the caller's mode afterwards.
+    struct FlushDenormals {
+        unsigned saved = _mm_getcsr();
+        FlushDenormals() { _mm_setcsr(saved | 0x8040u); }   // FTZ | DAZ
+        ~FlushDenormals() { _mm_setcsr(saved); }
+    } flush;
+#endif
     const float feedback = room_, damp = damp_;
     for (std::size_t n = 0; n < frames; ++n) {
         float l = lr[2 * n], r = lr[2 * n + 1];

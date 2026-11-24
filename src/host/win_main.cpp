@@ -32,6 +32,7 @@
 #include "stv/host/net_fault.hpp"
 #include "stv/host/pc_menu.hpp"
 #include "stv/host/menu_draw_win.hpp"
+#include "stv/host/global_leaderboard.hpp"
 #include "stv/host/gpu_filter.hpp"
 #include "stv/gsp/rom_import.hpp"
 #include "resources/resource.h"
@@ -136,6 +137,24 @@ struct PresentationStats {
         }
     }
 } g_present;
+// Host CPU stage costs for the smoke report (simulation, scene/effects
+// preparation and window presentation). Measurement only; never paces work.
+struct StageTiming {
+    std::vector<float> samples;
+    void add(const LARGE_INTEGER& a, const LARGE_INTEGER& b, u64 frequency) {
+        if (samples.size() < (1u << 20)) samples.push_back(float(1000.0 * double(b.QuadPart - a.QuadPart) / double(frequency)));
+    }
+    void write(FILE* f, const char* name, bool comma) const {
+        std::vector<float> s = samples;
+        std::sort(s.begin(), s.end());
+        double sum = 0; for (float v : s) sum += v;
+        auto at = [&](double q) { return s.empty() ? 0.0 : double(s[std::min(s.size() - 1, std::size_t(q * double(s.size())))]); };
+        std::fprintf(f, "\"%s\": {\"count\": %zu, \"mean_ms\": %.4f, \"p50_ms\": %.4f, \"p95_ms\": %.4f, \"p99_ms\": %.4f, \"max_ms\": %.4f}%s",
+                     name, s.size(), s.empty() ? 0.0 : sum / double(s.size()), at(.5), at(.95), at(.99), s.empty() ? 0.0 : double(s.back()),
+                     comma ? ", " : "");
+    }
+};
+StageTiming g_time_sim, g_time_scene, g_time_present;
 std::filesystem::path g_rom_path;
 bool g_restart_requested = false, g_disconnect_requested = false;
 bool g_connecting = false, g_cancel_connect = false;
@@ -444,8 +463,9 @@ bool g_resident_ready = false;
 void build_software_frame(const Machine& m) {
     g_frame_width = stv::gsp::scene_view_width(m);
     g_pixels.resize(std::size_t(g_frame_width) * VIS_H);
-    const auto& frame=g_settings.hardware_rt && !m.presentation_without_blobs.empty()
-        ? m.presentation_without_blobs : m.frame;
+    // The CPU fallback has no ray-traced shadows to replace the retail blob
+    // shadows, so it always shows the untouched arcade frame.
+    const auto& frame = m.frame;
     for (int y = 0; y < VIS_H; ++y) {
         const u16* src = &frame[std::size_t(y + VIS_MINY) * m.vram_w + VIS_MINX];
         u32* dst = &g_pixels[std::size_t(y) * g_frame_width];
@@ -505,11 +525,7 @@ void capture_menu_title(std::filesystem::path rom) {
     });
 }
 
-std::vector<u32> menu_backdrop(const Machine& m) {
-    if (g_menu_title.ready) {
-        std::lock_guard guard(g_menu_title.lock);
-        return g_menu_title.pixels;
-    }
+std::vector<u32> build_menu_backdrop(const Machine& m) {
     if (m.frame.size() < std::size_t(VIS_MINY + VIS_H) * m.vram_w || m.pens.size() != 0x1000) return {};
     int width = std::min(int(stv::gsp::scene_view_width(m)), 547);
     std::vector<u32> pixels(std::size_t(width) * VIS_H);
@@ -532,6 +548,27 @@ std::vector<u32> menu_backdrop(const Machine& m) {
         pixels.swap(wide);
     }
     return pixels;
+}
+
+// Each menu paint reused to copy (or rebuild) a 560 KB image. Keep one copy
+// until the ROM title arrives or the live frame changes.
+const std::vector<u32>& menu_backdrop(const Machine& m) {
+    static std::vector<u32> cached;
+    static u64 revision = ~0ull;
+    static bool title = false;
+    if (g_menu_title.ready) {
+        if (!title) {
+            std::lock_guard guard(g_menu_title.lock);
+            cached = g_menu_title.pixels;
+            title = true;
+        }
+        return cached;
+    }
+    if (revision != g_pixel_revision) {
+        cached = build_menu_backdrop(m);
+        revision = g_pixel_revision;
+    }
+    return cached;
 }
 
 stv::host::CameraMotion g_camera;
@@ -562,12 +599,23 @@ void present_frame(const Machine& m) {
     const auto visible=std::span<const u16>(m.presentation_frame.empty()?m.frame:m.presentation_frame).subspan(start);
     auto without_blobs=std::span<const u16>(m.presentation_without_blobs);
     if(!without_blobs.empty())without_blobs=without_blobs.subspan(start);
+    if (g_wnd && g_resident_effects.device_lost()) {
+        // TDR, driver update or adapter removal. Rebuild the GPU path instead
+        // of leaving a frozen image until restart.
+        const bool recovered = g_resident_effects.recover(g_settings.hardware_rt);
+        g_toast = recovered ? "Graphics device reset; display restored." : "Graphics device lost; using software display.";
+        g_toast_until = GetTickCount64() + 5000;
+        frontend_event("gpu_device_reset", recovered ? 1 : 0, g_resident_effects.error());
+    }
     g_resident_ready = g_wnd && g_resident_effects.update_arcade(visible, m.vram_w, width, VIS_H, m.pens,
                                                                 wide, title, g_enhance_effects.packet(), g_settings,
                                                                 !m.presentation_frame.empty(),without_blobs);
     if (!g_resident_ready) {
         build_software_frame(m);
-        if (g_wnd) g_menu_status = "GPU effects: " + g_resident_effects.error();
+        if (g_wnd) {
+            std::string status = "GPU effects: " + g_resident_effects.error();
+            if (status != g_menu_status) g_menu_status = std::move(status);
+        }
     }
     ++g_pixel_revision;
     ++g_frame_captures;
@@ -1586,6 +1634,8 @@ stv::host::PcMenuContext menu_context() {
     context.reduce_motion = g_settings.reduce_motion;
     context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
+    // DXR traces actor shadows itself and the renderer disables the 2.5D contact pass.
+    context.set_available(stv::host::PcMenuItem::ContactShadows, !g_settings.hardware_rt);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
                          g_lobby->state() != stv::net::LobbyState::Searching;
     if (context.public_host) {
@@ -1744,6 +1794,66 @@ void retain_room_scores() {
     const bool written=std::fwrite(rows.data(),sizeof(RoomScore),rows.size(),file)==rows.size();
     if (std::fclose(file)==0 && written) MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
 }
+// Global online leaderboards. Scores come only from entries the retail game
+// itself writes to its high-score tables during local play; the network
+// client only fetches while the leaderboard screen is open.
+stv::host::GlobalLeaderboardScreen g_global_lb;
+rl::lb::Client g_lb_client;
+std::array<stv::host::ArcadeScoreWatch,2> g_lb_watch;
+std::uint64_t g_lb_revision = 0;
+ULONGLONG g_lb_repaint_at = 0;
+std::int64_t lb_now() { return std::int64_t(std::time(nullptr)); }
+// STV_LEADERBOARD_TEST=1 lets a scripted replay (fresh power-on CMOS, never
+// saved) exercise the real capture/upload path; point it at a test server.
+bool g_lb_scripted_test = false;
+void start_leaderboard(bool automated) {
+    g_lb_scripted_test = GetEnvironmentVariableW(L"STV_LEADERBOARD_TEST", nullptr, 0) != 0 &&
+                         GetEnvironmentVariableW(L"STV_LEADERBOARD_URL", nullptr, 0) != 0;
+    if ((automated && !g_lb_scripted_test) || GetEnvironmentVariableW(L"STV_LEADERBOARD_OFF", nullptr, 0) != 0) return;
+    rl::lb::Config config;
+    wchar_t env[512]{};
+    if (GetEnvironmentVariableW(L"STV_LEADERBOARD_URL", env, DWORD(std::size(env))) && env[0]) config.url = env;
+    if (config.url.empty()) {
+        FILE* file = nullptr;
+        if (!_wfopen_s(&file, (g_data_dir + L"\\leaderboard-url.txt").c_str(), L"rb") && file) {
+            char text[512]{};
+            const auto n = std::fread(text, 1, sizeof text - 1, file);
+            std::fclose(file);
+            for (std::size_t i = 0; i < n && text[i] > ' '; ++i) config.url.push_back(wchar_t(text[i]));
+        }
+    }
+    if (config.url.empty()) config.url = STV_LEADERBOARD_URL;
+    config.game = "smashtv";
+    config.version = "l8-player";
+    config.data_dir = g_data_dir + L"\\leaderboard";
+    if (!g_lb_client.start(config)) write_player_log("Global leaderboard client could not start.");
+}
+void leaderboard_after_frame() {
+    if (!g_lb_client.started() || g_net.on || (scripted_run() && !g_lb_scripted_test) || g_m.frame_number % 30) return;
+    const int board = g_enhanced ? 1 : 0;
+    for (const auto& score : g_lb_watch[board].update(g_m.cmos))
+        g_lb_client.submit(stv::host::kLeaderboardBoards[board], score.name, score.score);
+}
+void service_leaderboard() {
+    if (!g_lb_client.started()) return;
+    std::string notice;
+    for (const auto& result : g_lb_client.take_submitted()) {
+        if (!result.fresh || result.rank <= 0) continue;
+        notice += (notice.empty() ? "GLOBAL RANK #" : "    #") + std::to_string(result.rank) + "  " + result.name;
+        if (notice.size() < 40) notice += result.board == "wide" ? "  WIDESCREEN" : "  ARCADE";
+    }
+    if (!notice.empty()) { g_toast = notice; g_toast_until = GetTickCount64() + 6000; }
+    if (!g_global_lb.is_open()) return;
+    g_global_lb.sync(g_lb_client, lb_now());
+    const auto revision = g_lb_client.revision();
+    const auto now = GetTickCount64();
+    if (revision != g_lb_revision || now >= g_lb_repaint_at) {
+        g_lb_revision = revision;
+        g_lb_repaint_at = now + 1000;   // keeps "UPDATED 12S AGO" current
+        if (g_wnd) InvalidateRect(g_wnd, nullptr, FALSE);
+    }
+}
+
 void save_cmos() {
     if (scripted_run()) return;
     const std::vector<u16>* local = &g_m.cmos;
@@ -2393,19 +2503,17 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::HardwareRT: return g_settings.hardware_rt ? (g_resident_effects.dxr_error().empty() ? "on" : "unavailable") : "off";
     case I::ExplosiveDebris: return g_settings.explosive_debris ? "on" : "off";
     case I::MuzzleFlash: return g_settings.muzzle_flash ? "on" : "off";
-    case I::Tracers: return g_settings.tracers ? "on" : "off";
     case I::Brass: return g_settings.brass ? "on" : "off";
     case I::Voxels: return g_settings.voxels ? "on" : "off";
     case I::CombatFeedback: case I::CameraShake: case I::ZoomPunch:
-    case I::HitFlash: case I::EdgeEffects: case I::WeaponSignatures:
-    case I::TemporalTrails: {
+    case I::HitFlash: case I::EdgeEffects: case I::WeaponSignatures: {
         const char* levels[]={"off","low","medium","high"};
         const int value=item==I::CombatFeedback?g_settings.combat_feedback:
             item==I::CameraShake?g_settings.camera_shake:
             item==I::ZoomPunch?g_settings.zoom_punch:
             item==I::HitFlash?g_settings.hit_flash:
             item==I::EdgeEffects?g_settings.edge_effects:
-            item==I::WeaponSignatures?g_settings.weapon_signatures:g_settings.temporal_trails;
+            g_settings.weapon_signatures;
         return levels[value];
     }
     case I::ReduceShake: return g_settings.reduce_shake ? "on" : "off";
@@ -2470,7 +2578,6 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::RoomCinema: return "OFF / LOW / MEDIUM / HIGH / BOSS + AUDIO ROOM PRESENTATION";
     case I::ExplosiveDebris: return "BLASTS THROW FLESH AND STEEL / PERSISTENT GORE KEEPS THE MARKS";
     case I::MuzzleFlash: return "DIRECTIONAL FLASH AT WEAPON DISCHARGE";
-    case I::Tracers: return "SHORT AMBER TRAILS FOLLOW ENEMY SHOTS";
     case I::Brass: return "SPINNING CASINGS BOUNCE AND SETTLE";
     case I::Voxels: return "3D CUBE FRAGMENTS / COSMETIC PHYSICS";
     case I::CombatFeedback: return "MASTER LEVEL / PRESENTATION ONLY / LOW SAVES GPU WORK";
@@ -2479,10 +2586,9 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::HitFlash: return "CONTROLLED IMPACT FLASH / REDUCED BY ACCESSIBILITY OPTION";
     case I::EdgeEffects: return "VIGNETTE + CHROMATIC EDGE SPLIT / COSMETIC POST ONLY";
     case I::WeaponSignatures: return "SIX WEAPON FAMILIES / MUZZLE, WAKE, IMPACT, RICOCHET";
-    case I::TemporalTrails: return "GPU PROJECTILE HISTORY / LOW 2, MEDIUM 4, HIGH 6 FRAMES";
     case I::ReduceShake: return "SUPPRESSES IMPACT CAMERA SHAKE";
     case I::ReduceFlashing: return "SUPPRESSES HIT FLASH AND EDGE PULSES";
-    case I::ReduceMotion: return "SUPPRESSES ZOOM AND TEMPORAL TRAILS";
+    case I::ReduceMotion: return "SUPPRESSES IMPACT ZOOM PUNCH";
     case I::Blood: return "BLOOD DROPLETS / COSMETIC GRAVITY AND SPLATS";
     case I::Audio: return "VOLUME / SOUND CHANNELS / REVERB / STEREO / HI-FI";
     case I::SoundChannels: return g_settings.extended_sound ? "EXTRA SOUND BOARDS / SPEECH NO LONGER CUTS GUNFIRE"
@@ -2568,6 +2674,7 @@ void paint(HWND wnd) {
     const float traumaY=std::cos(frame*1.713f)*trauma*2.4f;
     const float zoom=overall*levels[std::clamp(g_settings.zoom_punch,0,3)]*director.zoom_punch*
         (g_settings.reduce_motion||g_menu||g_paused||g_connecting?0.f:1.f);
+    const int baseW=w,baseH=h;
     if(zoom>0){
         const int zoomW=std::max(w,int(w*(1.f+zoom))),zoomH=std::max(h,int(h*(1.f+zoom)));
         x0-=(zoomW-w)/2;y0-=(zoomH-h)/2;w=zoomW;h=zoomH;
@@ -2582,7 +2689,7 @@ void paint(HWND wnd) {
     const bool one_shot = !g_net.on && (g_menu || g_paused || g_m.stop || g_connecting);
     bool overlay=g_menu||g_paused||g_m.stop||g_connecting||!g_status.empty()||(!g_toast.empty()&&GetTickCount64()<g_toast_until)||g_settings.show_fps;
     bool direct=g_resident_ready&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,
-        g_camera.offset(g_camera.dx,phase)+traumaX,g_camera.offset(g_camera.dy,phase)+traumaY);
+        g_camera.offset(g_camera.dx,phase)+traumaX,g_camera.offset(g_camera.dy,phase)+traumaY,baseW,baseH);
     static MenuPaintSurface menu_surface;
     const HDC window_dc = dc;
     HDC buffered = nullptr;
@@ -2620,7 +2727,7 @@ void paint(HWND wnd) {
             // The release ships no game artwork. Menus show the frame the
             // player's own ROM last drew in the main-menu artwork pane. Every
             // menu otherwise keeps a plain black background.
-            const auto backdrop = menu_backdrop(g_net.on && g_net.mr ? *g_net.mr : g_m);
+            const auto& backdrop = menu_backdrop(g_net.on && g_net.mr ? *g_net.mr : g_m);
             if (!backdrop.empty() && g_mode_menu && g_menu_font_ready) {
                 const auto layout=stv::host::arcade_title_layout(cw,ch);
                 SetDCBrushColor(dc,RGB(84,159,158));
@@ -2656,8 +2763,8 @@ void paint(HWND wnd) {
         } else if (g_mode_menu) {
             lines = {"SMASH T.V.", "[ MAIN MENU ]", ""};
             const std::string rows[] = {std::string("GAME  - < ") + stv::host::game_mode_label(g_enhanced) + " >",
-                                        "START", "MULTIPLAYER", "OPTIONS", "EXIT"};
-            for (int i = 0; i < 5; ++i) lines.push_back(std::string(i == g_mode_selection ? "> " : "  ") + rows[i]);
+                                        "START", "MULTIPLAYER", "OPTIONS", "GLOBAL LEADERBOARDS", "EXIT"};
+            for (int i = 0; i < 6; ++i) lines.push_back(std::string(i == g_mode_selection ? "> " : "  ") + rows[i]);
             lines.push_back("");
             lines.push_back("ARROWS / D-PAD   ENTER / A TO SELECT");
         } else if (g_room_scores_open) {
@@ -2741,7 +2848,9 @@ void paint(HWND wnd) {
             lines.push_back(g_menu_status);
             if (footer_lines) footer_lines += 2;
         }
-        if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_status.empty()) {
+        if (g_global_lb.is_open() && g_confirm == ConfirmAction::None) {
+            g_global_lb.draw(dc, cw, ch, g_menu_font_ready ? &g_menu_font : nullptr, g_lb_client, lb_now());
+        } else if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_status.empty()) {
             const auto layout=stv::host::arcade_title_layout(cw,ch);
             if(g_menu_font_ready)
                 stv::host::arcade_title_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced);
@@ -2809,8 +2918,17 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
         InvalidateRect(wnd, nullptr, FALSE);
         return;
     }
+    if (g_global_lb.is_open()) {
+        stv::host::LeaderboardInput input{};
+        if (stv::host::leaderboard_key(wp, input)) {
+            g_global_lb.input(input);
+            g_global_lb.sync(g_lb_client, lb_now());
+        }
+        InvalidateRect(wnd, nullptr, FALSE);
+        return;
+    }
     if (g_mode_menu) {
-        if (wp == VK_UP || wp == VK_DOWN) g_mode_selection = (g_mode_selection + (wp == VK_UP ? 4 : 1)) % 5;
+        if (wp == VK_UP || wp == VK_DOWN) g_mode_selection = (g_mode_selection + (wp == VK_UP ? 5 : 1)) % 6;
         if (g_mode_selection == 0 && (wp == VK_LEFT || wp == VK_RIGHT || wp == VK_RETURN)) {
             if (select_profile(!g_enhanced)) {
                 FILE* saved = nullptr;
@@ -2818,8 +2936,11 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
                     std::fputs(g_enhanced ? "enhanced" : "reference", saved); std::fclose(saved);
                 }
             }
-        } else if (wp == VK_RETURN && g_mode_selection == 4) {
+        } else if (wp == VK_RETURN && g_mode_selection == 5) {
             g_confirm = ConfirmAction::Quit; g_confirm_yes = false;
+        } else if (wp == VK_RETURN && g_mode_selection == 4) {
+            g_global_lb.open(g_enhanced ? 1 : 0);
+            g_global_lb.sync(g_lb_client, lb_now());
         }
         else if (wp == VK_RETURN && g_mode_selection == 1) {
             g_record_local = true;
@@ -3017,7 +3138,6 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
                 break;
             case I::ExplosiveDebris: g_settings.explosive_debris = !g_settings.explosive_debris; break;
             case I::MuzzleFlash: g_settings.muzzle_flash = !g_settings.muzzle_flash; break;
-            case I::Tracers: g_settings.tracers = !g_settings.tracers; break;
             case I::Brass: g_settings.brass = !g_settings.brass; break;
             case I::Voxels: g_settings.voxels = !g_settings.voxels; break;
             case I::Atmosphere: g_settings.atmosphere = (g_settings.atmosphere + event.delta + 4) % 4; break;
@@ -3037,7 +3157,6 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::HitFlash: g_settings.hit_flash=(g_settings.hit_flash+event.delta+4)%4;break;
             case I::EdgeEffects: g_settings.edge_effects=(g_settings.edge_effects+event.delta+4)%4;break;
             case I::WeaponSignatures: g_settings.weapon_signatures=(g_settings.weapon_signatures+event.delta+4)%4;break;
-            case I::TemporalTrails: g_settings.temporal_trails=(g_settings.temporal_trails+event.delta+4)%4;break;
             case I::ReduceShake: g_settings.reduce_shake=!g_settings.reduce_shake;break;
             case I::ReduceFlashing: g_settings.reduce_flashing=!g_settings.reduce_flashing;break;
             case I::ReduceMotion: g_settings.reduce_motion=!g_settings.reduce_motion;break;
@@ -3198,6 +3317,19 @@ void poll_pad_controls() {
         return;
     }
     if (!g_menu) return;
+    if (g_global_lb.is_open()) {
+        // Shoulders/triggers/Y are not menu events; read them as fresh presses.
+        for (int slot = 0; slot < 2; ++slot) {
+            stv::host::LeaderboardInput inputs[5];
+            const int count = stv::host::leaderboard_pad(g_pad_router.fresh(slot), inputs);
+            for (int i = 0; i < count && g_global_lb.is_open(); ++i) g_global_lb.input(inputs[i]);
+            if (count) InvalidateRect(g_wnd, nullptr, FALSE);
+        }
+        if (event == stv::host::PadEvent::Reset) {
+            g_global_lb.input(stv::host::LeaderboardInput::Refresh);
+            InvalidateRect(g_wnd, nullptr, FALSE);
+        }
+    }
     switch (event) {
     case stv::host::PadEvent::Up: handle_menu_key(g_wnd, VK_UP); break;
     case stv::host::PadEvent::Down: handle_menu_key(g_wnd, VK_DOWN); break;
@@ -3323,6 +3455,7 @@ LRESULT CALLBACK wndproc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CLOSE:
         write_player_log("Session closed normally.");
         retain_room_scores();
+        g_lb_client.stop();   // queued scores stay on disk for the next launch
         close_lobby();
         save_preferences(); save_cmos(); DestroyWindow(wnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
@@ -3540,6 +3673,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     }
 #endif
     g_achievements.start(scripted_run() || GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0) != 0);
+    start_leaderboard(scripted_run() || GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0) != 0);
     if (HMODULE x = LoadLibraryExW(L"xinput1_4.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         g_xinput = reinterpret_cast<XInputGetStateFn>(reinterpret_cast<void*>(GetProcAddress(x, "XInputGetState")));
 
@@ -3741,7 +3875,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                              g_m.rw(0x010EB610u), g_m.rw(0x010EB630u), g_m.rw(0x01086360u), g_present.maximum_ms);
                 for (std::size_t i = 0; i < g_present.histogram.size(); ++i)
                     std::fprintf(f, "%s%llu", i ? ", " : "", (unsigned long long)g_present.histogram[i]);
-                std::fputs("],\"audio_output_timeline\":", f);
+                std::fputs("], \"host_stage_timing\": {", f);
+                g_time_sim.write(f, "simulation", true);
+                g_time_scene.write(f, "scene_and_effects", true);
+                g_time_present.write(f, "presentation", false);
+                std::fputs("},\"audio_output_timeline\":", f);
                 g_audio_telemetry.write_json(f);
                 std::fputs("}\n", f);
                 std::fclose(f);
@@ -3771,6 +3909,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         service_window_focus();
         poll_pad_controls();
         service_lobby();
+        service_leaderboard();
         const bool frontend_reset = service_frontend_requests();
         QueryPerformanceCounter(&now);
         if (frontend_reset || previous_net_mode != g_net.on) {
@@ -3890,6 +4029,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         while (budget-- > 0 && simulation_clock.due(u64(now.QuadPart))) {
             simulation_max_late_ms = std::max(simulation_max_late_ms,
                 1000.0 * double(u64(now.QuadPart) - simulation_clock.deadline()) / double(freq.QuadPart));
+            LARGE_INTEGER sim_start{}, sim_end{};
+            QueryPerformanceCounter(&sim_start);
             if (g_host_solo) {
                 const u32 p1 = local_player_input();
                 run_one_frame();
@@ -3900,7 +4041,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                 record_local_frame();
                 run_one_frame();
             }
+            QueryPerformanceCounter(&sim_end);
+            if (smoke_frames) g_time_sim.add(sim_start, sim_end, u64(freq.QuadPart));
             if (g_frame_done) { ++frames_run; ++g_simulation_steps; }
+            if (g_frame_done && !g_host_solo) leaderboard_after_frame();
             samples_made += g_pcm.size();
             if (smoke_frames) {
                 // Hash original board PCM before gain, drift matching, queuing
@@ -3929,11 +4073,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             g_status = "Stopped: " + (g_m.faults.empty() ? std::string("fault") : g_m.faults.back().what);
             InvalidateRect(g_wnd, nullptr, FALSE);
         }
-        if (ran) present_frame(local_video_frame());
+        if (ran) {
+            LARGE_INTEGER scene_start{}, scene_end{};
+            QueryPerformanceCounter(&scene_start);
+            present_frame(local_video_frame());
+            QueryPerformanceCounter(&scene_end);
+            if (smoke_frames) g_time_scene.add(scene_start, scene_end, u64(freq.QuadPart));
+        }
         QueryPerformanceCounter(&now);
         if (!simulation_clock.due(u64(now.QuadPart)) || (smoke_frames && frames_run >= smoke_frames)) {
             g_camera_phase = float(std::clamp(1.0 - simulation_clock.remaining_seconds(u64(now.QuadPart)) / simulation_clock.kSeconds, 0.0, 1.0));
+            LARGE_INTEGER paint_start{}, paint_end{};
+            QueryPerformanceCounter(&paint_start);
             const bool presented = present_current_frame();
+            QueryPerformanceCounter(&paint_end);
+            if (smoke_frames && presented) g_time_present.add(paint_start, paint_end, u64(freq.QuadPart));
             if (smoke_frames && frames_run >= smoke_frames) { finish_report(); continue; }
             if (!presented)
                 wait_seconds(timer, std::min(g_settings.sync_presentation()?0.008:0.001, simulation_clock.remaining_seconds(u64(now.QuadPart))),

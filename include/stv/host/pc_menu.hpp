@@ -50,12 +50,12 @@ enum class PcMenuItem : std::uint8_t {
     MasterVolume, Mute, SoundTest,
     KeyboardBindings, PadBindings, SwapPads, StickDeadzone, ResetControls,
     PlayerName, HostGame, DirectHost, FindRooms, DirectJoin, Disconnect,
-    Enhance, EnhanceAll, EnableAllEffects, Particles, Blood, Debris, Smoke, Fire, Lighting, RayTracing, Voxels, Shockwaves, Tracers, Brass, MuzzleFlash, RoomLights, PersistentGore, Materials, Destruction, WeaponImpacts, FluidSmoke, ExplosiveDebris, RoomCinema,
+    Enhance, EnhanceAll, EnableAllEffects, Particles, Blood, Debris, Smoke, Fire, Voxels, Shockwaves, Brass, MuzzleFlash, PersistentGore, Destruction, WeaponImpacts, FluidSmoke, ExplosiveDebris, RoomCinema,
     Back, Options,
     RoomScores, PublicHost, PublicBrowser, Connections, HostMode, Motion, RunAhead, HardwareRT,
     Atmosphere, SpriteRim, ContactShadows, WetMaterials, HeatDistortion, EmissiveSpill, CinematicGrade,
     SoundChannels, Reverb, StereoWidth, HiFiAudio,
-    CombatFeedback, CameraShake, ZoomPunch, HitFlash, EdgeEffects, WeaponSignatures, TemporalTrails,
+    CombatFeedback, CameraShake, ZoomPunch, HitFlash, EdgeEffects, WeaponSignatures,
     ReduceShake, ReduceFlashing, ReduceMotion, Count
 };
 

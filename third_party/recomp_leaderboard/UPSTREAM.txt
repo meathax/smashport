@@ -1,0 +1,2 @@
+Canonical source: D:/Arcade/AI/recomp-leaderboard/client (shared by all recomps; server in ../worker).
+Original work for this project; no third-party code. Keep this copy byte-identical with the canonical client.

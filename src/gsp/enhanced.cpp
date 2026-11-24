@@ -260,10 +260,13 @@ void Machine::draw_aimed_sprite(u32 offset,int width,int height,int x,int y,int 
         const auto index=std::size_t(pixels)+y*artStride+x;
         return index<gfx.size() ? gfx[index] : 0;
     };
+    // det::cos/det::sin are pure; one evaluation per sprite gives the same
+    // bits as the former four evaluations per pixel.
+    const double cosA=det::cos(angle), sinA=det::sin(angle);
     for(int row=0;row<height;++row)for(int col=0;col<width;++col) {
         const int dx=start%size+col-size/2, dy=start/size+row-size/2;
-        const u8 pen=sample(pivot.x+int(std::lround(dx*det::cos(angle)+dy*det::sin(angle))),
-                            pivot.y+int(std::lround(dy*det::cos(angle)-dx*det::sin(angle))));
+        const u8 pen=sample(pivot.x+int(std::lround(dx*cosA+dy*sinA)),
+                            pivot.y+int(std::lround(dy*cosA-dx*sinA)));
         if(pen){
             const auto cell=std::size_t(y+row)*vram_w+x+col;
             vram[cell]=palette_bank|pen;

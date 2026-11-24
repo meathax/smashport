@@ -15,8 +15,12 @@ struct CameraMotion {
     }
     void observe(const EffectScene& scene) {
         dx = dy = 0;
-        if (active && scene.in_arena && width == scene.width && frame + 1 == scene.frame &&
-            std::abs(scene.camera_x - x) <= 16 && std::abs(scene.camera_y - y) <= 16) {
+        // Under load the loop can run up to four owed frames before one
+        // present. Keep interpolating that combined scroll instead of snapping.
+        const uint64_t gap = scene.frame - frame;
+        const int reach = 16 * int(gap <= 4 ? gap : 0);
+        if (active && scene.in_arena && width == scene.width && scene.frame > frame && gap <= 4 &&
+            std::abs(scene.camera_x - x) <= reach && std::abs(scene.camera_y - y) <= reach) {
             dx = scene.camera_x - x;
             dy = scene.camera_y - y;
         }

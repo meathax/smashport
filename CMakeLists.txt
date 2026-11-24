@@ -60,6 +60,12 @@ add_library(stv_pc_frontend STATIC src/host/pc_menu.cpp src/host/pc_settings.cpp
 target_include_directories(stv_pc_frontend PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(stv_pc_frontend PRIVATE STV_PLAYER_RELEASE=$<BOOL:${STV_PLAYER_RELEASE}>)
 if(WIN32)
+ # Global online leaderboards (shared recomp client; server: Cloudflare Worker + D1).
+ # STV_LEADERBOARD_URL in the environment overrides the URL at run time.
+ set(STV_LEADERBOARD_URL "https://recomp-leaderboard.meathax.workers.dev" CACHE STRING "Recomp leaderboard Worker URL")
+ add_subdirectory(third_party/recomp_leaderboard EXCLUDE_FROM_ALL)
+ target_link_libraries(stv_pc_frontend PUBLIC rl_leaderboard)
+ target_compile_definitions(stv_pc_frontend PUBLIC "STV_LEADERBOARD_URL=L\"${STV_LEADERBOARD_URL}\"")
  set(STV_EOS_SDK "${CMAKE_CURRENT_SOURCE_DIR}/build/dependencies/eos/1.19.2.1/SDK" CACHE PATH "Epic Online Services C SDK")
  if(EXISTS "${STV_EOS_SDK}/Include/eos_sdk.h")
   target_sources(stv_pc_frontend PRIVATE src/net/epic_rooms.cpp)
