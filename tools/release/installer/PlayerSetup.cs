@@ -7,6 +7,8 @@
 // starts it directly: no Python, no hashing of the kit, no prompts.
 // A new SmashTV.exe rebuilds from the ROM already imported, without asking.
 // Hold Shift while starting (or pass --select-rom) to choose a different ROM.
+// A portable.txt beside SmashTV.exe (or --portable) keeps everything in a
+// "data" folder beside the exe instead of AppData.
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -32,8 +34,19 @@ internal static class PlayerSetup {
     static readonly string TestRoot = Environment.GetEnvironmentVariable("STV_INSTALL_ROOT");
     static readonly string LocalData = string.IsNullOrEmpty(TestRoot)
         ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) : TestRoot;
-    static readonly string InstallParent = Path.Combine(LocalData, "Programs", "SmashTV");
-    static readonly string State = Path.Combine(LocalData, "SmashTV", "native-player");
+    static readonly string LegacyData = Path.Combine(LocalData, "SmashTV");
+    static string InstallParent = Path.Combine(LocalData, "Programs", "SmashTV");
+    static string State = Path.Combine(LegacyData, "native-player");
+    // Portable mode: a portable.txt beside SmashTV.exe (or --portable, which
+    // writes it) keeps the kit, built player, ROM copy, settings, saves, logs and
+    // leaderboard id in a "data" folder beside the exe. Nothing goes to AppData
+    // and no Start menu shortcut is made, so the folder can move between PCs.
+    static string PortableData;
+    const string PortableMarker = "portable.txt";
+    static readonly string[] SaveFiles = {
+        "cmos-l8.bin", "cmos-l8-16x9.bin", "pc-settings.cfg", "keys.cfg", "profile.cfg", "net.cfg",
+        "leaderboard-url.txt"
+    };
 
     static string Sha256(string path) {
         using (var sha = SHA256.Create())
@@ -65,16 +78,30 @@ internal static class PlayerSetup {
 
     static int Run(string[] args) {
         if (IsRecompLauncher()) return RunRecompLauncher(args);
-        string kit = ExtractKit(InstallParent);
-        InstallLauncher(kit);
-        Directory.CreateDirectory(State);
-        string kitId = Sha256(Path.Combine(kit, "manifest.json"));
-        bool choose = Array.IndexOf(args, "--select-rom") >= 0 || (Control.ModifierKeys & Keys.Shift) != 0;
-        // A ROM ZIP dropped onto SmashTV.exe (or passed on the command line).
+        // A ROM ZIP or folder dropped onto SmashTV.exe (or passed on the command line).
         string dropped = null;
         foreach (var arg in args)
             if ((arg.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(arg)) || Directory.Exists(arg))
                 dropped = Path.GetFullPath(arg);
+        Player migrate = null;
+        if (EnablePortable(args)) {
+            // First portable start on a PC that already set up the AppData player:
+            // reuse its ROM copy (unless a ROM was given) and bring settings and saves along.
+            if (Player.Load(State) == null) {
+                var old = dropped == null ? Player.Load(Path.Combine(LegacyData, "native-player")) : null;
+                if (old != null && old.RomIntact()) migrate = old;
+                CopySaves(LegacyData, PortableData);
+            }
+        }
+        string kit = ExtractKit(InstallParent);
+        if (PortableData == null) InstallLauncher(kit);
+        Directory.CreateDirectory(State);
+        if (migrate != null && Build(kit, migrate.Rom, "Setting up portable Smash T.V. from your imported ROM...")) {
+            var built = Player.Load(State);
+            if (built != null && built.Verify()) return Launch(built);
+        }
+        string kitId = Sha256(Path.Combine(kit, "manifest.json"));
+        bool choose = Array.IndexOf(args, "--select-rom") >= 0 || (Control.ModifierKeys & Keys.Shift) != 0;
         if (dropped != null) {
             if (Build(kit, dropped, "Building Smash T.V. from your ROM...")) {
                 var built = Player.Load(State);
@@ -191,8 +218,62 @@ internal static class PlayerSetup {
             UseShellExecute = false
         };
         start.EnvironmentVariables["STV_HOST_ROM_ZIP"] = player.Rom;
+        if (PortableData != null) {
+            start.Arguments = QuoteArguments(new[] { "--data=" + PortableData, "--portable" });
+            start.EnvironmentVariables["STV_HOST_DATA"] = PortableData;
+        }
         Process.Start(start).Dispose();
         return 0;
+    }
+
+    // ---- portable mode -------------------------------------------------------
+    static bool EnablePortable(string[] args) {
+        string self = Path.GetDirectoryName(Path.GetFullPath(Assembly.GetExecutingAssembly().Location));
+        string marker = Path.Combine(self, PortableMarker);
+        bool requested = Array.IndexOf(args, "--portable") >= 0;
+        if (!requested && !File.Exists(marker)) return false;
+        string data = Path.Combine(self, "data");
+        try {
+            Directory.CreateDirectory(data);
+            if (!File.Exists(marker))
+                File.WriteAllText(marker, "Smash T.V. portable mode: settings, saves and the built player " +
+                                          "are kept in the data folder beside SmashTV.exe.\r\n" +
+                                          "Delete this file to go back to the per-user AppData install.\r\n");
+        } catch (IOException e) {
+            throw NotWritable(self, e);
+        } catch (UnauthorizedAccessException e) {
+            throw NotWritable(self, e);
+        }
+        PortableData = data;
+        InstallParent = Path.Combine(data, "cache", "kits");
+        State = Path.Combine(data, "native-player");
+        return true;
+    }
+
+    static Exception NotWritable(string folder, Exception inner) {
+        return new IOException("Portable mode needs a folder you can write to. Move SmashTV.exe out of " +
+                               folder + " (for example to your Desktop or a USB drive) and try again.", inner);
+    }
+
+    // Copy settings and saves that the portable folder does not have yet. The
+    // shared leaderboard id comes along too, so scores keep the same identity.
+    static void CopySaves(string from, string to) {
+        if (!Directory.Exists(from)) return;
+        Directory.CreateDirectory(to);
+        try {
+            foreach (string path in SaveFiles.Select(name => Path.Combine(from, name))
+                         .Concat(Directory.GetFiles(from, "room-scores-*.bin"))) {
+                string target = Path.Combine(to, Path.GetFileName(path));
+                if (File.Exists(path) && !File.Exists(target)) File.Copy(path, target);
+            }
+            string id = Path.Combine(LocalData, "RecompLeaderboard", "install-id.txt");
+            string idTarget = Path.Combine(to, "leaderboard", "install-id.txt");
+            if (File.Exists(id) && !File.Exists(idTarget)) {
+                Directory.CreateDirectory(Path.GetDirectoryName(idTarget));
+                File.Copy(id, idTarget);
+            }
+        } catch (IOException) {
+        } catch (UnauthorizedAccessException) {}    // a missing copy only means defaults
     }
 
     static int LaunchAndWait(Player player, string data, string[] arguments) {

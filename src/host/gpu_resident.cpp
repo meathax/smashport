@@ -528,7 +528,7 @@ struct ResidentEffects::Impl {
   d.chromatic=!combatPresentation||s.reduce_flashing?0:director.chromatic_split*overall*effect_level(s.edge_effects);
   d.sourceMode=sourceMode;
   ctx->UpdateSubresource(displayConstants.Get(),0,nullptr,&d,0,0);auto cb=displayConstants.Get();ctx->PSSetConstantBuffers(1,1,&cb);
-  auto srv=outputSRV.Get();ctx->PSSetShaderResources(0,1,&srv);auto filtered=filteredSRV.Get();ctx->PSSetShaderResources(2,1,&filtered);
+  auto srv=outputSRV.Get();ctx->PSSetShaderResources(0,1,&srv);auto filtered=s.filter==9?postSRV.Get():filteredSRV.Get();ctx->PSSetShaderResources(2,1,&filtered); // mode 9 (Modern clean) shows the post pass; 8 shows the CRT chain
   ID3D11ShaderResourceView* protectedSources[]={usesShadowlessFrame?shadowlessSRV.Get():indicesSRV.Get(),shadowSRV.Get()};
   ctx->PSSetShaderResources(3,2,protectedSources);
   auto sam=sampler.Get();ctx->PSSetSamplers(0,1,&sam);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(ps.Get(),nullptr,0);ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);ctx->Draw(3,0);unbind();

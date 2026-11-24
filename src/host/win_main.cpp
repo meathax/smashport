@@ -3,7 +3,7 @@
 // the machine scheduler (stv::game::CoScheduler), presents the visible 410x256
 // area with nearest-neighbour scaling, plays the sound board through WASAPI,
 // maps keyboard and XInput pads to the original switch ports, and keeps CMOS
-// under %LOCALAPPDATA%\SmashTV. No emulator or interpreter: the game and sound
+// under %LOCALAPPDATA%\SmashTV (or --data, e.g. a portable folder). No emulator or interpreter: the game and sound
 // code are compiled C++ (generated/private).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -296,6 +296,7 @@ std::string g_room_notice;
 ULONGLONG g_room_notice_until = 0;
 int g_launch_mode = -1;
 std::wstring g_requested_data_dir;
+bool g_portable = false;   // --portable: keep every file under the data folder
 bool g_recomp_launcher = false;
 bool g_launcher_big_picture = false;
 bool g_launcher_playstation = false;
@@ -1834,6 +1835,7 @@ void start_leaderboard(bool automated) {
     config.game = "smashtv";
     config.version = "l8-player";
     config.data_dir = g_data_dir + L"\\leaderboard";
+    if (g_portable) config.identity_dir = config.data_dir;   // not the shared AppData id
     if (!g_lb_client.start(config)) write_player_log("Global leaderboard client could not start.");
 }
 void leaderboard_after_frame() {
@@ -3523,6 +3525,7 @@ void parse_launcher_args() {
         else if (arg == L"--widescreen") g_launch_mode = 1;
         else if (arg.rfind(L"--data=", 0) == 0) g_requested_data_dir = arg.substr(7);
         else if (arg == L"--data" && i + 1 < argc) g_requested_data_dir = argv[++i];
+        else if (arg == L"--portable") g_portable = true;
     }
     if (argv) LocalFree(argv);
 

@@ -33,6 +33,8 @@ On Windows x64, extract the release ZIP. In [RecompLauncher](https://recomplaunc
 
 Merged, non-merged and split sets are supported, whatever the ZIP or file names are. Clone subfolders, ZIPs inside a ZIP and an extracted folder also work. For a split set, keep the parent ZIP (any name containing "smash") beside the clone ZIP during setup. The importer checks the chip contents for the L8 program, graphics and sound.
 
+**Portable mode.** To keep everything next to `SmashTV.exe` (for example on a USB drive), put an empty file named `portable.txt` in the same folder, or start `SmashTV.exe --portable` once, which creates it. The built player, your ROM copy, settings, key bindings, high scores, logs and leaderboard identity then live in a `data` folder beside the exe. Nothing is written to AppData and no Start menu shortcut is made. On a PC that already ran the normal setup, the first portable start copies your settings and saves and reuses the imported ROM. Delete `portable.txt` to go back to the normal per-user install. The folder must be writable, so don't use it under Program Files.
+
 ## Build from source
 
 Run `.\build.ps1 -Mode MSVC -Rom "C:\path\to\your-L8.zip"` from PowerShell with Visual Studio C++ tools, the Windows SDK, CMake, Ninja, and Python available. For a source-only checkout, restore the pinned graphics runtime dependencies listed in [the graphics manifest](tools/release/graphics-files.json) before building. The Windows build also requires the Epic Online Services C SDK 1.19.2.1 under `build/dependencies/eos/1.19.2.1/SDK` and a game-client configuration at `build/dependencies/eos/eos-client.ini`. Set `SDL3_DIR` to the SDL3 CMake package directory to enable SDL gamepad support. The main and sound programs are translated ahead of time.
