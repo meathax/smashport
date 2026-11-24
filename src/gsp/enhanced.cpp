@@ -885,13 +885,56 @@ bool apply_enhanced(Machine& m, int widen) {
         r.sl(slot, enhanced_data_address(pointer));
     }
     // SCORE GETCNT indexes the DIP-selected shot table on refill and meter
-    // depletion. Give each special weapon another quarter of its imported
-    // charges per segment, rounded to nearest. Entry zero is the default gun.
+    // depletion. Faster Widescreen fire drains a segment sooner, so spray,
+    // grenade and non-stop shots double and bubble (fire cadence unchanged)
+    // gains 60%, rounded to nearest. Entry zero is the default gun.
     for (u32 base : {0xffe28b50u, 0xffe28bd0u}) {
+        constexpr unsigned num[5]={1,2,8,2,2}, den[5]={1,1,5,1,1};
         for (unsigned mode=1; mode<=4; ++mode) {
             auto& charges=r.w(base+16*mode);
-            charges=u16((charges*5u+2u)/4u);
+            charges=u16((charges*num[mode]+den[mode]/2u)/den[mode]);
         }
+    }
+    // Widescreen fire cadence. TORSO_2 (ROBO.ASM:2034) fires once per pass of
+    // LISTWHAT -> weapon list -> direction list -> FRANIM script and returns to
+    // TORSO_1 without sleeping, so the script length is the shot period. The
+    // root is redirected only in live enhanced scenes; relocate this table
+    // tree into the enhanced copy and shorten the copied scripts there.
+    {
+        constexpr u32 kListWhat=0xffe212e0u;
+        const auto in_rom=[](u32 a){return a>=0xffe00000u && !(a&15u);};
+        std::set<u32> slots, scripts;
+        for (u32 w=0; w<5; ++w) {
+            const u32 weapon_slot=kListWhat+w*32, weapon=r.l(weapon_slot);
+            slots.insert(weapon_slot);
+            if (!in_rom(weapon)) { m.fault("widescreen shoot weapon list mismatch",weapon_slot); m.stop=true; return false; }
+            for (u32 d=0; d<10; ++d) {
+                const u32 list_slot=weapon+d*32, list=r.l(list_slot);
+                slots.insert(list_slot);
+                if (!in_rom(list)) { m.fault("widescreen shoot direction list mismatch",list_slot); m.stop=true; return false; }
+                for (u32 k=0; k<10; ++k) {
+                    const u32 script_slot=list+k*32, script=r.l(script_slot);
+                    if (!in_rom(script)) { m.fault("widescreen shoot script mismatch",script_slot); m.stop=true; return false; }
+                    slots.insert(script_slot); scripts.insert(script);
+                }
+            }
+        }
+        for (const u32 script : scripts) {
+            // Frames: image long, duration word (+flip word under FLIPBITS).
+            u32 duration[4]{}; unsigned frames=0;
+            for (u32 a=script; frames<4 && r.l(a)!=0; ++frames) {
+                duration[frames]=a+32;
+                a+=(r.w(a+32)&0x4000u)?64u:48u;
+            }
+            const auto ticks=[&](unsigned f){return unsigned(r.w(duration[f])&0xffu);};
+            unsigned shortened[2]{};
+            if (frames==2 && ticks(0)==4 && ticks(1)==4) { shortened[0]=3; shortened[1]=3; }  // 8 -> 6 ticks
+            else if (frames==1 && ticks(0)==9) shortened[0]=7;                                 // non-stop 9 -> 7
+            else if (frames==1 && ticks(0)==2) continue;                                       // bubble stays 2
+            else { m.fault("widescreen shoot script cadence mismatch",script); m.stop=true; return false; }
+            for (unsigned f=0; f<frames; ++f) r.w(duration[f])=u16((r.w(duration[f])&0xff00u)|shortened[f]);
+        }
+        for (const u32 slot : slots) r.sl(slot, enhanced_data_address(r.l(slot)));
     }
     // The retail MOVB/ADJMAX path observes signed bytes. Keep the widened cap
     // below the sign bit after the 6-point difficulty modifier; 248 became
@@ -957,7 +1000,7 @@ bool apply_enhanced(Machine& m, int widen) {
             r.w(row.address+48)=u16(std::max<u64>(1,release));
         }
     }
-    // Widescreen movement: 25% faster, preserving directions and shoe advantage.
+    // Widescreen movement: 40% faster, preserving directions and shoe advantage.
     {
         constexpr s32 expected[] = STV_ROM_expected_FFE1F8A0;
         for (u32 i=0; i<10; ++i) {
@@ -966,7 +1009,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*5/4)));
+            r.sl(address,u32(s32(s64(expected[i])*7/5)));
         }
     }
     {
@@ -977,7 +1020,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*5/4)));
+            r.sl(address,u32(s32(s64(expected[i])*7/5)));
         }
     }
     {
@@ -988,7 +1031,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*5/4)));
+            r.sl(address,u32(s32(s64(expected[i])*7/5)));
         }
     }
     {
@@ -999,7 +1042,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*5/4)));
+            r.sl(address,u32(s32(s64(expected[i])*7/5)));
         }
     }
     m.enhanced_data = std::move(working);
@@ -1041,11 +1084,29 @@ bool enhanced_tank_reaction_parent(const Machine& m) {
 }
 
 bool enhanced_mutoid_lineup_parent(const Machine& m) {
+    // SHAKEME/LINEBLY/L2UP/EYES read thirteen part pointers (TNKL..MHEAD) from
+    // MUTPTR's PDATA. During the retail death sequence that process slot is
+    // released and reused by explosion processes, so PID and saved A8 no longer
+    // name the Mutoid while the PDATA part pointers survive. Bind the parts
+    // themselves: TNKL must be the live 9801 tank half still linked to this
+    // slot, and every part pointer must be an object block. A slot reused by an
+    // actor that overwrote PDATA (blade PID 267: TNKL 00000103, TRSL 01000000)
+    // is still rejected, so GANISAG never writes outside the object pool.
+    constexpr u32 object_first=0x010003a0u, object_stride=0x1f0u;
+    auto object=[](u32 p){return p>=object_first && p<object_first+420*object_stride &&
+                                 (p-object_first)%object_stride==0;};
+    auto value=[&](u32 p){const u32 i=(p-0x01000000u)>>4;return u32(m.ram[i]) | (u32(m.ram[i+1])<<16);};
     const u32 parent=m.c.a[13];
     if(parent<0x01086790u || parent>=0x010dad90u || (parent-0x01086790u)%0x5a0u)return false;
-    const u32 index=(parent+0x100u-0x01000000u)>>4;
-    const u32 image=u32(m.ram[index]) | (u32(m.ram[index+1])<<16);
-    return enhanced_actor_owner(m,parent,image,214);
+    for(u32 part=0;part<13;++part)if(!object(value(parent+0x100u+part*32u)))return false;
+    const u32 tank=value(parent+0x100u);
+    if(m.ram[(tank+0x150u-0x01000000u)>>4]!=0x9801 || value(tank+0x160u)!=parent)return false;
+    for(u32 p=value(0x01000040u),n=0;p && n<420;++n){
+        if(!object(p))return false;
+        if(p==tank)return true;
+        p=value(p);
+    }
+    return false;
 }
 
 }  // namespace stv::gsp

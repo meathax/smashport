@@ -16,6 +16,11 @@ namespace stv::host {
 
 // Largest proof the leaderboard accepts (the server stores it in one database row).
 inline constexpr std::size_t kMaxReplayBytes = 900'000;
+// Profile byte of a proof: 0 Classic, otherwise the Widescreen ruleset. Ruleset 1
+// is the v1.0.0-v1.0.4 balance; 2 is the 25 November 2026 player rebalance (speed,
+// fire cadence, special charges). Bump it whenever Widescreen gameplay rules change
+// so a verifier only replays proofs recorded under its own rules.
+inline constexpr std::uint8_t kWidescreenRuleset = 2;
 
 class ReplayProof {
 public:
@@ -33,6 +38,7 @@ public:
     };
     struct Decoded {
         bool wide = false;
+        std::uint8_t ruleset = 0;                 // profile byte: 0 Classic, else Widescreen ruleset
         std::vector<std::uint16_t> boot_cmos;
         std::vector<Segment> segments;
         std::uint64_t frames = 0;
@@ -85,7 +91,7 @@ public:
         const char magic[4] = {'S', 'T', 'V', 'R'};
         out.insert(out.end(), magic, magic + 4);
         out.push_back(1);                 // version
-        out.push_back(wide_ ? 1 : 0);     // profile
+        out.push_back(wide_ ? kWidescreenRuleset : 0);   // profile / Widescreen ruleset
         varint(out, frames_);
         varint(out, boot_cmos_.size());
         for (std::size_t i = 0; i < boot_cmos_.size();) {
@@ -132,6 +138,7 @@ public:
         const std::uint8_t* end = data + size - 8;
         Decoded d;
         d.wide = data[5] != 0;
+        d.ruleset = data[5];
         std::uint64_t value = 0;
         if (!read(p, end, value) || value > kMaxFrames) return false;
         d.frames = value;

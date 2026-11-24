@@ -5,7 +5,9 @@ function(stv_runtime_fingerprint target)
   set(inputs "${CMAKE_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_FUNCTION_LIST_FILE}"
     "${CMAKE_SOURCE_DIR}/data/enhanced_patchpoints.json"
     "${CMAKE_SOURCE_DIR}/data/enhanced_data_roots.json"
-    "${CMAKE_SOURCE_DIR}/data/enhanced_scene_writes.json")
+    "${CMAKE_SOURCE_DIR}/data/enhanced_scene_writes.json"
+    "${CMAKE_SOURCE_DIR}/data/enhanced_balance.json"
+    "${CMAKE_SOURCE_DIR}/data/enhanced_stage_balance.json")
   set(settings "stv-runtime-identity-v1\n")
   foreach(runtime_target IN ITEMS stv_base stv_gsp stv_l8 stv_snd stv_game stv_net stv_pc_frontend SmashTV)
     if(NOT TARGET ${runtime_target})

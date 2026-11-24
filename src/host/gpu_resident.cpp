@@ -32,7 +32,7 @@ struct CinemaParams{F4 floor,grade,boss,death;float pulse;unsigned quality,mood,
 struct Params{uint32_t width,height,casterCount,fixtureCount,tracing,tileWidth,sourceMode,pad;float dt;uint32_t reset,mask,spawns;EffectSpawn commands[256];
  int floorX,floorY,panX,panY;float brassDt;unsigned clearBrass,foregroundCount,hudCount;
  F4 foreground[96]; RoomLamp fixtures[6]; ShadowCaster casters[420];HudRect hud[420];F4 bounds,gates;HudRect solids[420];unsigned tick,flowCount,visualLevels,roomMood;F4 vent,flowEvents[64];HudRect floorRect;int hudBanks[420];
- CinemaParams cinema,previousCinema;unsigned floorPan,padding[3];};
+ CinemaParams cinema,previousCinema;unsigned floorPan,padding[3];HudRect recesses[32];unsigned recessCount,recessPad[3];};
 struct Display{float sw,sh,dw,dh;uint32_t mode;float glow,sharpen,curvature,dx,dy,pad[2];float hitFlash,vignette,chromatic,padding2;uint32_t sourceMode,pad3[3];};
 struct CombatGlyphGpu {float x,y,dx,dy,strength;uint32_t kind,family,color;};
 struct CombatParamsGpu {uint32_t count,tileWidth,tileCapacity,padding;};
@@ -391,6 +391,8 @@ struct ResidentEffects::Impl {
   }
   const auto& geo=packet.geometry;
   p.floorRect=geo.floor;
+  p.recessCount=unsigned(std::min(geo.recesses.size(),std::size(p.recesses)));
+  std::copy_n(geo.recesses.begin(),p.recessCount,p.recesses);
   p.bounds={geo.left,geo.top,geo.right,geo.bottom};
   p.gates={geo.gateLeft,geo.gateRight,float(geo.openGates),float(std::min(geo.solids.size(),std::size(p.solids)))};
   std::copy_n(geo.solids.begin(),unsigned(p.gates.w),p.solids);

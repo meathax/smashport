@@ -52,7 +52,9 @@ public:
 };
 
 // ---------------------------------------------------------------- navigation
-inline constexpr const char* kLeaderboardBoards[2] = {"arcade", "wide"};
+inline constexpr const char* kLeaderboardBoards[2] = {"arcade", "wide2"};
+// "wide2" holds Widescreen ruleset 2 (kWidescreenRuleset). The retired "wide" board
+// keeps v1.0.0-v1.0.4 scores, which were set under different Widescreen rules.
 inline constexpr const char* kLeaderboardBoardLabels[2] = {"ARCADE  4:3", "WIDESCREEN  16:9"};
 inline constexpr const char* kLeaderboardPeriods[3] = {"all", "week", "day"};
 inline constexpr const char* kLeaderboardPeriodLabels[3] = {"ALL TIME", "LAST 7 DAYS", "LAST 24 HOURS"};

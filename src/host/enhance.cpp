@@ -1,5 +1,6 @@
 #include "stv/host/enhance.hpp"
 #include "stv/host/gpu_effects.hpp"
+#include "stv/gsp/scene.hpp"
 #include <algorithm>
 #include <cmath>
 namespace stv::host {
@@ -62,7 +63,8 @@ void EnemyRemainsTracker::observe(std::span<const uint16_t> ram,gsp::ObjectEvent
     if(event==gsp::ObjectEvent::Insert)slot={true,false,{}};
     auto word=[&](uint32_t a){return ram[(a-0x01000000u)>>4];};
     const uint32_t room=uint32_t(word(0x010eb610))<<16 | word(0x010eb630);
-    if(word(0x010865a0)!=0x10){slot={};return;}
+    if(!gsp::live_arena_state(word(0x010865a0),uint32_t(word(0x010dd4e0))|uint32_t(word(0x010dd4f0))<<16) ||
+       word(0x010865a0)==0x18){slot={};return;}
     if(slot.contactExpires && cycle>slot.contactExpires){
         slot.blasted=false;slot.blastDx=slot.blastDy=0;slot.contactExpires=0;
     }
@@ -216,7 +218,8 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
     auto longword=[&](uint32_t a) { return uint32_t(word(a)) | uint32_t(word(a+16))<<16; };
     const auto gameState=word(0x010865a0u);
     s.roomIntro=gameState==0x18;
-    if (gameState!=0x10 && !s.roomIntro) return s;
+    // Game over (50h) keeps the live room and its actors on screen.
+    if (!gsp::live_arena_state(gameState,longword(0x010dd4e0u))) return s;
     s.room=uint32_t(word(0x010eb610u))<<16 | word(0x010eb630u);
     s.camera_x=int16_t(word(0x01000280u)); s.camera_y=int16_t(word(0x01000290u));
     s.in_arena=true;
@@ -251,6 +254,40 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
     // power-up movement limits. Keep deposits below the rear wall and above the front lip.
     const float left=width==547?33.f:29.f,right=width==547?513.f:372.f;
     geo.floor={ox+left,oy+46,right-left,195};
+    // NDSP1.BAKLST (OFIXED, after OBJLST/OFREE/ENDOFREE) links the live
+    // ADDBLOCK room tiles. Recessed art is identified by its L8 image header,
+    // so masks follow the tiles through room scrolls and mirrored copies.
+    {
+        struct RecessTile { uint32_t image; uint16_t w,h,x,y,rw,rh; };
+        // Sub-rectangles in unflipped image coordinates, authored from the
+        // 48-room widescreen audit.
+        static constexpr RecessTile tiles[]={
+            // Railed stair alcoves and the window bay (circuit 2). Circuit-1 stairwells
+            // are walkways and keep their gore.
+            {0xff00f880u,124,69,0,0,124,69},{0xff01d980u,96,43,0,0,95,43},{0xff01d9c0u,96,43,0,4,95,39},{0xff01de40u,12,85,0,0,12,81},
+            {0xff01f5a0u,124,69,0,0,124,69},{0xff01ff60u,124,69,0,0,124,69},{0xff00f7c0u,132,8,8,0,124,8},
+            {0xff01f4e0u,132,8,8,0,124,8},{0xff01ffa0u,132,8,9,0,123,8}};
+        constexpr uint32_t base=0x010003a0u,stride=0x1f0u;
+        std::array<bool,420> visited{};
+        // High-priority bay tiles are inserted on OBJLST; ADDBLOCK still stores
+        // their BAKBITS pointer in OPLINK, which separates them from sprites.
+        for(const uint32_t head:{0x010000a0u,0x01000040u})
+        for(uint32_t tile=longword(head);tile;tile=longword(tile)){
+            if(tile<base || (tile-base)%stride || (tile-base)/stride>=visited.size() || visited[(tile-base)/stride])break;
+            visited[(tile-base)/stride]=true;
+            if(longword(tile+0x160)-0x010dadd0u>=10000u)continue;
+            const uint32_t image=longword(tile+0x130);
+            const unsigned w=word(tile+0xf0),h=word(tile+0x100),flags=word(tile+0xb0);
+            for(const auto& r:tiles){
+                if(r.image!=image || r.w!=w || r.h!=h)continue;
+                // OFLAGS bits 4/5 are the DMA horizontal/vertical flips set by ADDBLOCK.
+                const float rx=float(int16_t(word(tile+0x70))-s.camera_x)+float((flags&0x10)?w-r.x-r.rw:r.x);
+                const float ry=float(int16_t(word(tile+0x90))-s.camera_y)+float((flags&0x20)?h-r.y-r.rh:r.y);
+                if(rx<width && ry<height && rx+r.rw>0 && ry+r.rh>0 && geo.recesses.size()<32)
+                    geo.recesses.push_back({rx,ry,float(r.rw),float(r.rh)});
+            }
+        }
+    }
     s.studio.mountX=ox+width*.5f-40;s.studio.mountY=oy+31;
     s.studio.aimX=ox+width*.5f;s.studio.aimY=oy+128;
     s.studio.boss=s.room==10 || s.room==0x10007 || s.room==0x20007 || s.room==0x20015;

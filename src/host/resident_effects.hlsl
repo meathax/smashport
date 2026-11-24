@@ -9,6 +9,7 @@ cbuffer Params : register(b0) {
  float4 cinemaFloor,cinemaGrade,cinemaBoss,cinemaDeath;float cinemaPulse;uint cinemaQuality,cinemaMood,cinemaPad;
  float4 oldFloor,oldGrade,oldBoss,oldDeath;float oldPulse;uint oldQuality,oldMood,oldPad;
  uint floorPan;uint3 floorPanPadding;
+ float4 recesses[32];uint recessCount;uint3 recessPadding;
 };
 cbuffer CombatParams : register(b2) { uint combatCount,combatTileWidth,combatTileCapacity,combatPadding; };
 struct CombatGlyph { float x,y,dx,dy,strength;uint kind,family,color; };
@@ -258,18 +259,37 @@ float3 oilColor(float2 p,float wet){
  return float3(.016,.015,.019)+rainbow*(.025+.075*wet)+glint*float3(.30,.32,.36);
 }
 bool oilDrop(float3 c){return c.b>=c.r;} // droplets are dark blue-black, blood is red
+bool inFloorRect(float2 xy){
+ return !(floorRect.z>0 && (any(xy<floorRect.xy)||any(xy>=floorRect.xy+floorRect.zw)));
+}
+// Railed stair alcoves and window bays are drawn below or above the
+// arena floor (enhance.cpp BAKLST tiles). Distance in native pixels from the
+// nearest recess; zero inside one.
+float recessGap(float2 xy){
+ float gap=1e4;
+ for(uint i=0;i<recessCount;i++){
+  float4 r=recesses[i];float2 l=xy+.5-r.xy;
+  gap=min(gap,length(max(max(-l,l-r.zw),0)));
+ }
+ return gap;
+}
+// Deposits thin out over the last few pixels of floor before the lip, with an
+// irregular edge so the boundary never reads as a ruled line.
+float recessFade(float2 xy){
+ float gap=recessCount?recessGap(xy):1e4;
+ return gap>=4.5?1.:smoothstep(0,3.2,gap*(.65+.7*noise(xy*.31+7.7)));
+}
 bool floorPixel(float2 xy){
- if(floorRect.z>0 && (any(xy<floorRect.xy)||any(xy>=floorRect.xy+floorRect.zw)))return false;
- return true;
+ return inFloorRect(xy) && (!recessCount || recessGap(xy)>.75);
 }
 // Only contact drips and attached tissue can mark raised surfaces.
 bool wallStain(uint type){return type==3 || (type>=9 && type<=12) || type==14;}
 float floorCoverage(float2 xy){
- if(floorRect.z<=0)return 1;
  float2 local=xy+.5-floorRect.xy;
  float2 edge=min(local,floorRect.zw-local);
  float distance=min(edge.x,edge.y);
- return smoothstep(0,9,distance*(.7+.65*noise(local*.24)));
+ float rim=floorRect.z>0?smoothstep(0,9,distance*(.7+.65*noise(local*.24))):1.;
+ return rim*recessFade(xy);
 }
 float2 placeOnFloor(float2 xy,float radius){
  return floorRect.z>0?clamp(xy,floorRect.xy,floorRect.xy+floorRect.zw-1):xy;
@@ -463,6 +483,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    uint type=(mark>>8)&15;float coverage=(mark&255)/255.;float wet=wetness(mark);
    float age=stainAge(mark);
    if(type!=3 && type!=4 && type<9)coverage*=floorCoverage(id.xy);
+   else coverage*=recessFade(id.xy);
    if(type==3)coverage*=saturate(age*.07-(1-coverage));
    surface=drawnSurface(id.xy);coverage*=surface;
    wetDeposit=max(wetDeposit,wet*coverage);
@@ -874,6 +895,7 @@ bool stepBrass(inout State p,float step){
 }
 
 void settleBrass(State p){
+ if(recessCount && recessGap(p.pos.xy)<=0)return; // the case drops out of sight
  int2 base=int2(floor(p.pos.xy))+floorOrigin;
  uint family=(uint)p.color.x;
  uint w,h;brassFloor.GetDimensions(w,h);
@@ -893,7 +915,7 @@ void settleBrass(State p){
 void storeStain(int2 xy,uint type,float opacity);
 void settlePlayerGore(State p);
 bool stickToWall(State p,float2 old){
- if(!(mask&2048) || floorRect.z<=0 || !floorPixel(old) || floorPixel(p.pos.xy))return false;
+ if(!(mask&2048) || floorRect.z<=0 || !inFloorRect(old) || inFloorRect(p.pos.xy))return false;
  uint kind=uint(p.misc.x);
  if((kind==19 && p.misc.y>1.5) || (kind==13 && p.misc.y>.5) || ((kind==1 || kind==2 || kind==5 || kind==19) && oilDrop(p.color.rgb)))return false;
  float2 travel=p.pos.xy-old;
@@ -1103,6 +1125,7 @@ RWTexture2D<uint> stainWrite : register(u7);
 void storeStain(int2 xy,uint type,float opacity){
  int2 cell=xy+floorOrigin;uint w,h;stainWrite.GetDimensions(w,h);
  if(!wallStain(type) && !floorPixel(xy))return;
+ if(recessCount && recessGap(float2(xy))<=0)return; // drops fall into the alcove or bay
  if(opacity<.07 || any(cell<0)||any(cell>=int2(w,h)))return;
  // Deposits accumulate. A newer, fainter mark (a speck, a boot print) used to
  // replace the packed coverage of an older thick pool and visibly erase it.
@@ -1443,7 +1466,7 @@ bool smokeSolid(float2 p){
  if(sourceMode==2 && (p.x<0 || p.x>=410))return true;
  // Smoke drifts above floor fixtures. Ground collision boxes and temporary
  // player movement limits cannot carve holes in the visible floor.
- if(floorRect.z>0 && floorPixel(p))return false;
+ if(floorRect.z>0 && inFloorRect(p))return false;
  if(bounds.z<=bounds.x)return false;
  // Vents sit in the physical wall even when a boss narrows player movement.
  float ventX=vent.x-pageOffset;

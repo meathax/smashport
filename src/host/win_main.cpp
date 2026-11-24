@@ -1854,7 +1854,7 @@ void service_leaderboard() {
     for (const auto& result : g_lb_client.take_submitted()) {
         if (!result.fresh || result.rank <= 0) continue;
         notice += (notice.empty() ? "GLOBAL RANK #" : "    #") + std::to_string(result.rank) + "  " + result.name;
-        if (notice.size() < 40) notice += result.board == "wide" ? "  WIDESCREEN" : "  ARCADE";
+        if (notice.size() < 40) notice += result.board == stv::host::kLeaderboardBoards[1] ? "  WIDESCREEN" : "  ARCADE";
     }
     if (!notice.empty()) { g_toast = notice; g_toast_until = GetTickCount64() + 6000; }
     if (!g_global_lb.is_open()) return;

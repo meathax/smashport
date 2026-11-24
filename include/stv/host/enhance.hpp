@@ -15,7 +15,10 @@ struct EffectTarget { uint32_t slot{}; float x{},y{},w{},h{}; bool metal{}; uint
 struct HudRect { float x,y,w,h; };
 struct HudPart : HudRect { int paletteBank{-1}; bool backdrop{}; bool scorePanel{}; };
 struct TankShadow { int x{},y{},w{},h{}; uint16_t pen{}; };
-struct ArenaGeometry { float left{},top{},right{},bottom{},gateLeft{},gateRight{}; unsigned openGates{}; std::vector<HudRect> solids; HudRect floor{}; };
+struct ArenaGeometry { float left{},top{},right{},bottom{},gateLeft{},gateRight{}; unsigned openGates{}; std::vector<HudRect> solids; HudRect floor{};
+    // Railed stair alcoves and window bays inside the floor rectangle:
+    // presentation-only masks where floor deposits must not appear.
+    std::vector<HudRect> recesses; };
 struct RoomLamp { float x{},y{},height{},radius{},r{},g{},b{},power{}; };
 struct ShadowCaster {
     float x,y,w,h,foot,palette,player,material{};

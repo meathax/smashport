@@ -872,6 +872,16 @@ def main():
                         line = next(j for j,b in enumerate(body) if b.startswith("c.cyc +="))
                         body.insert(line, "if (enhanced_scene(m) && m.rw(0x010eb610u) == 2 && "
                                     "m.rw(0x010eb630u) == 7) c.a[1] = c.a[1] * 4 / 5;")
+                    elif rule.get("policy") == "franim_enhanced_script":
+                        # FRANIM rejects scripts below ROM. Widescreen shoot scripts
+                        # live in the native enhancement copy; compare such a pointer
+                        # as its original ROM address so flags and cycles stay retail.
+                        if note != "UTIL.ASM:1387": raise SystemExit("Changed FRANIM script guard")
+                        old = "u32 a=c.a[9],"
+                        line = next(j for j,b in enumerate(body) if old in b)
+                        body[line] = body[line].replace(old,
+                            "u32 a=(m.enhanced && c.a[9]>=0xff000000u && c.a[9]<0xff800000u) ? "
+                            "c.a[9]+0x00800000u : c.a[9],")
                     else:
                         raise SystemExit(f"Unknown enhanced balance policy at {i.pc:08x}: {rule.get('policy')}")
                     balance_patched.add(i.pc)
@@ -881,6 +891,12 @@ def main():
                         raise SystemExit(f"scene-write at {i.pc:08x}: expected one exact store")
                     body = list(body)
                     body.insert(body.index(store) + 1, "sync_scene_bounds(m);")
+                    hook = scene_sites[i.pc].get("hook")
+                    if hook is not None:
+                        # Enhanced-only follow-up owned by scene.hpp (validated name).
+                        if hook not in ("close_orphan_buyin_window",):
+                            raise SystemExit(f"scene-write at {i.pc:08x}: unknown hook {hook}")
+                        body.insert(body.index(store) + 2, f"{hook}(m);")
                     scene_patched.add(i.pc)
                 # BAKMODS changes page ownership without a GAMSTATE write.
                 # Refresh only after the complete32-bit retail store, preserving
