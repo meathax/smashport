@@ -46,6 +46,10 @@ public:
     // interleaved stereo `out` (frames samples; out sized 2 * frames).
     void render(const Atto& base, std::size_t frames, std::vector<float>& out);
 
+    // Development stem export only: when set, render() also writes the music
+    // board's panned share here. The player never sets it; output is unchanged.
+    void set_music_tap(std::vector<float>* tap) { music_tap_ = tap; }
+
     int active_voices() const;
     uint64_t dropped_played() const { return dropped_played_; }
     uint64_t steals() const { return steals_; }
@@ -67,6 +71,7 @@ private:
     bool last_broadcast_{}, after_reset_{};
     uint64_t dropped_played_{}, steals_{}, clock_{}, boards_rendered_{}, allocations_{};
     std::string fault_;
+    std::vector<float>* music_tap_{};
 };
 
 }  // namespace stv::snd

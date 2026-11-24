@@ -280,6 +280,7 @@ void VoiceBank::tick(const Atto& t) {
 
 void VoiceBank::render(const Atto& base, std::size_t frames, std::vector<float>& out) {
     out.assign(frames * 2, 0.0f);
+    if (music_tap_) music_tap_->assign(frames * 2, 0.0f);
     if (voices_.empty()) return;
     for (auto& v : voices_) {
         if (!v->playing) continue;
@@ -302,6 +303,7 @@ void VoiceBank::render(const Atto& base, std::size_t frames, std::vector<float>&
             const float s = v.buf[k] - v.dc;
             out[2 * k] += s * gl;
             out[2 * k + 1] += s * gr;
+            if (music_tap_ && int(i) == kMusic) { (*music_tap_)[2 * k] += s * gl; (*music_tap_)[2 * k + 1] += s * gr; }
             if (k == 0) lo = hi = s;
             lo = std::min(lo, s);
             hi = std::max(hi, s);

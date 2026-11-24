@@ -100,9 +100,12 @@ if(WIN32)
  add_dependencies(stv_pc_frontend stv_resident_bytecode)
  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/host/dxr_lighting.hlsl")
  execute_process(
-   COMMAND "${STV_DXC}" -T cs_6_5 -E main -O3 -Fh "${CMAKE_CURRENT_BINARY_DIR}/dxr_shader.hpp"
+   COMMAND "${STV_DXC}" -T cs_6_5 -E main -O3 -Fh "${CMAKE_CURRENT_BINARY_DIR}/dxr_shader.hpp.new"
            -Vn stv_dxr_shader "${CMAKE_CURRENT_SOURCE_DIR}/src/host/dxr_lighting.hlsl"
    COMMAND_ERROR_IS_FATAL ANY)
+ # Replace the header only when the DXIL changed: rewriting it on every
+ # configure recompiled dxr_lighting.cpp and relinked every executable.
+ configure_file("${CMAKE_CURRENT_BINARY_DIR}/dxr_shader.hpp.new" "${CMAKE_CURRENT_BINARY_DIR}/dxr_shader.hpp" COPYONLY)
  target_sources(stv_pc_frontend PRIVATE src/host/dxr_lighting.cpp src/host/gpu_resident.cpp src/host/gpu_filter.cpp third_party/graphics/runtime/post/post_chain.cpp)
  target_include_directories(stv_pc_frontend PRIVATE third_party/graphics/runtime/post third_party/graphics/third_party/librashader/include)
  target_compile_definitions(stv_pc_frontend PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

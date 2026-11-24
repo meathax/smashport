@@ -185,13 +185,14 @@ bool parse_page(const std::string& body, Page& out) {
     page.generated = std::int64_t(generated);
     for (std::size_t i = 1; i < lines.size(); ++i) {
         const auto c = split(lines[i], '\t');
-        if (c.size() != 5) return false;
+        if (c.size() != 5 && c.size() != 6) return false;
         Row row;
         std::uint64_t ts = 0;
         if (!to_int(c[0], row.rank) || !to_u64(c[1], row.score) || !to_u64(c[3], ts)) return false;
         row.name = c[2];
         row.ts = std::int64_t(ts);
         row.pid = c[4];
+        row.verified = c.size() == 6 && c[5] == "1";
         page.rows.push_back(std::move(row));
     }
     out = std::move(page);
@@ -300,8 +301,9 @@ void Client::load_disk() {
         for (const auto& line : lines_of(text)) {
             const auto c = split(line, '\t');
             Pending p;
-            if (c.size() == 3 && valid_name(c[1]) && to_u64(c[2], p.score)) {
+            if ((c.size() == 3 || c.size() == 5) && valid_name(c[1]) && to_u64(c[2], p.score)) {
                 p.board = c[0]; p.name = c[1];
+                if (c.size() == 5 && c[3] != "-" && c[3].size() == 64) { p.replay = c[3]; p.sent = c[4] == "1"; }
                 pending_.push_back(std::move(p));
             }
         }
@@ -311,16 +313,30 @@ void Client::load_disk() {
 
 void Client::save_pending_locked() const {
     std::string text;
-    for (const auto& p : pending_) text += p.board + "\t" + p.name + "\t" + std::to_string(p.score) + "\n";
+    for (const auto& p : pending_)
+        text += p.board + "\t" + p.name + "\t" + std::to_string(p.score) + "\t" + (p.replay.empty() ? "-" : p.replay) +
+                "\t" + (p.sent ? "1" : "0") + "\n";
     write_file(config_.data_dir + L"\\pending.txt", text);
 }
 
-void Client::submit(const std::string& board, const std::string& name, std::uint64_t score) {
+std::wstring Client::replay_file(const std::string& hash) const {
+    return config_.data_dir + L"\\replays\\" + widen(hash) + L".bin";
+}
+
+void Client::submit(const std::string& board, const std::string& name, std::uint64_t score,
+                    const std::vector<std::uint8_t>& replay) {
     if (!started_ || !valid_name(name) || score == 0) return;
+    std::string hash;
+    if (!replay.empty() && replay.size() <= (1u << 20)) {
+        const std::string bytes(replay.begin(), replay.end());
+        hash = sha256_hex(bytes);
+        CreateDirectoryW((config_.data_dir + L"\\replays").c_str(), nullptr);
+        if (hash.size() != 64 || !write_file(replay_file(hash), bytes)) hash.clear();
+    }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& p : pending_) if (p.board == board && p.name == name && p.score == score) return;
-        pending_.push_back({board, name, score});
+        pending_.push_back({board, name, score, hash, false});
         save_pending_locked();
         retry_at_ = 0;
         backoff_ = 15;
@@ -443,7 +459,7 @@ void Client::fetch(const Job& job) {
     std::string path = job.kind ? "/v1/rank?" : "/v1/top?";
     path += "g=" + form_escape(config_.game) + "&b=" + form_escape(job.board) + "&p=" + form_escape(job.period);
     if (job.kind) path += "&pid=" + pid_;
-    else path += "&o=" + std::to_string(job.offset) + "&n=" + std::to_string(config_.page_size);
+    else path += "&o=" + std::to_string(job.offset) + "&n=" + std::to_string(config_.page_size) + "&ext=1";
     std::string body, new_etag;
     const int status = http(L"GET", path, {}, etag, body, new_etag);
     {
@@ -472,9 +488,10 @@ void Client::flush() {
     std::vector<Pending> batch;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        batch.assign(pending_.begin(), pending_.begin() + std::min<std::size_t>(pending_.size(), 25));
+        for (const auto& p : pending_)
+            if (!p.sent && batch.size() < 25) batch.push_back(p);
     }
-    if (batch.empty()) return;
+    if (batch.empty()) { upload_replay(); return; }
     std::string body = "g=" + form_escape(config_.game) + "&id=" + install_id_ + "&v=" + form_escape(config_.version);
     for (const auto& p : batch)
         body += "&e=" + form_escape(p.board + ":" + p.name + ":" + std::to_string(p.score));
@@ -486,10 +503,24 @@ void Client::flush() {
         const bool drop = status == 400 || status == 403 || status == 413;
         if (status == 200 || drop) {
             auto results = parse_submit(reply);
-            pending_.erase(std::remove_if(pending_.begin(), pending_.end(), [&](const Pending& p) {
-                return std::any_of(batch.begin(), batch.end(), [&](const Pending& b) {
+            // A new score keeps its replay queued for upload; everything else is finished.
+            for (auto& p : pending_) {
+                const bool in_batch = std::any_of(batch.begin(), batch.end(), [&](const Pending& b) {
                     return b.board == p.board && b.name == p.name && b.score == p.score; });
-            }), pending_.end());
+                if (!in_batch) continue;
+                const bool fresh = !drop && std::any_of(results.begin(), results.end(), [&](const Submitted& r) {
+                    return r.fresh && r.board == p.board && r.name == p.name && r.score == p.score; });
+                if (fresh && !p.replay.empty()) p.sent = true;
+                else p.board.clear();   // marked for removal below
+            }
+            for (const auto& p : pending_)
+                if (p.board.empty() && !p.replay.empty()) {
+                    bool shared = false;
+                    for (const auto& q : pending_) if (!q.board.empty() && q.replay == p.replay) shared = true;
+                    if (!shared) DeleteFileW(replay_file(p.replay).c_str());
+                }
+            pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
+                                          [](const Pending& p) { return p.board.empty(); }), pending_.end());
             save_pending_locked();
             for (auto& r : results) {
                 // A new score changes the first page and ranks; refetch next time they are viewed.
@@ -511,8 +542,53 @@ void Client::flush() {
     ++revision_;
 }
 
+// One queued replay per call, sent after its score was accepted as new. A replay
+// the server cannot take (rank too low, already stored, malformed) is dropped;
+// network trouble backs off like score uploads.
+void Client::upload_replay() {
+    Pending item;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = std::find_if(pending_.begin(), pending_.end(), [](const Pending& p) { return p.sent && !p.replay.empty(); });
+        if (it == pending_.end()) {
+            pending_.erase(std::remove_if(pending_.begin(), pending_.end(), [](const Pending& p) { return p.sent; }), pending_.end());
+            save_pending_locked();
+            return;
+        }
+        item = *it;
+    }
+    std::string bytes;
+    int status = 404;
+    std::string reply, etag;
+    if (read_file(replay_file(item.replay), bytes) && !bytes.empty()) {
+        const std::string path = "/v1/replay?g=" + form_escape(config_.game) + "&id=" + install_id_ + "&b=" + form_escape(item.board) +
+                                 "&n=" + form_escape(item.name) + "&s=" + std::to_string(item.score);
+        status = http(L"POST", path, bytes, {}, reply, etag, L"application/octet-stream");
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (status == 200 || (status >= 400 && status < 500 && status != 429)) {
+            pending_.erase(std::remove_if(pending_.begin(), pending_.end(), [&](const Pending& p) {
+                return p.sent && p.board == item.board && p.name == item.name && p.score == item.score; }), pending_.end());
+            bool shared = false;
+            for (const auto& q : pending_) if (q.replay == item.replay) shared = true;
+            if (!shared) DeleteFileW(replay_file(item.replay).c_str());
+            save_pending_locked();
+            backoff_ = 15;
+            retry_at_ = 0;
+            offline_ = false;
+        } else {
+            offline_ = status <= 0;
+            retry_at_ = now_unix() + backoff_;
+            backoff_ = std::min(backoff_ * 2, 1800);
+        }
+    }
+    ++revision_;
+}
+
 int Client::http(const wchar_t* method, const std::string& path, const std::string& body,
-                 const std::string& etag, std::string& out_body, std::string& out_etag) {
+                 const std::string& etag, std::string& out_body, std::string& out_etag,
+                 const wchar_t* content_type) {
     out_body.clear();
     out_etag.clear();
     const auto endpoint = parse_url(config_.url);
@@ -534,7 +610,7 @@ int Client::http(const wchar_t* method, const std::string& path, const std::stri
                                 : nullptr;
     if (request) {
         std::wstring headers;
-        if (!body.empty()) headers += L"Content-Type: application/x-www-form-urlencoded\r\n";
+        if (!body.empty()) headers += std::wstring(L"Content-Type: ") + content_type + L"\r\n";
         if (!etag.empty()) headers += L"If-None-Match: " + widen(etag) + L"\r\n";
         const BOOL sent = WinHttpSendRequest(request, headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
                                              headers.empty() ? 0 : DWORD(-1),

@@ -25,6 +25,7 @@ struct Row {
     std::string name;
     std::int64_t ts = 0;
     std::string pid;
+    bool verified = false;   // a replay of this run was re-simulated and confirmed (server column 6)
 };
 
 struct Page {
@@ -84,7 +85,10 @@ public:
     std::string pid() const;
 
     // Queue a score (persisted). Duplicate (board,name,score) in the queue is ignored.
-    void submit(const std::string& board, const std::string& name, std::uint64_t score);
+    // `replay` (optional, at most 1 MB) is uploaded after the server accepts the score as
+    // new, so the run can be verified by re-simulation. It is kept on disk until sent.
+    void submit(const std::string& board, const std::string& name, std::uint64_t score,
+                const std::vector<std::uint8_t>& replay = {});
     // Fetch a page / the local player's rank unless fresh (force skips the age check).
     void request(const std::string& board, const std::string& period, int offset, bool force = false);
     void request_rank(const std::string& board, const std::string& period, bool force = false);
@@ -103,7 +107,7 @@ public:
 private:
     struct Job { int kind = 0; std::string board, period; int offset = 0; };
     struct Cached { std::string body, etag; std::int64_t fetched = 0; std::int64_t tried = 0; };
-    struct Pending { std::string board, name; std::uint64_t score = 0; };
+    struct Pending { std::string board, name; std::uint64_t score = 0; std::string replay; bool sent = false; };
 
     void run();
     void fetch(const Job& job);
@@ -113,7 +117,10 @@ private:
     std::wstring cache_file(const std::string& key) const;
     static std::string key_of(int kind, const std::string& board, const std::string& period, int offset);
     int http(const wchar_t* method, const std::string& path, const std::string& body,
-             const std::string& etag, std::string& out_body, std::string& out_etag);
+             const std::string& etag, std::string& out_body, std::string& out_etag,
+             const wchar_t* content_type = L"application/x-www-form-urlencoded");
+    void upload_replay();
+    std::wstring replay_file(const std::string& hash) const;
 
     Config config_;
     std::string install_id_, pid_;

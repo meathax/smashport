@@ -33,6 +33,7 @@
 #include "stv/host/pc_menu.hpp"
 #include "stv/host/menu_draw_win.hpp"
 #include "stv/host/global_leaderboard.hpp"
+#include "stv/host/replay_proof.hpp"
 #include "stv/host/gpu_filter.hpp"
 #include "stv/gsp/rom_import.hpp"
 #include "resources/resource.h"
@@ -262,6 +263,10 @@ bool g_host_solo = false, g_start_solo = false, g_record_local = false;
 std::vector<u16> g_room_boot_cmos;
 std::optional<bool> g_host_mode;
 bool g_host_booting = false, g_start_together = false;
+// Controls of the current local run from power-on, attached to leaderboard scores
+// so anyone with the ROM can re-simulate and confirm them (see replay_proof.hpp).
+stv::host::ReplayProof g_proof;
+std::vector<stv::net::PlayerInput> g_script1, g_script2;   // STV_HOST_INPUTS scenario (frames from power-on)
 struct RoomInputs { u32 p1, p2; u16 frames; std::optional<u16> local_switches; };
 u32 g_room_frames = 0;
 std::vector<RoomInputs> g_room_history;
@@ -276,13 +281,14 @@ void record_room_frame(u32 p1, u32 p2, std::optional<u16> local_switches = {}) {
 // Local play samples switches before running the coupled frame. Keep that
 // original edge when reconstructing an already-running solo or couch game.
 void record_local_frame() {
-    if (!g_record_local) return;
+    if (!g_record_local && !g_proof.valid()) return;
     const u16 controls = ~g_m.ports[0], switches = ~g_m.ports[1];
     const u32 p1 = (u32(g_m.move_inputs[0]) << 16) | g_m.aim_inputs[0] | (controls & 255) |
         ((switches & 1) ? 0x100 : 0) | ((switches & 4) ? 0x200 : 0);
     const u32 p2 = (u32(g_m.move_inputs[1]) << 16) | g_m.aim_inputs[1] | (controls >> 8) |
         ((switches & 2) ? 0x100 : 0) | ((switches & 32) ? 0x200 : 0);
-    record_room_frame(p1,p2,g_m.ports[1]);
+    if (g_script1.empty()) g_proof.add(p1,p2,g_m.ports[1]);   // scripted runs record at the vblank instead
+    if (g_record_local) record_room_frame(p1,p2,g_m.ports[1]);
 }
 
 std::string g_room_guest;
@@ -422,13 +428,14 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
 
 // STV_HOST_INPUTS=FILE replays a recorded scenario (lockstep input format) instead of
 // the controls, frame by frame from power-on (soak and gameplay automation).
-std::vector<stv::net::PlayerInput> g_script1, g_script2;
 
 // Scripted inputs are applied inside the vblank callback, at the same point as the
 // lockstep harness; the scheduler only stops at the end of its timeslice.
 void apply_script(u64 frame) {
     const bool in = frame < g_script1.size();
-    stv::net::apply_inputs(g_m, in ? g_script1[frame] : 0, in ? g_script2[frame] : 0);
+    const stv::net::PlayerInput p1 = in ? g_script1[frame] : 0, p2 = in ? g_script2[frame] : 0;
+    g_proof.add(p1, p2, std::nullopt);
+    stv::net::apply_inputs(g_m, p1, p2);
 }
 
 void sample_inputs() {
@@ -1237,6 +1244,7 @@ bool snapshot_main(const std::vector<u8>& snap, std::vector<u8>& main) {
     return true;
 }
 bool load_coupled_snapshot(const std::vector<u8>& snap) {
+    g_proof.taint();   // a joined snapshot has no controls history from power-on
     std::vector<u8> main;
     if (!snapshot_main(snap, main)) return false;
     u32 pc = 0;
@@ -1831,8 +1839,14 @@ void start_leaderboard(bool automated) {
 void leaderboard_after_frame() {
     if (!g_lb_client.started() || g_net.on || (scripted_run() && !g_lb_scripted_test) || g_m.frame_number % 30) return;
     const int board = g_enhanced ? 1 : 0;
-    for (const auto& score : g_lb_watch[board].update(g_m.cmos))
-        g_lb_client.submit(stv::host::kLeaderboardBoards[board], score.name, score.score);
+    const auto fresh = g_lb_watch[board].update(g_m.cmos);
+    if (fresh.empty()) return;
+    // Attach the run's controls from power-on (empty when the run is not provable
+    // or too long); the server stores it so the score can be verified by replay.
+    const auto proof = g_proof.encode(stv::host::kMaxReplayBytes);
+    if (proof.empty()) write_player_log("Leaderboard: this run cannot be attached as a replay proof.");
+    for (const auto& score : fresh)
+        g_lb_client.submit(stv::host::kLeaderboardBoards[board], score.name, score.score, proof);
 }
 void service_leaderboard() {
     if (!g_lb_client.started()) return;
@@ -2018,6 +2032,7 @@ bool reset_coupled_game(bool keep_cmos) {
     if (!g_mode_menu) g_resident_ready = false;
     g_keyboard_blocked = true;
     g_pad_router.suppress_until_neutral();
+    g_proof.begin(g_enhanced, g_m.cmos);   // a fresh machine starts a new provable run
     return true;
 }
 
@@ -3547,6 +3562,18 @@ void write_player_log(std::string_view text) {
     std::fclose(file);
 }
 
+// Milliseconds since process start, for the startup stage lines in SmashTV.log.
+void log_startup_stage(const char* stage) {
+    FILETIME created{}, exited{}, kernel{}, user{}, now{};
+    GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
+    GetSystemTimePreciseAsFileTime(&now);
+    const auto ticks = [](const FILETIME& t) { return (u64(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+    char line[128];
+    std::snprintf(line, sizeof line, "Startup: %s at %llu ms.", stage,
+                  (unsigned long long)((ticks(now) - ticks(created)) / 10000));
+    write_player_log(line);
+}
+
 bool find_roms(std::filesystem::path& cache) {
     if (!g_requested_data_dir.empty()) {
         g_data_dir = g_requested_data_dir;
@@ -3643,6 +3670,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     load_cmos();
     load_keys();
     g_pc = g_m.reset_vector();
+    g_proof.begin(g_enhanced, g_m.cmos);
+    log_startup_stage("ROM data and profile ready");
     if (!g_snd.load_roms(g_m.snd_u4, g_m.snd_u19, g_m.snd_u20, err)) {
         MessageBoxA(nullptr, ("The sound ROMs could not be imported:\n" + err).c_str(), "Smash T.V.", MB_ICONERROR);
         return 2;
@@ -3650,10 +3679,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // Compile the resident shaders before starting the sound device and game clock.
     g_enhance_effects.use_gpu_simulation(true);
     if (!g_resident_effects.prepare()) g_menu_status = "GPU effects: " + g_resident_effects.error();
+    log_startup_stage("GPU effects prepared");
     bool audio = g_audio.open();
+    log_startup_stage("audio opened");
     load_preferences();
     if(g_settings.hardware_rt && !g_resident_effects.prepare_dxr())
         g_menu_status="Hardware ray tracing: "+g_resident_effects.dxr_error();
+    log_startup_stage("ray tracing prepared");
     const bool audio_initial_device = audio;
     g_mixer = std::make_unique<stv::snd::Mixer>(g_audio.rate());
     wchar_t audio_timeline[8]{};
@@ -3707,6 +3739,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     if (g_launcher_big_picture && !g_settings.fullscreen) g_transient_fullscreen = true;
     if (g_settings.fullscreen || g_launcher_big_picture) toggle_fullscreen(false);
     if (launch_online && !net_connect(zip)) return 3;
+    log_startup_stage("window shown");
 
     LARGE_INTEGER freq{}, now{};
     QueryPerformanceFrequency(&freq);
@@ -3767,6 +3800,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     bool boot_skip = boot_skip_allowed && !g_net.on;
     u32 boot_skip_frames = 0;
     unsigned intro_title_frames = 0;
+    LARGE_INTEGER boot_skip_started{};
     constexpr u32 kBootSkipLimit = 4000;   // about 73 s of arcade time: then show whatever is there
     // ROM/window/lobby setup and scripted-input parsing can outlast the initial
     // device silence. Prime once at the actual game-clock epoch, never by
@@ -3829,6 +3863,19 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                 std::fprintf(f, "\"audio_underruns\": %llu, \"audio_min_queued_ms\": %.1f, ",
                              (unsigned long long)g_audio.underruns(),
                              g_audio.min_padding() == UINT32_MAX ? -1.0 : 1000.0 * g_audio.min_padding() / g_audio.rate());
+                {   // Test hook: dump the replay proof of this scripted run for the verifier.
+                    wchar_t proof_path[MAX_PATH];
+                    if (GetEnvironmentVariableW(L"STV_HOST_REPLAY_OUT", proof_path, MAX_PATH)) {
+                        const auto proof = g_proof.encode(std::size_t(1) << 30);
+                        FILE* pf = nullptr;
+                        if (!proof.empty() && !_wfopen_s(&pf, proof_path, L"wb") && pf) {
+                            std::fwrite(proof.data(), 1, proof.size(), pf);
+                            std::fclose(pf);
+                        }
+                        std::fprintf(f, "\"replay_proof_bytes\": %zu, \"replay_proof_frames\": %llu, ",
+                                     proof.size(), (unsigned long long)g_proof.frames());
+                    }
+                }
                 u64 ram_hash = stv::host::ConfirmedAudioAudit::kOffset;
                 u64 frame_hash = stv::host::ConfirmedAudioAudit::kOffset;
                 for (u16 word : g_m.ram) stv::host::ConfirmedAudioAudit::hash_word(ram_hash, word, 2);
@@ -3989,6 +4036,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         if (boot_skip) {
             LARGE_INTEGER slice{}, at{};
             QueryPerformanceCounter(&slice);
+            if (!boot_skip_frames) boot_skip_started = slice;
             bool finished = false;
             for (;;) {
                 const u16 scene = game_scene_state(g_m);
@@ -3996,6 +4044,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                            boot_skip_frames >= kBootSkipLimit || g_m.stop || !g_snd.fault.empty();
                 if (finished) break;
                 g_m.ports[0] = g_m.ports[1] = 0xffff;   // all controls released (active low)
+                if (g_host_solo || g_net.on) g_proof.taint();
                 if (g_host_solo) record_room_frame(0,0,u16(0xffff));
                 else record_local_frame();
                 run_one_frame();
@@ -4008,6 +4057,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             boot_skip = false;
             g_host_booting = false;
             { char where[40]; std::snprintf(where, sizeof where, "state %02x background %08x", unsigned(game_scene_state(g_m)), unsigned(scene_background(g_m))); frontend_event("boot_skipped", boot_skip_frames, where); }
+            {
+                QueryPerformanceCounter(&at);
+                char line[128];
+                std::snprintf(line, sizeof line, "Power-on boot: %u frames in %llu ms.", boot_skip_frames,
+                              (unsigned long long)((at.QuadPart - boot_skip_started.QuadPart) * 1000 / freq.QuadPart));
+                write_player_log(line);
+                log_startup_stage("first frame");
+            }
             if (audio) { (void)g_audio.discard_pending(); audio_status(); }
             if (g_frame_done) present_frame(g_m);
             QueryPerformanceCounter(&now);
@@ -4031,6 +4088,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                 1000.0 * double(u64(now.QuadPart) - simulation_clock.deadline()) / double(freq.QuadPart));
             LARGE_INTEGER sim_start{}, sim_end{};
             QueryPerformanceCounter(&sim_start);
+            if (g_host_solo || g_net.on) g_proof.taint();   // room play is not a plain local run
             if (g_host_solo) {
                 const u32 p1 = local_player_input();
                 run_one_frame();

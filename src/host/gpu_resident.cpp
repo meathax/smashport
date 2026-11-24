@@ -66,7 +66,7 @@ struct ResidentEffects::Impl {
  std::vector<EnemyRemains> pendingBodies;
  ComPtr<ID3D11ShaderResourceView> stainSRV,flowSRV[2];
  ComPtr<ID3D11UnorderedAccessView> stainUAV,flowUAV[2];
- unsigned flowRead{};bool flowActive{};
+ unsigned flowRead{};bool flowActive{};unsigned lastParticleMask{}; // categories live in the pool last frame
  ComPtr<ID3D11ShaderResourceView> floorSRV;
  ComPtr<ID3D11UnorderedAccessView> floorUAV;
  int floorLeft{},floorTop{},floorRight{},floorBottom{},cameraX{},cameraY{};
@@ -456,9 +456,14 @@ struct ResidentEffects::Impl {
   ctx->CSSetShader(cs[0].Get(),nullptr,0);ctx->Dispatch(27,1,1);ctx->CSSetShader(cs[1].Get(),nullptr,0);ctx->Dispatch(1,1,1);
   constexpr UINT emptyTiles[4]{};
   ctx->ClearUnorderedAccessViewUint(tileUAV.Get(),emptyTiles);
-  if(p.mask & ((1u<<21)-1)){
-   ctx->CSSetShader(cs[2].Get(),nullptr,0);ctx->Dispatch((p.mask&(1u<<18))?26:(p.mask&512u)?18:16,1,1);
+  // Run the update pass once more after the last category is switched off, so the
+  // pool is emptied (every kind is then disabled) instead of keeping stale particles
+  // that would reappear and finish their life when a category is turned back on.
+  const unsigned particleMask=(p.mask|lastParticleMask)&((1u<<21)-1);
+  if(particleMask){
+   ctx->CSSetShader(cs[2].Get(),nullptr,0);ctx->Dispatch((particleMask&(1u<<18))?26:(particleMask&512u)?18:16,1,1);
   }
+  if(fresh)lastParticleMask=p.mask&((1u<<21)-1);
   unbind();
   if((p.mask&65536) && packet.in_arena){
    if(!flowSRV[0])for(int i=0;i<2;i++){

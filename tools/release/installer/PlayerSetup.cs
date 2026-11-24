@@ -145,6 +145,17 @@ internal static class PlayerSetup {
             finally { try { File.Delete(previous); } catch (IOException) {} }
         }
         var player = Player.Load(state);
+        // A newer SmashTV.exe than the one that built this player: rebuild from the
+        // retail copy kept by the last setup, so an update never asks for setup again.
+        // If the rebuild fails, keep playing the verified older build.
+        if (player != null && player.Kit != Sha256(Path.Combine(kit, "manifest.json")) && player.RomIntact()) {
+            string previous = Path.Combine(Path.GetTempPath(), "SmashTV-" + Guid.NewGuid().ToString("N") + ".zip");
+            File.Copy(player.Rom, previous);
+            try {
+                if (BuildHeadless(kit, state, previous)) player = Player.Load(state);
+                else Console.Error.WriteLine("Updating the player failed; starting the previous build. See logs/setup.log.");
+            } finally { try { File.Delete(previous); } catch (IOException) {} }
+        }
         if (player == null || !player.Verify()) {
             Console.Error.WriteLine("The prepared Smash T.V. player is missing or incomplete.");
             return ExitPlayer;

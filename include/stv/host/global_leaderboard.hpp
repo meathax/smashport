@@ -5,6 +5,7 @@
 #include <windows.h>
 #include "rl_leaderboard.hpp"
 #include "stv/host/arcade_menu_win.hpp"
+#include "stv/host/arcade_scores.hpp"
 #include "stv/host/pad.hpp"
 
 #include <algorithm>
@@ -19,57 +20,7 @@
 namespace stv::host {
 
 // ---------------------------------------------------------------- score capture
-// Retail HSTD: TOD_TAB in CMOS page 0 and ALL_TAB in page 2 (LINK.EQU). Each
-// entry is an 8-digit BCD score, three initials and a checksum byte (sum of
-// all eight bytes == 0xFF), one byte per CMOS word. ADD_ENTRY writes a new
-// entry, its initials and checksum within one game process call, so a frame
-// boundary never exposes a partially written valid entry.
-struct ArcadeScore {
-    std::array<unsigned char, 8> raw{};
-    std::uint64_t score = 0;
-    std::string name;
-    bool operator<(const ArcadeScore& o) const { return raw < o.raw; }
-    bool operator==(const ArcadeScore& o) const { return raw == o.raw; }
-};
-
-inline bool arcade_score_entry(const std::array<unsigned char, 8>& raw, ArcadeScore& out) {
-    unsigned sum = 0;
-    for (auto b : raw) sum += b;
-    if ((sum & 255) != 255) return false;
-    std::uint64_t score = 0;
-    for (int i = 0; i < 4; ++i) {
-        if ((raw[i] >> 4) > 9 || (raw[i] & 15) > 9) return false;
-        score = score * 100 + (raw[i] >> 4) * 10 + (raw[i] & 15);
-    }
-    if (!score) return false;
-    std::string name;
-    for (int i = 4; i < 7; ++i) {
-        char c = char(raw[i]);
-        if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
-        name.push_back(c >= 33 && c <= 125 ? c : ' ');
-    }
-    while (!name.empty() && name.back() == ' ') name.pop_back();
-    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
-    out.raw = raw;
-    out.score = score;
-    out.name = name.empty() ? "???" : name;
-    return true;
-}
-
-inline std::set<ArcadeScore> arcade_score_records(const std::vector<std::uint16_t>& cmos) {
-    std::set<ArcadeScore> out;
-    for (std::size_t base : {std::size_t(0x0000), std::size_t(0x2000)}) {
-        for (std::size_t i = 0; i < 16; ++i) {
-            const std::size_t at = base + i * 8;
-            if (at + 8 > cmos.size()) break;
-            std::array<unsigned char, 8> raw{};
-            for (int j = 0; j < 8; ++j) raw[j] = static_cast<unsigned char>(cmos[at + j]);
-            ArcadeScore score;
-            if (arcade_score_entry(raw, score)) out.insert(score);
-        }
-    }
-    return out;
-}
+// The retail table reader lives in arcade_scores.hpp (shared with the replay verifier).
 
 // Reports entries the retail game has just inserted. The first observation of
 // a profile is a baseline. Both players' initials entries can time out on the
@@ -417,6 +368,11 @@ public:
             text({c_name, t, c_score_r - tw * 28 / 100, b}, row->name, true, selected ? gold : own ? steel : white, bg, DT_LEFT);
             if (own) text({c_score_r - tw * 27 / 100, t + row_h / 10, c_score_r - tw * 21 / 100, b - row_h / 10},
                           "YOU", false, steel, bg, DT_LEFT);
+            if (row->verified) {   // the server re-simulated this run's replay and the score matched
+                const int name_r = c_score_r - tw * 28 / 100;
+                text({c_name + (name_r - c_name) * 52 / 100, t + row_h / 10, name_r, b - row_h / 10},
+                     "VERIFIED", false, RGB(96, 208, 128), bg, DT_RIGHT);
+            }
             text({c_score_r - tw * 22 / 100, t, c_score_r, b}, leaderboard_score_text(row->score), true,
                  selected ? gold : white, bg, DT_RIGHT);
             text({c_date, t, table_r - pad / 2, b}, leaderboard_age_text(row->ts, now), false, dim, bg, DT_LEFT);
