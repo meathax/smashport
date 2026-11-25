@@ -7,8 +7,26 @@ namespace stv::host {
 inline constexpr std::uint32_t PadUp=1, PadDown=2, PadLeft=4, PadRight=8,
     PadStart=0x10, PadBack=0x20, PadL3=0x40, PadR3=0x80, PadLB=0x100, PadRB=0x200, PadClear=PadRB,
     PadA=0x1000, PadB=0x2000, PadX=0x4000, PadY=0x8000,
-    PadLT=0x10000, PadRT=0x20000;
-inline constexpr std::uint32_t PadAssignable=0x3f02f;
+    PadLT=0x10000, PadRT=0x20000,
+    // Virtual buttons: an analog stick pushed past the dead zone in one direction.
+    PadLSUp=0x40000, PadLSDown=0x80000, PadLSLeft=0x100000, PadLSRight=0x200000,
+    PadRSUp=0x400000, PadRSDown=0x800000, PadRSLeft=0x1000000, PadRSRight=0x2000000;
+inline constexpr std::uint32_t PadLeftStick=0x3c0000, PadRightStick=0x3c00000;
+// Everything a player can bind. START opens the PC menu and RB clears a binding.
+inline constexpr std::uint32_t PadAssignable=0x3fff1ef;
+// Stick directions as virtual buttons; x right and y up positive, either stick.
+// Eight equal sectors outside the dead zone: a diagonal closes two directions,
+// a push near an axis closes exactly one (so binding capture sees one button).
+inline std::uint32_t stick_buttons(int x, int y, int deadzone, bool right) {
+    const long long ax = x < 0 ? -(long long)x : x, ay = y < 0 ? -(long long)y : y;
+    if (ax*ax + ay*ay <= (long long)deadzone*deadzone) return 0;
+    const std::uint32_t base = right ? PadRSUp : PadLSUp;
+    std::uint32_t bits = 0;
+    // tan(22.5 degrees) ~= 0.4142 = 4142/10000
+    if (ay*10000 > ax*4142) bits |= y > 0 ? base : base << 1;
+    if (ax*10000 > ay*4142) bits |= x < 0 ? base << 2 : base << 3;
+    return bits;
+}
 struct PadSnapshot {
     bool connected=false;
     std::uint32_t buttons=0;
@@ -61,6 +79,11 @@ public:
         if(conflict>=0) buttons[conflict]=buttons[action];
         buttons[action]=button;
         return conflict;
+    }
+    // True when any of this player's actions is bound to one of the given buttons.
+    bool uses(int player_index, std::uint32_t mask) const {
+        for(int i=0;i<Count;++i) if(player(i)==player_index && (buttons[i]&mask)) return true;
+        return false;
     }
     bool held(int action, const PadSnapshot& state) const {
         return state.connected && buttons[action]!=0 && (state.buttons&buttons[action])!=0;

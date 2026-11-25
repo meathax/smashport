@@ -66,6 +66,12 @@ if ($Mode -eq 'MSVC') {
         } finally { if (Test-Path -LiteralPath $Result) { Remove-Item -LiteralPath $Result } }
     }
     $Configure = 'call "' + $VsDevCmd + '" -no_logo -arch=x64 -host_arch=x64 && "' + $CMake + '" -S "' + $Root + '" -B "' + $BuildDirectory + '" -G Ninja -DCMAKE_BUILD_TYPE=' + $Configuration + ' -DCMAKE_TRY_COMPILE_CONFIGURATION=' + $Configuration + ' -DSTV_PLAYER_INPUTS="' + $PlayerInputs + '" -DSTV_PLAYER_RELEASE=' + $(if ($Lab) { 'OFF' } else { 'ON' }) + ' -DSTV_LAB=' + $(if ($Lab) { 'ON' } else { 'OFF' })
+    # SDL3 adds PlayStation, Switch and generic DirectInput pads (XInput alone
+    # sees only Xbox-style pads). Use the pinned SDK when it is present.
+    $SdlDir = Join-Path $Root 'build\platform-sdk\SDL3-3.2.24\cmake'
+    if (!$env:SDL3_DIR -and (Test-Path -LiteralPath (Join-Path $SdlDir 'SDL3Config.cmake'))) {
+        $Configure += ' -DSDL3_DIR="' + $SdlDir + '"'
+    }
     $Target = if ($Play -and !$Lab) { ' --target SmashTV' } else { '' }
     & $env:ComSpec /d /c ($Configure + ' && "' + $CMake + '" --build "' + $BuildDirectory + '"' + $Target + ' --parallel 4')
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }

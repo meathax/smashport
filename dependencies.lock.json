@@ -18,8 +18,13 @@
     "verifyroms": "smashtv, smashtv5, smashtv6 good (2026-09-24)"
   },
   "sdl3": {
-    "version": null,
-    "status": "NOT LINKED; native Win32/GDI/XInput/WASAPI host"
+    "version": "3.2.24",
+    "status": "Gamepad input only (SdlPads); video/audio stay Win32/D3D11/WASAPI. XInput is the fallback when SDL cannot start.",
+    "sdk_archive": "SDL3-devel-3.2.24-VC.zip",
+    "sdk_archive_sha256": "4c9726c93653366df4fb2bc00aa5b21ee839659782711c226137fc3fdee2374a",
+    "sdk_path": "build/platform-sdk/SDL3-3.2.24",
+    "dll_sha256": "2b026f93eb4077f94dba99be291fcc0a25c383e36448568ded02755c0c8e94c2",
+    "license": "Zlib"
   },
   "observed_tools": {
     "python": "3.14.6 (main, Jul 31 2026, 07:41:16)  [MINGW GCC UCRT 16.1.0 64 bit (AMD64)]",

@@ -104,7 +104,7 @@ def compile_player(rom, work):
                       if (ROOT / "host" / name).is_file()]
     subprocess.run([compiler, "--target=x86_64-w64-windows-gnu", "-municode", "-mwindows",
                     *objects, *sorted((ROOT / "host").glob("*.o")), *host_libraries,
-                    *["-l" + n for n in "ksguid ws2_32 d3d11 d3d12 dxgi d3dcompiler kernel32 user32 gdi32 winspool shell32 ole32 oleaut32 uuid comdlg32 advapi32 winhttp bcrypt".split()],
+                    *["-l" + n for n in "ksguid ws2_32 d3d11 d3d12 dxgi d3dcompiler kernel32 user32 gdi32 winspool shell32 ole32 oleaut32 uuid comdlg32 advapi32 winhttp bcrypt iphlpapi".split()],
                     "-o", exe], check=True, env=env)
     for item in (ROOT / "runtime").iterdir():
         if item.is_dir():

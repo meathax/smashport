@@ -24,7 +24,7 @@ BSD-3-Clause terms: redistribution in source or binary form must retain the copy
 
 ## Build and runtime dependencies
 
-`SmashTV.exe` imports kernel32.dll, user32.dll, gdi32.dll, comdlg32.dll, ole32.dll, shell32.dll ws2_32.dll, d3d12.dll, dxgi.dll and d3dcompiler_47.dll, uses the Windows audio endpoint (WASAPI) through COM, and optionally loads xinput1_4.dll from the Windows system directory. These operating-system DLLs are not redistributed. MSVC, CMake, Ninja and Python are development tools, not player requirements. No SDL, emulator, interpreter or Python runtime is bundled.
+`SmashTV.exe` imports kernel32.dll, user32.dll, gdi32.dll, comdlg32.dll, ole32.dll, shell32.dll ws2_32.dll, d3d12.dll, dxgi.dll and d3dcompiler_47.dll, uses the Windows audio endpoint (WASAPI) through COM, and optionally loads xinput1_4.dll from the Windows system directory. These operating-system DLLs are not redistributed. The player also imports the bundled SDL3.dll (3.2.24, zlib license) for gamepad input only. MSVC, CMake, Ninja and Python are development tools, not player requirements. No emulator, interpreter or Python runtime is bundled with the player.
 
 ZIP/DEFLATE/hash helpers are checkpoint implementations; independent development tests use Python's standard library. Synthetic importer fixtures are not original game ROMs. Original source graphics remain segregated in the data directory and unchanged original tree. Any future distribution must address original-source, generated-data, graphics and sound rights separately.
 
@@ -39,7 +39,7 @@ Toyos. Exact upstream files, hashes and adaptation scope are recorded in
 license is retained in `third_party/tmnt-port/LICENSE` and accompanies the binary
 as `licenses/tmnt-port-LICENSE.txt`.
 
-The adaptation uses the existing Win32/XInput/WASAPI host and adds no SDL runtime.
+The adaptation uses the existing Win32/XInput/WASAPI host; SDL3 supplies only gamepad input.
 It preserves Smash TV's two-player model, original arcade menus and fixed shared
 16:9 player profile. TMNT game data, ROMs, assets, game-specific addresses and
 gameplay networking were not imported.
@@ -77,7 +77,7 @@ from that donor. This remains a private build, not a redistribution approval.
 
 ## SDL3 and Recomp Achievements
 
-The SDL player and optional Windows gamepad backend use SDL3 under its zlib
+The SDL player and Windows gamepad backend (bundled as SDL3.dll) use SDL3 under its zlib
 license. Recomp Achievements is pinned in
 `third_party/recomp_achievements/UPSTREAM.txt`. That directory retains the
 SDK license and the notices for its cJSON and rcheevos dependencies.

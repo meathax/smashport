@@ -26,6 +26,10 @@ GRAPHICS = ROOT / "third_party/graphics"
 LEADERBOARD = ROOT / "third_party/recomp_leaderboard"
 # Keep in step with CMakeLists.txt STV_LEADERBOARD_URL (STV_LEADERBOARD_URL env overrides at run time).
 LEADERBOARD_URL = "https://recomp-leaderboard.meathax.workers.dev"
+# SDL3 gamepad input (PlayStation, Switch and generic DirectInput pads; XInput
+# alone only sees Xbox-style pads). Keep in step with dependencies.lock.json.
+SDL_DEFAULT = ROOT / "build/platform-sdk/SDL3-3.2.24"
+SDL_DLL_SHA256 = "2b026f93eb4077f94dba99be291fcc0a25c383e36448568ded02755c0c8e94c2"
 
 
 def sha(path):
@@ -127,6 +131,8 @@ def host_objects(stage, temp, tc, eos, dxc, sdl):
             import_library, dll = sdl / "lib/libSDL3.dll.a", sdl / "bin/SDL3.dll"
         else:
             import_library, dll = sdl / "lib/x64/SDL3.lib", sdl / "lib/x64/SDL3.dll"
+        if sha(dll) != SDL_DLL_SHA256:
+            raise ValueError("SDL3.dll does not match the pinned 3.2.24 release: " + str(dll))
         copy(import_library, stage / "host/sdl.lib")
         copy(dll, stage / "runtime/SDL3.dll")
         sdl_license = sdl / "LICENSE.txt"
@@ -222,6 +228,8 @@ def check_host_sources(eos):
 def assemble(args):
     if not args.eos or not args.config:
         raise ValueError("The shipping player requires the EOS SDK and game-client configuration")
+    if not args.sdl or not (args.sdl / "include/SDL3/SDL.h").is_file():
+        raise ValueError("The shipping player requires the SDL3 3.2.24 SDK (--sdl) for non-XInput controllers")
     check_host_sources(args.eos is not None)
     out = args.output.resolve()
     if out.is_relative_to(ROOT):
@@ -273,7 +281,7 @@ if __name__ == "__main__":
         parser.add_argument("--" + opt, type=Path, required=True)
     parser.add_argument("--eos", type=Path, default=ROOT / "build/dependencies/eos/1.19.2.1")
     parser.add_argument("--config", type=Path, default=ROOT / "build/dependencies/eos/eos-client.ini")
-    parser.add_argument("--sdl", type=Path)
+    parser.add_argument("--sdl", type=Path, default=SDL_DEFAULT)
     assemble(parser.parse_args())
 
 

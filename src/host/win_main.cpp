@@ -386,7 +386,11 @@ void read_controls(u16& in0, u16& in1, std::array<u32,2>* angles=nullptr) {
             if (key(k[b])) mv |= u16(1 << b);
             if (key(k[4 + b])) fr |= u16(1 << b);
         }
-        const auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
+        auto s = g_pad_router.game(g_swap_pads ? 1 - p : p);
+        // A stick whose directions are bound to actions gives up its built-in
+        // analog role (left moves, right fires) and acts only through the bindings.
+        if (g_pad_bindings.uses(p, stv::host::PadLeftStick)) { s.move = 0; s.motion = 0; }
+        if (g_pad_bindings.uses(p, stv::host::PadRightStick)) { s.fire = 0; s.aim = 0; }
         if (s.connected) {
             mv |= s.move;
             fr |= s.fire;
@@ -1972,8 +1976,19 @@ const char* pad_button_name(std::uint32_t b) {
     case stv::host::PadB: return "B";
     case stv::host::PadX: return "X";
     case stv::host::PadY: return "Y";
-    case stv::host::PadLT: return "left trigger";
-    case stv::host::PadRT: return "right trigger";
+    case stv::host::PadLT: return g_launcher_playstation ? "L2" : "left trigger";
+    case stv::host::PadRT: return g_launcher_playstation ? "R2" : "right trigger";
+    case stv::host::PadLB: return g_launcher_playstation ? "L1" : "left bumper";
+    case stv::host::PadL3: return g_launcher_playstation ? "L3" : "left stick click";
+    case stv::host::PadR3: return g_launcher_playstation ? "R3" : "right stick click";
+    case stv::host::PadLSUp: return "left stick up";
+    case stv::host::PadLSDown: return "left stick down";
+    case stv::host::PadLSLeft: return "left stick left";
+    case stv::host::PadLSRight: return "left stick right";
+    case stv::host::PadRSUp: return "right stick up";
+    case stv::host::PadRSDown: return "right stick down";
+    case stv::host::PadRSLeft: return "right stick left";
+    case stv::host::PadRSRight: return "right stick right";
     default: return "invalid";
     }
 }
@@ -2799,7 +2814,8 @@ void paint(HWND wnd) {
             lines.push_back("PAD CONTROLS - PLAYER " + std::to_string(g_pad_player + 1));
             lines.push_back(g_pad_capture ? "Press this player's button; RB clears; START cancels"
                                          : "Up/down: action; left/right: player; A: bind; B: back; X: defaults");
-            lines.push_back("Left stick moves, right stick fires; a duplicate button swaps actions.");
+            lines.push_back("Left stick moves, right stick fires; binding a stick direction replaces");
+            lines.push_back("that stick's analog role. A duplicate binding swaps actions.");
             lines.push_back("");
             for (int i = 0; i < 10; ++i) {
                 const int action = pad_action_for(g_pad_player, i);
@@ -3253,6 +3269,11 @@ void poll_pad_controls() {
             state.buttons = x.Gamepad.wButtons;
             if (x.Gamepad.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) state.buttons |= stv::host::PadLT;
             if (x.Gamepad.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) state.buttons |= stv::host::PadRT;
+        }
+        if (state.connected) {
+            // Stick directions are also bindable buttons (PC menu > Controller bindings).
+            state.buttons |= stv::host::stick_buttons(x.Gamepad.sThumbLX, x.Gamepad.sThumbLY, g_deadzone, false)
+                           | stv::host::stick_buttons(x.Gamepad.sThumbRX, x.Gamepad.sThumbRY, g_deadzone, true);
         }
         if (state.connected && !g_enhanced) {
             state.move = std::uint8_t(stick_bits(x.Gamepad.sThumbLX, x.Gamepad.sThumbLY));

@@ -94,13 +94,19 @@ struct Controls {
             auto pad = pads.read(p);
             pad.state.move = static_cast<u8>(directions(pad.lx, pad.ly));
             pad.state.fire = static_cast<u8>(directions(pad.rx, pad.ry));
+            if (pad.state.connected)
+                pad.state.buttons |= stick_buttons(pad.lx, pad.ly, 9000, false) |
+                                     stick_buttons(pad.rx, pad.ry, 9000, true);
             const auto event = router.update(p, pad.state, focused, SDL_GetTicks());
             if (event == PadEvent::Open || (paused && event == PadEvent::Back)) {
                 paused = !paused;
                 router.set_overlay(paused);
             }
             if (paused && event == PadEvent::Confirm) quit = true;
-            const auto state = router.game(p);
+            auto state = router.game(p);
+            // A stick bound to actions gives up its built-in move/fire role.
+            if (bindings.uses(p, PadLeftStick)) state.move = 0;
+            if (bindings.uses(p, PadRightStick)) state.fire = 0;
             u16 contacts = state.move | (state.fire << 4);
             for (int b = 0; b < 8; ++b)
                 if (key(keys[p][b]) || bindings.held(p * 8 + b, state)) contacts |= u16(1 << b);
