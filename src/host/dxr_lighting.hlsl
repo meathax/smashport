@@ -16,6 +16,8 @@ cbuffer Scene : register(b0) {
     float4 world;     // camera x, camera y, light count, flags (1 coverage, 2 specular rows)
     float4 tone;      // actor floor, occlusion strength, first boss + 1, actor count
     float4 previousFloor, previousAmbient, previousTone; // old tone.z is light count
+    float4 fog;       // on, column height, samples, light-map x origin
+    float4 temporal;  // history weight (0 = none: camera, room or size changed)
     Light lights[MAX_LIGHTS];
 };
 RaytracingAccelerationStructure scene : register(t0);
@@ -89,6 +91,34 @@ float visibility(float3 origin, float3 dir, float tmax, uint self, uint occluder
     }
     return q.CommittedStatus() == COMMITTED_NOTHING ? 1. : 0.;
 }
+// Distance to the first occluder along a ray, or -1 when clear (contact hardening).
+float blockerT(float3 origin, float3 dir, float tmax, uint self, uint occluders) {
+    if(self==SpriteSurface)return -1;
+    RayDesc ray;
+    ray.Origin = origin; ray.Direction = dir; ray.TMin = .02; ray.TMax = max(.03, tmax);
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
+    q.TraceRayInline(scene, RAY_FLAG_NONE, occluders, ray);
+    while (q.Proceed()) {
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            uint id = q.CandidateInstanceID();
+            if (id == self) continue;
+            if (self < SpriteSurface && actors[self*3+1].w>0 && actors[id*3+1].w==actors[self*3+1].w) continue;
+            float3 local = q.CandidateObjectRayOrigin() + q.CandidateObjectRayDirection() * q.CandidateTriangleRayT();
+            if (silhouette(id, local)) q.CommitNonOpaqueTriangleHit();
+        }
+    }
+    return q.CommittedStatus() == COMMITTED_NOTHING ? -1. : q.CommittedRayT();
+}
+// Temporal stabiliser: shadow-ray and dither noise changes by small amounts each
+// frame; a real change (an actor stepping, a blast lighting up) changes a lot.
+// Blend small differences toward the previous result, pass large ones through.
+float4 stabilise(uint2 at, float4 cur) {
+    if (temporal.x <= 0) return cur;
+    float4 prev = lightMap[at];
+    float3 d = abs(cur.rgb - prev.rgb);
+    float k = temporal.x * (1 - smoothstep(.04, .28, max(d.r, max(d.g, d.b))));
+    return float4(lerp(cur.rgb, prev.rgb, k), lerp(cur.a, prev.a, k));
+}
 float gobo(uint pattern, float3 P, Light L, float t) {
     float2 w = P.xy + world.xy;
     if (pattern == 1) { // canopy: leaves drift across the sun
@@ -158,6 +188,12 @@ void shadeLight(uint i, float3 P, float3 N, uint self, float gloss, float shine,
             // Probe the rim first; fully lit or fully shadowed pixels stop
             // there, and only penumbra pixels refine to eight samples
             // (nine smooth levels instead of the old two or three).
+            // Contact hardening: a blocker touching the receiver (the feet) gives a
+            // crisp shadow, a distant one a soft penumbra. Wholly clear centre rays
+            // keep the full radius so penumbra edges are still found.
+            float3 toL = L.pos.xyz - P;
+            float bt = blockerT(P + N * .35, normalize(toL), length(toL) - .5, self, occluders);
+            if (bt >= 0) radius *= lerp(.12, 1., saturate((bt - 2.) / 26.));
             static const uint order[8] = {7, 3, 5, 1, 6, 2, 4, 0};
             float sum = 0;
             uint k = 0;
@@ -202,8 +238,61 @@ void surfaceAt(float2 px, float4 f, out float3 P, out float3 N) {
     if (spanX && px.y >= f.y + f.w)
         P = float3(px.x, px.y + 14, 14.4);
 }
+void roomSelect(float2 pixel, out uint first, out uint limit, out float lightTime, out uint occluders) {
+    uint total = min(uint(world.z), MAX_LIGHTS);
+    uint currentCount = total - uint(previousTone.z);
+    bool departing = previousFloor.z > 0 &&
+        all(pixel >= previousFloor.xy - float2(30, 44)) &&
+        all(pixel < previousFloor.xy + previousFloor.zw + float2(30, 15));
+    first = departing ? currentCount : 0;
+    limit = departing ? total : currentCount;
+    lightTime = departing ? previousTone.w : extent.w;
+    occluders = departing ? 5 : 3;
+}
+// Volumetric in-scatter per unit density along the cabinet eye ray. Screen
+// (x, y) sees world (x, y + z, z) for every height z, so the column is marched
+// from the floor up to fog.y. Each sample takes the room lights' attenuation,
+// spot cone and gobo, a Henyey-Greenstein forward-scatter lobe toward the
+// viewer and one shadow ray against walls and the animated actor cards, so
+// actors and walls cut shafts out of the beams.
+float3 inscatter(float2 pixel) {
+    uint first, limit, occluders;
+    float time;
+    roomSelect(pixel, first, limit, time, occluders);
+    uint steps = uint(fog.z);
+    float jitter = hash2(floor(pixel * .5) + world.xy * .5 + 41.7);
+    float3 sum = 0;
+    for (uint s = 0; s < steps; ++s) {
+        float z = (float(s) + jitter) / float(steps) * fog.y;
+        float3 P = float3(pixel.x, pixel.y + z, z);
+        for (uint i = first; i < limit; ++i) {
+            Light L = lights[i];
+            float3 d = L.pos.xyz - P;
+            float dist = max(length(d), .5);
+            float x = dist / L.pos.w;
+            if (x >= 1) continue;
+            float x2 = x * x, win = saturate(1 - x2 * x2);
+            float att = L.color.w * win * win / (1 + x2 * 5);
+            float3 dir = d / dist;
+            if (L.dir.w > -1) att *= smoothstep(L.dir.w, L.shape.x, dot(-dir, L.dir.xyz));
+            if (att < .003) continue;
+            uint pattern = uint(L.shape.z);
+            if (pattern) att *= gobo(pattern, P, L, time);
+            const float g = .35;
+            float c = dot(-dir, ViewDir);
+            float phase = (1 - g * g) / pow(max(1 + g * g - 2 * g * c, 1e-3), 1.5);
+            sum += L.color.rgb * att * phase * visibility(P, dir, dist - .5, NoSelf, occluders);
+        }
+    }
+    return sum / max(float(steps), 1.);
+}
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
+    if (fog.x > 0) {
+        uint2 halfSize = uint2((uint(extent.x) + 1) / 2, (uint(extent.y) + 1) / 2);
+        if (all(id.xy < halfSize))
+            lightMap[uint2(uint(fog.w), 0) + id.xy] = float4(inscatter(float2(id.xy) * 2 + 1), 1);
+    }
     if (any(id.xy >= uint2(extent.xy))) return;
     float2 pixel = id.xy + .5;
     float2 seed = floor(pixel) + world.xy;
@@ -237,7 +326,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 diffuse = 0, spec = 0;
     for (uint i = first; i < limit; ++i)
         shadeLight(i, P, N, NoSelf, roomAmbient.w, 22, seed, lightTime, backgroundOccluders, diffuse, spec);
-    lightMap[id.xy] = float4(roomAmbient.rgb * ao + diffuse, ao);
+    lightMap[id.xy] = stabilise(id.xy, float4(roomAmbient.rgb * ao + diffuse, ao));
     if (specRows) lightMap[id.xy + uint2(0, 256)] = float4(spec, 0);
 
     float4 actorLight = 0;
@@ -310,6 +399,16 @@ void main(uint3 id : SV_DispatchThreadID) {
             actorLight = float4(base + diff, (info.x + (polished ? 128 : 0)) / 255.);
         }
     }
-    lightMap[id.xy + uint2(1024, 0)] = actorLight;
+    {
+        uint2 at = id.xy + uint2(1024, 0);
+        float4 prev = lightMap[at];
+        // Only blend where the same sprite owner/palette tag was there last frame.
+        if (temporal.x > 0 && actorLight.a > 0 && abs(prev.a - actorLight.a) < .002) {
+            float3 d = abs(actorLight.rgb - prev.rgb);
+            float k = temporal.x * (1 - smoothstep(.04, .28, max(d.r, max(d.g, d.b))));
+            actorLight.rgb = lerp(actorLight.rgb, prev.rgb, k);
+        }
+        lightMap[at] = actorLight;
+    }
     if (specRows) lightMap[id.xy + uint2(1024, 256)] = float4(actorSpec, 0);
 }

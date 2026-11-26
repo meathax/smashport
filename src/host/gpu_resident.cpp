@@ -36,12 +36,24 @@ struct Params{uint32_t width,height,casterCount,fixtureCount,tracing,tileWidth,s
 struct Display{float sw,sh,dw,dh;uint32_t mode;float glow,sharpen,curvature,dx,dy,pad[2];float hitFlash,vignette,chromatic,padding2;uint32_t sourceMode,pad3[3];};
 struct CombatGlyphGpu {float x,y,dx,dy,strength;uint32_t kind,family,color;};
 struct CombatParamsGpu {uint32_t count,tileWidth,tileCapacity,padding;};
+// Must match cbuffer GiParams in resident_effects.hlsl.
+struct GiParamsGpu {uint32_t level,levels,enabled;float emitHeight;float gain,emit,flatten,falloff;
+ float occlude,spriteBounce,bounceScale,fogGain;int32_t cameraX,cameraY;float padA;uint32_t padB;
+ uint32_t emitterCount,fogOn;float fogHaze,fogSmoke;F4 emitters[64];};
+static_assert(sizeof(GiParamsGpu)==80+64*16);
+constexpr uint32_t kGiLevels=6; // 1365 px ray reach covers the 547 px light map
 }
 struct ResidentEffects::Impl {
  ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> ctx;
  DxrLighting hardware;
  RoomLightRig roomLighting;
- std::array<ComPtr<ID3D11ComputeShader>,8> cs;
+ std::array<ComPtr<ID3D11ComputeShader>,10> cs;
+ // Radiance cascade bounce light: emitter/bounce/luminance fields (mipped) and a
+ // ping-pong pair of cascade textures (radiance_cascades in resident_effects.hlsl).
+ ComPtr<ID3D11Texture2D> giEmitTex,giBounceTex,giLumaTex,giCascadeTex[2];
+ ComPtr<ID3D11ShaderResourceView> giEmitSRV,giBounceSRV,giLumaSRV,giCascadeSRV[2];
+ ComPtr<ID3D11UnorderedAccessView> giEmitUAV,giBounceUAV,giLumaUAV,giCascadeUAV[2];
+ ComPtr<ID3D11Buffer> giConstants;int giW{},giH{};
  ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps,overlayPS;
  ComPtr<ID3D11Buffer> constants,displayConstants,combatConstants,pool,tiles,lights,cursors,combatGlyphs,combatTiles;
  ComPtr<ID3D11ShaderResourceView> poolSRV,tileSRV,lightSRV,inputSRV,outputSRV,illumSRV,overlaySRV,combatGlyphSRV,combatTileSRV;
@@ -133,6 +145,90 @@ struct ResidentEffects::Impl {
   b.ByteWidth=sizeof(EffectSpawn)*256;check(device->CreateBuffer(&b,nullptr,&bodyConstants),"enemy body batch");
   ComPtr<ID3D11ShaderResourceView> unused;structured(9,4,cursors,unused,cursorUAV);
   D3D11_RASTERIZER_DESC rd{};rd.FillMode=D3D11_FILL_SOLID;rd.CullMode=D3D11_CULL_NONE;rd.DepthClipEnable=TRUE;check(device->CreateRasterizerState(&rd,&raster),"raster");D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.MaxLOD=D3D11_FLOAT32_MAX;check(device->CreateSamplerState(&sd,&sampler),"linear sampler");initialized=true;
+ }
+ void ensureGi(int w,int h){
+  if(giW==w && giH==h && giEmitTex)return;
+  auto mipped=[&](DXGI_FORMAT f,ComPtr<ID3D11Texture2D>& tex,ComPtr<ID3D11ShaderResourceView>& srv,ComPtr<ID3D11UnorderedAccessView>& uav){
+   D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=0;d.ArraySize=1;d.Format=f;d.SampleDesc.Count=1;
+   d.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS|D3D11_BIND_RENDER_TARGET;
+   d.MiscFlags=D3D11_RESOURCE_MISC_GENERATE_MIPS;
+   check(device->CreateTexture2D(&d,nullptr,tex.ReleaseAndGetAddressOf()),"GI field");
+   check(device->CreateShaderResourceView(tex.Get(),nullptr,srv.ReleaseAndGetAddressOf()),"GI field SRV");
+   D3D11_UNORDERED_ACCESS_VIEW_DESC u{};u.Format=f;u.ViewDimension=D3D11_UAV_DIMENSION_TEXTURE2D;
+   check(device->CreateUnorderedAccessView(tex.Get(),&u,uav.ReleaseAndGetAddressOf()),"GI field UAV");
+  };
+  mipped(DXGI_FORMAT_R16G16B16A16_FLOAT,giEmitTex,giEmitSRV,giEmitUAV);
+  mipped(DXGI_FORMAT_R16G16B16A16_FLOAT,giBounceTex,giBounceSRV,giBounceUAV);
+  mipped(DXGI_FORMAT_R16G16_FLOAT,giLumaTex,giLumaSRV,giLumaUAV);
+  int cascadeW=0,cascadeH=0;
+  for(uint32_t l=0;l<kGiLevels;++l){
+   const int s=1<<l,side=2<<l;
+   cascadeW=std::max(cascadeW,((w+s-1)/s+1)*side);cascadeH=std::max(cascadeH,((h+s-1)/s+1)*side);
+  }
+  for(int i=0;i<2;++i){
+   texture(cascadeW,cascadeH,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS,giCascadeTex[i]);
+   check(device->CreateShaderResourceView(giCascadeTex[i].Get(),nullptr,giCascadeSRV[i].ReleaseAndGetAddressOf()),"GI cascade SRV");
+   check(device->CreateUnorderedAccessView(giCascadeTex[i].Get(),nullptr,giCascadeUAV[i].ReleaseAndGetAddressOf()),"GI cascade UAV");
+  }
+  giW=w;giH=h;
+ }
+ // Runs after the DXR map is acquired and the composite inputs are bound.
+ // Returns the cascade-0 view the composite reads as indirect irradiance.
+ ID3D11ShaderResourceView* runGi(const PcSettings& s,const EffectPacket& packet,int w,int h,int offset){
+  static constexpr float gain[]{0.f,.45f,.75f,1.f},emit[]{0.f,1.f,1.4f,1.8f},flatten[]{0.f,.25f,.4f,.5f};
+  static constexpr float haze[]{0.f,.025f,.04f,.06f},smoke[]{0.f,.12f,.18f,.26f};
+  const int level=std::clamp(s.rt_bounce,0,3),fog=std::clamp(s.vol_light,0,3);
+  if(!giConstants){D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(GiParamsGpu);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&giConstants),"GI params");}
+  GiParamsGpu g{};g.levels=kGiLevels;g.enabled=level>0;g.gain=gain[level];g.emit=emit[level];g.flatten=flatten[level];
+  g.falloff=18.f;g.occlude=.12f;g.spriteBounce=.5f;g.bounceScale=.2f;g.emitHeight=14.f;
+  g.fogOn=fog>0 && w<=560;g.fogHaze=haze[fog];g.fogSmoke=smoke[fog];g.fogGain=1.f;
+  g.cameraX=packet.camera_x;g.cameraY=packet.camera_y;
+  // Emitters come from identified game objects, not from colour: shading on
+  // actor sprites must not turn grunts or chrome highlights into lamps.
+  auto addEmitter=[&](float x0,float y0,float x1,float y1){
+   if(g.emitterCount<std::size(g.emitters) && x1>x0 && y1>y0)g.emitters[g.emitterCount++]={x0+offset,y0,x1+offset,y1};
+  };
+  for(const auto& shot:packet.lightSources)addEmitter(shot.x-1,shot.y-1,shot.x+shot.w+1,shot.y+shot.h+1);
+  for(const auto& blast:packet.dxrLights){
+   const float r=std::clamp(blast.radius*.25f,8.f,32.f);
+   addEmitter(blast.x-r,blast.y-r,blast.x+r,blast.y+r);
+  }
+  auto cb=giConstants.Get();
+  ID3D11ShaderResourceView* none[4]{};
+  ID3D11UnorderedAccessView* noUav[3]{};
+  ctx->CSSetShaderResources(18,4,none);
+  if(!level){ // volumetric only: the composite reads the fog constants
+   ctx->UpdateSubresource(giConstants.Get(),0,nullptr,&g,0,0);ctx->CSSetConstantBuffers(1,1,&cb);
+   return nullptr;
+  }
+  ensureGi(w,h);
+  // giScene needs the luminance chain for nothing yet; flatten is applied in the composite.
+  g.level=0;ctx->UpdateSubresource(giConstants.Get(),0,nullptr,&g,0,0);ctx->CSSetConstantBuffers(1,1,&cb);
+  ID3D11UnorderedAccessView* fields[]{giEmitUAV.Get(),giBounceUAV.Get(),giLumaUAV.Get()};
+  ctx->CSSetUnorderedAccessViews(0,3,fields,nullptr);
+  ctx->CSSetShader(cs[8].Get(),nullptr,0);ctx->Dispatch((w+7)/8,(h+7)/8,1);
+  ctx->CSSetUnorderedAccessViews(0,3,noUav,nullptr);
+  ctx->GenerateMips(giEmitSRV.Get());ctx->GenerateMips(giBounceSRV.Get());ctx->GenerateMips(giLumaSRV.Get());
+  ID3D11ShaderResourceView* fieldViews[]{giEmitSRV.Get(),giBounceSRV.Get()};
+  ctx->CSSetShaderResources(20,2,fieldViews);
+  ctx->CSSetShader(cs[9].Get(),nullptr,0);
+  int written=-1;
+  for(int l=int(kGiLevels)-1;l>=0;--l){
+   const int target=written<0?0:written^1;
+   g.level=uint32_t(l);ctx->UpdateSubresource(giConstants.Get(),0,nullptr,&g,0,0);
+   ctx->CSSetShaderResources(18,1,none);
+   auto out=giCascadeUAV[target].Get();ctx->CSSetUnorderedAccessViews(0,1,&out,nullptr);
+   auto read=written<0?nullptr:giCascadeSRV[written].Get();ctx->CSSetShaderResources(18,1,&read);
+   const int sp=1<<l,side=2<<l;
+   ctx->Dispatch((((w+sp-1)/sp+1)*side+7)/8,(((h+sp-1)/sp+1)*side+7)/8,1);
+   ctx->CSSetUnorderedAccessViews(0,1,noUav,nullptr);
+   written=target;
+  }
+  ctx->CSSetShaderResources(20,2,none);
+  // The composite reads level 0 and the luminance chain with level-0 constants.
+  ID3D11ShaderResourceView* result[]{giCascadeSRV[written].Get(),giLumaSRV.Get()};
+  ctx->CSSetShaderResources(18,2,result);
+  return result[0];
  }
  void structured(unsigned n,unsigned stride,ComPtr<ID3D11Buffer>& buffer,ComPtr<ID3D11ShaderResourceView>& srv,ComPtr<ID3D11UnorderedAccessView>& uav){
   D3D11_BUFFER_DESC d{};d.ByteWidth=n*stride;d.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;d.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;d.StructureByteStride=stride;
@@ -360,6 +456,8 @@ struct ResidentEffects::Impl {
   // Every arena room, its entry pan and room-to-room scrolls (room_lighting.cpp).
   if(s.hardware_rt && lighting.floor[2]>0 &&
      hardware.prepare(device.Get(),ctx.Get())){
+      static constexpr unsigned fogSteps[]{0,4,6,8};
+      lighting.volumetricSteps=fogSteps[std::clamp(s.vol_light,0,3)];
       dxr=hardware.render(packet,std::move(lighting),w,h,lightOffset,
                           coverageValid?std::span<const uint32_t>(coverageBits):std::span<const uint32_t>());
       if(dxr)p.mask|=HardwareRayTracingEffectMask;
@@ -502,8 +600,12 @@ struct ResidentEffects::Impl {
   auto combatBuffer=combatConstants.Get();ctx->CSSetConstantBuffers(2,1,&combatBuffer);
   if(dxr)hardware.acquire();
   ctx->CSSetShaderResources(15,1,&dxr);
+  if(dxr)runGi(s,packet,w,h,sourceMode==2?68:0);
+  else{ID3D11Buffer* noGi=nullptr;ctx->CSSetConstantBuffers(1,1,&noGi);}
   auto bodies=bodySRV.Get();ctx->CSSetShaderResources(14,1,&bodies);
-  std::fill(std::begin(u),std::end(u),nullptr);u[1]=outputUAV.Get();ctx->CSSetUnorderedAccessViews(0,6,u,nullptr);ctx->CSSetShaderResources(0,14,srvs);ctx->CSSetShader(cs[3].Get(),nullptr,0);ctx->Dispatch((w+7)/8,(h+7)/8,1);unbind();if(dxr)hardware.consumed();serial=packet.serial;++frame;
+  std::fill(std::begin(u),std::end(u),nullptr);u[1]=outputUAV.Get();ctx->CSSetUnorderedAccessViews(0,6,u,nullptr);ctx->CSSetShaderResources(0,14,srvs);ctx->CSSetShader(cs[3].Get(),nullptr,0);ctx->Dispatch((w+7)/8,(h+7)/8,1);unbind();
+  {ID3D11ShaderResourceView* noGi[4]{};ctx->CSSetShaderResources(18,4,noGi);}
+  if(dxr)hardware.consumed();serial=packet.serial;++frame;
  }
  void resizeTarget(HWND hwnd,int w,int h){if(cw==w&&ch==h&&window==hwnd&&target)return;unbind();target.Reset();screen.Reset();destroyUI();
   if(window!=hwnd){swap.Reset();window=hwnd;}

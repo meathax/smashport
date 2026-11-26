@@ -7,7 +7,9 @@ namespace stv::host {
 namespace {
 constexpr float Pi = 3.14159265f;
 // Global grade: darkness is the canvas; authored fixtures remain readable.
-constexpr float AmbientScale = .68f, LightScale = 1.72f;
+// Hard sci-fi TV studio grade: a high-key, cool-neutral LED soundstage. The
+// floor is always lit; colour lives in controlled accents, not in darkness.
+constexpr float AmbientScale = .76f, LightScale = 1.74f;
 enum class Anim : uint8_t { Steady, Flicker, Pulse, Strobe, Broken, Sweep, Orbit, Hue };
 struct Lamp {
     float u{}, v{}, z{}, radius{};
@@ -61,61 +63,61 @@ RoomKey key(uint32_t room) { return {room >> 16, room & 0xffff}; }
 // Authored retail selectors: 48 playable rooms plus terminal/bonus selectors.
 // Profile entries are presentation-only and never address game RAM or ROM data.
 constexpr RoomLightingProfile kRoomProfiles[] = {
-    {0x00001, "Arena One: gantry opener", MoodTheme::Steel, ScaffoldMotion::CrossSweep, {.62f,.80f,1}, .98f, 1.02f, .012f, .0f, 1.0f},
-    {0x00002, "Ten Keys: crimson alarm", MoodTheme::Steel, ScaffoldMotion::OrbitSweep, {1,.22f,.12f}, .94f, 1.08f, .019f, .7f, .95f},
-    {0x00003, "Power Vault: toxic spill", MoodTheme::Steel, ScaffoldMotion::Pulse, {.38f,1,.35f}, .92f, 1.13f, .034f, 1.6f, 1.05f},
-    {0x00004, "Shrapnel Works: magenta cut", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.26f,.70f}, .90f, 1.12f, .027f, 2.4f, 1.0f},
-    {0x00005, "Bonus Prizes: live broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.78f,.42f}, 1.0f, 1.0f, .016f, .5f, 1.2f},
-    {0x00006, "Shrapnel Hall: broken strip", MoodTheme::Steel, ScaffoldMotion::Beacon, {1,.55f,.18f}, .90f, 1.18f, .041f, 4.1f, .85f},
-    {0x00007, "Total Carnage: orange rolling bank", MoodTheme::Steel, ScaffoldMotion::Scanline, {1,.42f,.10f}, .88f, 1.20f, .052f, 1.1f, 1.1f},
-    {0x00008, "Crowd Control: cyan crossfire", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.20f,.88f,1}, .90f, 1.10f, .014f, 3.0f, 1.05f},
-    {0x00009, "Tank Trouble: red chase", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.10f}, .86f, 1.25f, .031f, 5.2f, 1.1f},
-    {0x0000a, "Mutoid One: dissection white", MoodTheme::Mutoid, ScaffoldMotion::CrossSweep, {.88f,.92f,1}, .82f, 1.28f, .011f, .2f, 1.25f},
-    {0x0000b, "First Rack: silver finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.75f,.86f,1}, .98f, 1.0f, .020f, 2.2f, 1.25f},
+    {0x00001, "Arena One: gantry opener", MoodTheme::Steel, ScaffoldMotion::CrossSweep, {.62f,.80f,1}, 0.586f, 1.01f, .012f, .0f, 1.05f},
+    {0x00002, "Ten Keys: crimson alarm", MoodTheme::Steel, ScaffoldMotion::OrbitSweep, {1,.22f,.12f}, 0.568f, 1.05f, .019f, .7f, 1.05f},
+    {0x00003, "Power Vault: toxic spill", MoodTheme::Steel, ScaffoldMotion::Pulse, {.38f,1,.35f}, 0.596f, 1.08f, .034f, 1.6f, 1.05f},
+    {0x00004, "Shrapnel Works: magenta cut", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.26f,.70f}, 0.826f, 1.07f, .027f, 2.4f, 1.05f},
+    {0x00005, "Bonus Prizes: live broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.78f,.42f}, 1.400f, 1.00f, .016f, .5f, 1.20f},
+    {0x00006, "Shrapnel Hall: broken strip", MoodTheme::Steel, ScaffoldMotion::Beacon, {1,.55f,.18f}, 0.538f, 1.11f, .041f, 4.1f, 1.05f},
+    {0x00007, "Total Carnage: orange rolling bank", MoodTheme::Steel, ScaffoldMotion::Scanline, {1,.42f,.10f}, 0.576f, 1.12f, .052f, 1.1f, 1.10f},
+    {0x00008, "Crowd Control: cyan crossfire", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.20f,.88f,1}, 0.731f, 1.06f, .014f, 3.0f, 1.05f},
+    {0x00009, "Tank Trouble: red chase", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.10f}, 0.798f, 1.15f, .031f, 5.2f, 1.10f},
+    {0x0000a, "Mutoid One: dissection white", MoodTheme::Mutoid, ScaffoldMotion::CrossSweep, {.88f,.92f,1}, 0.866f, 1.17f, .011f, .2f, 1.25f},
+    {0x0000b, "First Rack: silver finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.75f,.86f,1}, 1.0f, 1.00f, .020f, 2.2f, 1.25f},
 
-    {0x10001, "Orbs: violet containment", MoodTheme::Neon, ScaffoldMotion::OrbitSweep, {.64f,.36f,1}, .92f, 1.12f, .018f, .4f, 1.1f},
-    {0x10002, "Ten Keys Two: cyan lift", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.22f,.92f,1}, .90f, 1.10f, .015f, 1.4f, 1.05f},
-    {0x10003, "Smash 'Em: pink pursuit", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {1,.31f,.72f}, .88f, 1.16f, .045f, 2.5f, 1.0f},
-    {0x10004, "Fire Power: toxic valves", MoodTheme::Toxic, ScaffoldMotion::Pulse, {.42f,1,.20f}, .84f, 1.20f, .037f, 3.7f, 1.15f},
-    {0x10005, "Slaughter Line: magenta rails", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.62f}, .88f, 1.18f, .024f, 4.8f, 1.0f},
-    {0x10006, "Laser Death Zone: blue slicer", MoodTheme::Neon, ScaffoldMotion::Scanline, {.18f,.68f,1}, .82f, 1.26f, .061f, 5.1f, 1.1f},
-    {0x10007, "Scarface: monitor storm", MoodTheme::Scarface, ScaffoldMotion::OrbitSweep, {.42f,1,.46f}, .78f, 1.32f, .026f, .8f, 1.3f},
-    {0x10008, "Rowdy Droids: moon search", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.52f,.70f,1}, .90f, 1.08f, .013f, 1.9f, .95f},
-    {0x10009, "Vacuum Clean: white hazard", MoodTheme::Moonlit, ScaffoldMotion::Beacon, {1,.72f,.46f}, .86f, 1.20f, .043f, 3.4f, 1.15f},
-    {0x1000a, "Reserved metal selector", MoodTheme::Moonlit, ScaffoldMotion::Pulse, {.52f,.72f,1}, .92f, 1.0f, .029f, .0f, .9f},
-    {0x1000b, "Metal Death: caustic bay", MoodTheme::Toxic, ScaffoldMotion::OrbitSweep, {.30f,1,.54f}, .84f, 1.22f, .020f, 2.1f, 1.15f},
-    {0x1000c, "Watch Your Step: pit show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.80f,.36f}, .94f, 1.05f, .017f, 4.4f, 1.2f},
-    {0x1000d, "Total Carnage Two: cold violet", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {.66f,.46f,1}, .86f, 1.17f, .047f, 1.7f, 1.0f},
-    {0x1000e, "Defend Me: cyan apron", MoodTheme::Stage, ScaffoldMotion::Chase, {.26f,.90f,1}, .94f, 1.05f, .022f, 5.9f, 1.25f},
-    {0x1000f, "Turtles: amber convoy", MoodTheme::Moonlit, ScaffoldMotion::OrbitSweep, {1,.63f,.24f}, .90f, 1.10f, .016f, 2.7f, 1.0f},
-    {0x10010, "Chunks: magenta machinery", MoodTheme::Neon, ScaffoldMotion::Pulse, {1,.24f,.66f}, .84f, 1.20f, .035f, 4.0f, 1.15f},
-    {0x10011, "These Are Fast: cobalt strobe", MoodTheme::Neon, ScaffoldMotion::Scanline, {.16f,.54f,1}, .80f, 1.28f, .068f, 1.2f, 1.1f},
-    {0x10012, "Buffalo Herd: polar sweep", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.58f,.84f,1}, .90f, 1.10f, .015f, 3.3f, 1.0f},
-    {0x10013, "Second Rack: blue-gold finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.56f,.76f,1}, .96f, 1.02f, .024f, 4.9f, 1.25f},
+    {0x10001, "Orbs: violet containment", MoodTheme::Neon, ScaffoldMotion::OrbitSweep, {.64f,.36f,1}, 0.836f, 1.07f, .018f, .4f, 1.10f},
+    {0x10002, "Ten Keys Two: cyan lift", MoodTheme::Neon, ScaffoldMotion::CrossSweep, {.22f,.92f,1}, 0.846f, 1.06f, .015f, 1.4f, 1.05f},
+    {0x10003, "Smash 'Em: pink pursuit", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {1,.31f,.72f}, 0.711f, 1.10f, .045f, 2.5f, 1.05f},
+    {0x10004, "Fire Power: toxic valves", MoodTheme::Toxic, ScaffoldMotion::Pulse, {.42f,1,.20f}, 1.048f, 1.12f, .037f, 3.7f, 1.15f},
+    {0x10005, "Slaughter Line: magenta rails", MoodTheme::Neon, ScaffoldMotion::Chase, {1,.18f,.62f}, 0.897f, 1.11f, .024f, 4.8f, 1.05f},
+    {0x10006, "Laser Death Zone: blue slicer", MoodTheme::Neon, ScaffoldMotion::Scanline, {.18f,.68f,1}, 0.831f, 1.16f, .061f, 5.1f, 1.10f},
+    {0x10007, "Scarface: monitor storm", MoodTheme::Scarface, ScaffoldMotion::OrbitSweep, {.42f,1,.46f}, 0.790f, 1.19f, .026f, .8f, 1.30f},
+    {0x10008, "Rowdy Droids: moon search", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.52f,.70f,1}, 0.859f, 1.05f, .013f, 1.9f, 1.05f},
+    {0x10009, "Vacuum Clean: white hazard", MoodTheme::Moonlit, ScaffoldMotion::Beacon, {1,.72f,.46f}, 0.510f, 1.12f, .043f, 3.4f, 1.15f},
+    {0x1000a, "Reserved metal selector", MoodTheme::Moonlit, ScaffoldMotion::Pulse, {.52f,.72f,1}, 0.750f, 1.00f, .029f, .0f, 1.05f},
+    {0x1000b, "Metal Death: caustic bay", MoodTheme::Toxic, ScaffoldMotion::OrbitSweep, {.30f,1,.54f}, 0.745f, 1.13f, .020f, 2.1f, 1.15f},
+    {0x1000c, "Watch Your Step: pit show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.80f,.36f}, 1.400f, 1.03f, .017f, 4.4f, 1.20f},
+    {0x1000d, "Total Carnage Two: cold violet", MoodTheme::Moonlit, ScaffoldMotion::Scanline, {.66f,.46f,1}, 0.806f, 1.10f, .047f, 1.7f, 1.05f},
+    {0x1000e, "Defend Me: cyan apron", MoodTheme::Stage, ScaffoldMotion::Chase, {.26f,.90f,1}, 1.290f, 1.03f, .022f, 5.9f, 1.25f},
+    {0x1000f, "Turtles: amber convoy", MoodTheme::Moonlit, ScaffoldMotion::OrbitSweep, {1,.63f,.24f}, 0.500f, 1.06f, .016f, 2.7f, 1.05f},
+    {0x10010, "Chunks: magenta machinery", MoodTheme::Neon, ScaffoldMotion::Pulse, {1,.24f,.66f}, 0.799f, 1.12f, .035f, 4.0f, 1.15f},
+    {0x10011, "These Are Fast: cobalt strobe", MoodTheme::Neon, ScaffoldMotion::Scanline, {.16f,.54f,1}, 0.954f, 1.17f, .068f, 1.2f, 1.10f},
+    {0x10012, "Buffalo Herd: polar sweep", MoodTheme::Moonlit, ScaffoldMotion::CrossSweep, {.58f,.84f,1}, 0.744f, 1.06f, .015f, 3.3f, 1.05f},
+    {0x10013, "Second Rack: blue-gold finale", MoodTheme::Stage, ScaffoldMotion::Pulse, {.56f,.76f,1}, 1.0f, 1.01f, .024f, 4.9f, 1.25f},
 
-    {0x20001, "No Dice: jungle breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.60f,.18f}, .88f, 1.12f, .014f, .6f, 1.05f},
-    {0x20002, "Temple Alert: braziers", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.56f,.16f}, .86f, 1.16f, .012f, 1.8f, 1.2f},
-    {0x20003, "Scorpion Fever: amber pincer", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.38f,.08f}, .84f, 1.20f, .048f, 3.1f, 1.05f},
-    {0x20004, "Cobra Ahead: acid warning", MoodTheme::Jungle, ScaffoldMotion::Pulse, {.52f,1,.24f}, .82f, 1.22f, .034f, 4.2f, 1.15f},
-    {0x20005, "Walls of Pain: gold teeth", MoodTheme::Temple, ScaffoldMotion::Chase, {1,.52f,.14f}, .88f, 1.14f, .029f, 5.4f, 1.15f},
-    {0x20006, "Last Arena: furnace sun", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.72f,.30f}, .82f, 1.22f, .016f, 1.1f, 1.2f},
-    {0x20007, "Cobra Death: twin crimson moons", MoodTheme::Cobra, ScaffoldMotion::OrbitSweep, {1,.20f,.08f}, .76f, 1.38f, .018f, .4f, 1.3f},
-    {0x20008, "Turtle Guard: cyan canopy", MoodTheme::Jungle, ScaffoldMotion::Beacon, {.18f,.88f,1}, .86f, 1.16f, .036f, 2.0f, 1.05f},
-    {0x20009, "Extra Sauce: hot magenta", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.26f,.50f}, .82f, 1.24f, .056f, 3.3f, 1.0f},
-    {0x2000a, "Reserved jungle selector", MoodTheme::Jungle, ScaffoldMotion::Pulse, {1,.60f,.20f}, .92f, 1.0f, .030f, .0f, .9f},
-    {0x2000b, "Secret Rooms: hidden gold", MoodTheme::Temple, ScaffoldMotion::Beacon, {1,.76f,.30f}, .82f, 1.20f, .039f, 4.7f, 1.2f},
-    {0x2000c, "Enjoy My Wealth: gold broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.74f,.28f}, .96f, 1.08f, .017f, 5.8f, 1.3f},
-    {0x2000d, "No Turtles: cold furnace", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {.45f,.72f,1}, .84f, 1.16f, .019f, 1.5f, 1.0f},
-    {0x2000e, "Turtle Chunks: blue-gold chase", MoodTheme::Stage, ScaffoldMotion::Chase, {.42f,.82f,1}, .94f, 1.08f, .026f, 2.8f, 1.25f},
-    {0x2000f, "Dynamite Cobra: ember grid", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.30f,.08f}, .80f, 1.28f, .064f, 4.1f, 1.1f},
-    {0x20010, "Buffalo Gun: temple target", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.58f,.22f}, .82f, 1.20f, .014f, 5.0f, 1.2f},
-    {0x20011, "Total Carnage Three: violet rain", MoodTheme::Jungle, ScaffoldMotion::Scanline, {.72f,.36f,1}, .80f, 1.25f, .050f, 1.0f, 1.15f},
-    {0x20012, "Secret Hall: amber breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.54f,.18f}, .84f, 1.18f, .018f, 3.6f, 1.1f},
-    {0x20013, "Enough Keys: electric gold", MoodTheme::Stage, ScaffoldMotion::Chase, {1,.82f,.36f}, .94f, 1.10f, .028f, 4.9f, 1.3f},
-    {0x20014, "Final Keys: red white show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.22f,.14f}, .84f, 1.28f, .020f, 5.7f, 1.35f},
-    {0x20015, "Mutoid Return: neon apocalypse", MoodTheme::Finale, ScaffoldMotion::OrbitSweep, {1,.12f,.64f}, .76f, 1.38f, .022f, .9f, 1.35f},
-    {0x20016, "Pleasure Dome: spectral finale", MoodTheme::Dome, ScaffoldMotion::Pulse, {.68f,.36f,1}, .88f, 1.15f, .012f, 2.6f, 1.35f},
-    {0x20017, "Ending screen: final afterglow", MoodTheme::Dome, ScaffoldMotion::CrossSweep, {1,.56f,.18f}, .84f, 1.10f, .018f, 4.0f, 1.2f},
+    {0x20001, "No Dice: jungle breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.60f,.18f}, 0.938f, 1.07f, .014f, .6f, 1.05f},
+    {0x20002, "Temple Alert: braziers", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.56f,.16f}, 1.141f, 1.10f, .012f, 1.8f, 1.20f},
+    {0x20003, "Scorpion Fever: amber pincer", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.38f,.08f}, 0.981f, 1.12f, .048f, 3.1f, 1.05f},
+    {0x20004, "Cobra Ahead: acid warning", MoodTheme::Jungle, ScaffoldMotion::Pulse, {.52f,1,.24f}, 0.813f, 1.13f, .034f, 4.2f, 1.15f},
+    {0x20005, "Walls of Pain: gold teeth", MoodTheme::Temple, ScaffoldMotion::Chase, {1,.52f,.14f}, 0.574f, 1.08f, .029f, 5.4f, 1.15f},
+    {0x20006, "Last Arena: furnace sun", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.72f,.30f}, 0.500f, 1.13f, .016f, 1.1f, 1.20f},
+    {0x20007, "Cobra Death: twin crimson moons", MoodTheme::Cobra, ScaffoldMotion::OrbitSweep, {1,.20f,.08f}, 0.500f, 1.23f, .018f, .4f, 1.30f},
+    {0x20008, "Turtle Guard: cyan canopy", MoodTheme::Jungle, ScaffoldMotion::Beacon, {.18f,.88f,1}, 0.928f, 1.10f, .036f, 2.0f, 1.05f},
+    {0x20009, "Extra Sauce: hot magenta", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.26f,.50f}, 0.968f, 1.14f, .056f, 3.3f, 1.05f},
+    {0x2000a, "Reserved jungle selector", MoodTheme::Jungle, ScaffoldMotion::Pulse, {1,.60f,.20f}, 0.930f, 1.00f, .030f, .0f, 1.05f},
+    {0x2000b, "Secret Rooms: hidden gold", MoodTheme::Temple, ScaffoldMotion::Beacon, {1,.76f,.30f}, 0.517f, 1.12f, .039f, 4.7f, 1.20f},
+    {0x2000c, "Enjoy My Wealth: gold broadcast", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.74f,.28f}, 1.400f, 1.05f, .017f, 5.8f, 1.30f},
+    {0x2000d, "No Turtles: cold furnace", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {.45f,.72f,1}, 0.961f, 1.10f, .019f, 1.5f, 1.05f},
+    {0x2000e, "Turtle Chunks: blue-gold chase", MoodTheme::Stage, ScaffoldMotion::Chase, {.42f,.82f,1}, 1.400f, 1.05f, .026f, 2.8f, 1.25f},
+    {0x2000f, "Dynamite Cobra: ember grid", MoodTheme::Jungle, ScaffoldMotion::Scanline, {1,.30f,.08f}, 0.957f, 1.17f, .064f, 4.1f, 1.10f},
+    {0x20010, "Buffalo Gun: temple target", MoodTheme::Temple, ScaffoldMotion::CrossSweep, {1,.58f,.22f}, 0.520f, 1.12f, .014f, 5.0f, 1.20f},
+    {0x20011, "Total Carnage Three: violet rain", MoodTheme::Jungle, ScaffoldMotion::Scanline, {.72f,.36f,1}, 0.925f, 1.15f, .050f, 1.0f, 1.15f},
+    {0x20012, "Secret Hall: amber breach", MoodTheme::Jungle, ScaffoldMotion::OrbitSweep, {1,.54f,.18f}, 0.853f, 1.11f, .018f, 3.6f, 1.10f},
+    {0x20013, "Enough Keys: electric gold", MoodTheme::Stage, ScaffoldMotion::Chase, {1,.82f,.36f}, 1.400f, 1.06f, .028f, 4.9f, 1.30f},
+    {0x20014, "Final Keys: red white show", MoodTheme::Stage, ScaffoldMotion::CrossSweep, {1,.22f,.14f}, 1.400f, 1.17f, .020f, 5.7f, 1.35f},
+    {0x20015, "Mutoid Return: neon apocalypse", MoodTheme::Finale, ScaffoldMotion::OrbitSweep, {1,.12f,.64f}, 1.193f, 1.23f, .022f, .9f, 1.35f},
+    {0x20016, "Pleasure Dome: spectral finale", MoodTheme::Dome, ScaffoldMotion::Pulse, {.68f,.36f,1}, 0.500f, 1.09f, .012f, 2.6f, 1.35f},
+    {0x20017, "Ending screen: final afterglow", MoodTheme::Dome, ScaffoldMotion::CrossSweep, {1,.56f,.18f}, 0.700f, 1.06f, .018f, 4.0f, 1.20f},
 };
 constexpr RoomLightingProfile kUnknownProfile{0, "Unbound room", MoodTheme::Steel, ScaffoldMotion::CrossSweep,
                                                 {.72f,.82f,1}, 1, 1, .015f, 0, 1};
@@ -196,7 +198,7 @@ std::vector<Lamp> themeLamps(uint32_t room) {
     case MoodTheme::Temple: {
         l.push_back(animate(omni(.28f, .02f, 40, 210, 1, .58f, .2f, 1.4f, 6, 2), Anim::Flicker, .21f, wave * 1.f));
         l.push_back(animate(omni(.72f, .02f, 40, 210, 1, .58f, .2f, 1.4f, 6, 2), Anim::Flicker, .19f, wave * 1.f + 4));
-        l.push_back(spot(.45f, .2f, 240, 440, 1, .9f, .65f, 1.15f, 26, .5f, .55f, .4f));
+        l.push_back(spot(.45f, .2f, 240, 440, 1, .9f, .65f, .85f, 26, .5f, .55f, .4f));
         l.push_back(animate(omni(.5f, 1.06f, 28, 170, 1, .6f, .25f, .6f), Anim::Flicker, .17f, 2));
         break;
     }
@@ -243,49 +245,87 @@ std::vector<Lamp> themeLamps(uint32_t room) {
 }
 std::vector<Lamp> scaffoldLamps(uint32_t room) {
     const auto &p = room_lighting_profile(room);
-    const float r = p.accent[0], g = p.accent[1], b = p.accent[2];
+    // Broadcast LED movers: saturated, but cut with white so the floor reads.
+    const float r = .8f * p.accent[0] + .2f, g = .8f * p.accent[1] + .2f, b = .8f * p.accent[2] + .2f;
     auto left = spot(.08f, -.34f, 205, 600, r, g, b, .95f * p.rig, 15, .35f, .50f, .38f);
     auto right = spot(.92f, -.34f, 205, 600, r * .65f + .25f, g * .65f + .25f, b * .65f + .25f,
                       .9f * p.rig, 15, .65f, .50f, .38f);
     auto wash = omni(.5f, -.08f, 82, 360, .44f + r * .24f, .44f + g * .24f, .44f + b * .24f,
                      .58f * p.rig, 13, 2);
+    // Broadcast moving heads move on deliberate cues (~0.1-0.25 Hz at 60 fps),
+    // mirrored left/right so the rig reads as one programmed show.
+    const float rate = .010f + p.rate * .22f;
     switch (p.scaffold) {
     case ScaffoldMotion::CrossSweep:
-        left = animate(left, Anim::Sweep, p.rate, p.phase, .30f, .10f);
-        right = animate(right, Anim::Sweep, p.rate, p.phase + Pi, -.30f, .10f);
+        left = animate(left, Anim::Sweep, rate, p.phase, .30f, .10f);
+        right = animate(right, Anim::Sweep, rate, p.phase + Pi, -.30f, .10f);
         break;
     case ScaffoldMotion::OrbitSweep:
-        left = animate(left, Anim::Orbit, p.rate, p.phase, .24f, .18f);
-        right = animate(right, Anim::Orbit, p.rate, p.phase + Pi, .24f, .18f);
+        left = animate(left, Anim::Orbit, rate, p.phase, .24f, .18f);
+        right = animate(right, Anim::Orbit, rate, p.phase + Pi, .24f, .18f);
         break;
     case ScaffoldMotion::Chase:
-        left = animate(left, Anim::Pulse, p.rate, p.phase);
-        right = animate(right, Anim::Pulse, p.rate, p.phase + Pi);
-        wash = animate(wash, Anim::Broken, 1, p.phase);
+        left = animate(left, Anim::Pulse, rate, p.phase);
+        right = animate(right, Anim::Pulse, rate, p.phase + Pi);
+        wash = animate(wash, Anim::Pulse, rate * .5f, p.phase); // LED chase wash, no dropouts
         break;
     case ScaffoldMotion::Pulse:
-        left = animate(left, Anim::Pulse, p.rate, p.phase);
-        right = animate(right, Anim::Pulse, p.rate, p.phase + Pi);
+        left = animate(left, Anim::Pulse, rate, p.phase);
+        right = animate(right, Anim::Pulse, rate, p.phase + Pi);
         wash = animate(wash, Anim::Hue, .003f, p.phase);
         break;
     case ScaffoldMotion::Beacon:
-        left = animate(left, Anim::Strobe, 97, p.phase * 17);
-        right = animate(right, Anim::Orbit, p.rate, p.phase, .36f, .18f);
-        wash = animate(wash, Anim::Broken, 1, p.phase);
+        // Beacon: a searchlight raking the floor instead of a strobe hit.
+        left = animate(left, Anim::Sweep, rate * .8f, p.phase, .40f, .22f);
+        right = animate(right, Anim::Orbit, rate, p.phase, .36f, .18f);
+        wash = animate(wash, Anim::Pulse, rate * .5f, p.phase); // LED chase wash, no dropouts
         break;
     case ScaffoldMotion::Scanline:
-        left = animate(left, Anim::Sweep, p.rate, p.phase, .42f, .04f);
-        right = animate(right, Anim::Sweep, p.rate, p.phase + 1.2f, -.42f, .04f);
-        wash = animate(wash, Anim::Pulse, p.rate * 2, p.phase);
+        left = animate(left, Anim::Sweep, rate, p.phase, .42f, .04f);
+        right = animate(right, Anim::Sweep, rate, p.phase + 1.2f, -.42f, .04f);
+        wash = animate(wash, Anim::Pulse, rate * 2, p.phase);
         break;
     }
     return {left, right, wash};
 }
 
+// Hard sci-fi soundstage key rig shared by every arena: an overhead grid of
+// cool-white LED softboxes (their reflections read on the polished floor), a
+// hard top-back rim light, and a cyan LED line along the rear wall. The theme
+// and scaffold rigs layer colour on top of this even, high-key base.
+std::vector<Lamp> studioKeyRig(uint32_t room) {
+    const auto &p = room_lighting_profile(room);
+    // Accent bleeds only faintly into the key; it stays recognisably white.
+    const float ar = .92f + p.accent[0] * .06f, ag = .95f + p.accent[1] * .04f, ab = 1.f;
+    auto rig = std::vector<Lamp>{
+        omni(.27f, .36f, 230, 470, ar, ag, ab, .34f, 30, 2),
+        omni(.73f, .36f, 230, 470, ar, ag, ab, .34f, 30, 2),
+        omni(.50f, .80f, 210, 430, 1, .97f, .93f, .24f, 28, 2), // warm-neutral audience-side fill
+        spot(.50f, -.55f, 260, 560, .80f, .90f, 1, .36f, 40, .5f, .62f, .40f),
+        omni(.50f, .00f, 14, 300, .45f + p.accent[0] * .15f, .82f + p.accent[1] * .1f, 1, .42f, 16, 1),
+    };
+    // The profile's ambient value is the room's calibrated exposure: it scales
+    // the shared key rig with the base fill so each set sits at its own level.
+    for (auto &lamp : rig) lamp.intensity *= p.ambient;
+    return rig;
+}
+
 std::vector<Lamp> roomLamps(uint32_t room) {
     const auto &profile = room_lighting_profile(room);
-    auto lamps = themeLamps(room);
-    for (size_t i = 0; i < lamps.size(); ++i) {
+    auto lamps = studioKeyRig(room);
+    auto theme = themeLamps(room);
+    for (auto &lamp : theme) {
+        // Precision hardware: no dying tubes or open flame on this stage. Keep
+        // the motion, but as controlled LED behaviour.
+        if (lamp.anim == Anim::Broken) lamp.anim = Anim::Steady;
+        if (lamp.anim == Anim::Strobe) lamp.intensity *= .62f;
+        // Smooth programmed cues: compress anything faster than ~0.3 Hz.
+        if ((lamp.anim == Anim::Pulse || lamp.anim == Anim::Sweep || lamp.anim == Anim::Orbit) && lamp.rate > .03f)
+            lamp.rate = .03f + (lamp.rate - .03f) * .35f;
+    }
+    const size_t keyCount = lamps.size();
+    lamps.insert(lamps.end(), theme.begin(), theme.end());
+    for (size_t i = keyCount; i < lamps.size(); ++i) {
         auto &lamp = lamps[i];
         const float mix = .08f + .025f * float(i % 3);
         lamp.r = lamp.r * (1 - mix) + profile.accent[0] * mix;
@@ -298,7 +338,7 @@ std::vector<Lamp> roomLamps(uint32_t room) {
     lamps.insert(lamps.end(), scaffold.begin(), scaffold.end());
     // Leave exposure headroom for the boss rig and simultaneous attack lights.
     if(room==10 || room==0x10007 || room==0x20007 || room==0x20015)
-        for(auto& lamp:lamps)lamp.intensity*=.62f;
+        for(auto& lamp:lamps)lamp.intensity*=.72f;
     return lamps;
 }
 
@@ -336,11 +376,13 @@ GpuLight realize(const Lamp &lamp, float fx, float fy, float fw, float fh, float
     switch (lamp.anim) {
     case Anim::Steady: break;
     case Anim::Flicker:
-        intensity *= .74f + .26f * (.6f * valueNoise(phase) + .4f * valueNoise(phase * 2.7f + 13.f));
+        // LED flame-effect practicals: a gentle shimmer, never a guttering torch.
+        intensity *= .86f + .14f * (.6f * valueNoise(phase) + .4f * valueNoise(phase * 2.7f + 13.f));
         g.x += (valueNoise(phase * 1.3f + 7) - .5f) * 1.2f;
         g.z += (valueNoise(phase * 1.1f + 3) - .5f) * 1.5f;
         break;
-    case Anim::Pulse: intensity *= .3f + .7f * (.5f + .5f * std::sin(phase)); break;
+    // LED fixtures breathe; they do not black out between beats.
+    case Anim::Pulse: intensity *= .55f + .45f * (.5f + .5f * std::sin(phase)); break;
     case Anim::Strobe: {
         const float period = std::max(8.f, lamp.rate);
         const float local = std::fmod(t + lamp.phase, period);
@@ -402,18 +444,21 @@ RoomMood room_mood(uint32_t room) {
     RoomMood m;
     m.theme = room_theme(room);
     switch (m.theme) {
-    case MoodTheme::Steel: m.ambient = {.56f, .60f, .70f}; m.gloss = .55f; m.actorFloor = .80f; m.occlusion = .50f; break;
-    case MoodTheme::Neon: m.ambient = {.54f, .45f, .62f}; m.gloss = .70f; m.actorFloor = .78f; m.occlusion = .55f; break;
-    case MoodTheme::Moonlit: m.ambient = {.42f, .47f, .66f}; m.gloss = .60f; m.actorFloor = .78f; m.occlusion = .55f; break;
-    case MoodTheme::Toxic: m.ambient = {.40f, .50f, .38f}; m.gloss = .45f; m.actorFloor = .78f; m.occlusion = .55f; break;
-    case MoodTheme::Stage: m.ambient = {.62f, .60f, .74f}; m.gloss = .75f; m.actorFloor = .76f; m.occlusion = .60f; break;
-    case MoodTheme::Jungle: m.ambient = {.52f, .45f, .32f}; m.gloss = .12f; m.actorFloor = .80f; m.occlusion = .50f; break;
-    case MoodTheme::Temple: m.ambient = {.54f, .47f, .34f}; m.gloss = .35f; m.actorFloor = .80f; m.occlusion = .50f; break;
-    case MoodTheme::Mutoid: m.ambient = {.43f, .38f, .46f}; m.gloss = .65f; m.actorFloor = .74f; m.occlusion = .65f; break;
-    case MoodTheme::Scarface: m.ambient = {.42f, .50f, .44f}; m.gloss = .60f; m.actorFloor = .74f; m.occlusion = .65f; break;
-    case MoodTheme::Cobra: m.ambient = {.48f, .41f, .33f}; m.gloss = .40f; m.actorFloor = .76f; m.occlusion = .60f; break;
-    case MoodTheme::Finale: m.ambient = {.40f, .34f, .46f}; m.gloss = .70f; m.actorFloor = .74f; m.occlusion = .65f; break;
-    case MoodTheme::Dome: m.ambient = {.50f, .46f, .56f}; m.gloss = .45f; m.actorFloor = .84f; m.occlusion = .40f; break;
+    // Studio grade: every set sits under the same cool-neutral (~6000 K) LED
+    // key; the theme only tints it. Polished resin floors carry the softbox
+    // reflections, and the fill keeps contact shadows crisp but never murky.
+    case MoodTheme::Steel: m.ambient = {.70f, .74f, .82f}; m.gloss = .74f; m.actorFloor = .88f; m.occlusion = .40f; break;
+    case MoodTheme::Neon: m.ambient = {.68f, .66f, .78f}; m.gloss = .82f; m.actorFloor = .86f; m.occlusion = .42f; break;
+    case MoodTheme::Moonlit: m.ambient = {.62f, .68f, .80f}; m.gloss = .76f; m.actorFloor = .86f; m.occlusion = .42f; break;
+    case MoodTheme::Toxic: m.ambient = {.62f, .72f, .68f}; m.gloss = .66f; m.actorFloor = .86f; m.occlusion = .42f; break;
+    case MoodTheme::Stage: m.ambient = {.74f, .75f, .82f}; m.gloss = .86f; m.actorFloor = .88f; m.occlusion = .40f; break;
+    case MoodTheme::Jungle: m.ambient = {.72f, .72f, .70f}; m.gloss = .42f; m.actorFloor = .88f; m.occlusion = .40f; break;
+    case MoodTheme::Temple: m.ambient = {.74f, .72f, .68f}; m.gloss = .56f; m.actorFloor = .88f; m.occlusion = .40f; break;
+    case MoodTheme::Mutoid: m.ambient = {.62f, .66f, .76f}; m.gloss = .82f; m.actorFloor = .84f; m.occlusion = .48f; break;
+    case MoodTheme::Scarface: m.ambient = {.60f, .70f, .68f}; m.gloss = .80f; m.actorFloor = .84f; m.occlusion = .48f; break;
+    case MoodTheme::Cobra: m.ambient = {.70f, .66f, .62f}; m.gloss = .64f; m.actorFloor = .84f; m.occlusion = .46f; break;
+    case MoodTheme::Finale: m.ambient = {.62f, .60f, .74f}; m.gloss = .84f; m.actorFloor = .84f; m.occlusion = .48f; break;
+    case MoodTheme::Dome: m.ambient = {.70f, .68f, .78f}; m.gloss = .72f; m.actorFloor = .90f; m.occlusion = .36f; break;
     }
     const auto &profile = room_lighting_profile(room);
     for (auto &a : m.ambient) a *= AmbientScale * profile.ambient;

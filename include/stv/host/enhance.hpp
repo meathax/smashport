@@ -10,7 +10,7 @@
 #include <vector>
 namespace stv::host {
 enum class EffectKind : uint8_t { None, Projectile, Blood, Explosion, EnemyShot, FleshBreak, MetalBreak };
-struct EffectObject { uint32_t slot{}, image{}; EffectKind kind{}; float x{}, y{}, vx{}, vy{}; uint16_t weapon{}; bool barrel{}; float muzzle_x{}, muzzle_y{}; bool raster_muzzle{}; };
+struct EffectObject { uint32_t slot{}, image{}; EffectKind kind{}; float x{}, y{}, vx{}, vy{}; uint16_t weapon{}; bool barrel{}; float muzzle_x{}, muzzle_y{}; bool raster_muzzle{}; float w{}, h{}; };
 struct EffectTarget { uint32_t slot{}; float x{},y{},w{},h{}; bool metal{}; uint16_t oid{}; int paletteBank{-1}; };
 struct HudRect { float x,y,w,h; };
 struct HudPart : HudRect { int paletteBank{-1}; bool backdrop{}; bool scorePanel{}; };
@@ -125,6 +125,9 @@ struct EffectPacket { std::vector<RoomLamp> dxrLights; // ray-traced gameplay li
     uint64_t roomAge{}; bool roomIntro{};
     std::vector<EnemyRemains> remains;
     std::vector<EffectTarget> foreground;
+    // Player projectiles and hostile shots (screen space): light sources for
+    // the ray-traced bounce gather. Enemy bodies alone are in `foreground`.
+    std::vector<HudRect> lightSources;
     std::vector<ShadowCaster> casters;
     std::vector<HudPart> hud;
     ArenaGeometry geometry;

@@ -142,6 +142,8 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         break;
     case PcMenuPage::Enhance:
         add(Item::HardwareRT, "Hardware ray tracing", Kind::Adjustment);
+        add(Item::RtBounce, "Ray-traced bounce light", Kind::Adjustment);
+        add(Item::VolumetricLight, "Volumetric light", Kind::Adjustment);
         add(Item::EnhanceAll, "Enhancements", Kind::Adjustment);
         add(Item::EnableAllEffects, "Enable all effects", Kind::Command);
         add(Item::Particles, "Tiny impact sparks", Kind::Adjustment);

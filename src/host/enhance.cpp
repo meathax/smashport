@@ -319,6 +319,7 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
                     const unsigned dir=word(process+0x100);
                     if(dir<=8){object.vx=float(dx[dir]);object.vy=float(dy[dir]);}
                 }
+                object.w=float(word(node+0xf0));object.h=float(word(node+0x100));
                 s.objects.push_back(object);
             }
         }
@@ -513,6 +514,11 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
     roomClock_=true;roomClockRoom_=scene.room;roomClockFrame_=scene.frame;
     packet_.roomAge=scene.frame-roomStart_;packet_.studio=scene.studio;
     packet_.foreground=scene.targets;
+    packet_.lightSources.clear();
+    for(const auto& obj:scene.objects)
+        if((obj.kind==EffectKind::Projectile || obj.kind==EffectKind::EnemyShot) &&
+           obj.w>0 && obj.h>0 && obj.w<=64 && obj.h<=64)
+            packet_.lightSources.push_back({obj.x,obj.y,obj.w,obj.h});
     packet_.tankShadows=scene.tankShadows;
     packet_.lamps=scene.lamps;packet_.hud=scene.hud;packet_.geometry=scene.geometry;
     packet_.cinema=roomCinema_.observe({
@@ -541,9 +547,25 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             // Smooth, frame-deterministic breathing; no accumulated light energy
             // or render-rate-dependent flashes on stationary laser objects.
             const float flick=.9f+.1f*std::sin(float(scene.frame%4096)*.12f+float(obj.slot%31));
-            const auto color=bossRoom?tint:std::array<float,3>{1,.55f,.18f};
-            const RoomLamp lamp{obj.x,obj.y,blast?26.f:14.f,blast?165.f:72.f,
-                color[0],color[1],color[2],(blast?3.2f:1.15f)*flick};
+            // Explosion light follows the fireball: a short yellow-white flash
+            // cooling through orange to ember red, dimming as it ages.
+            static std::array<std::uint64_t,256> blastStart{},blastSeen{};
+            float age=0;
+            if(blast){
+                const unsigned k=obj.slot&255;
+                if(blastSeen[k]==0 || scene.frame<blastSeen[k] || scene.frame-blastSeen[k]>2)
+                    blastStart[k]=scene.frame;
+                blastSeen[k]=scene.frame;
+                age=float(std::min<std::uint64_t>(scene.frame-blastStart[k],60));
+            }
+            const float t1=std::min(age/8.f,1.f),t2=std::clamp((age-8.f)/22.f,0.f,1.f);
+            const std::array<float,3> hot{1,.86f,.55f},mid{1,.48f,.13f},ember{.85f,.2f,.05f};
+            std::array<float,3> fire{};
+            for(int c=0;c<3;++c)fire[c]=hot[c]+(mid[c]-hot[c])*t1+(ember[c]-mid[c])*t2;
+            const auto color=bossRoom&&!blast?tint:fire;
+            const float decay=1.f-.6f*std::min(age/36.f,1.f);
+            const RoomLamp lamp{obj.x,obj.y,blast?26.f:14.f,blast?140.f:72.f,
+                color[0],color[1],color[2],(blast?1.8f*decay:.9f)*flick};
             if(packet_.dxrLights.size()<MaxGameplayLights){
                 packet_.dxrLights.push_back(lamp);
                 continue;

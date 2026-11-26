@@ -15,6 +15,8 @@ struct PcSettings {
     bool enhance = false;
     bool particles = true, blood = true, debris = true, smoke = true, fire = true;
     bool hardware_rt = false;
+    int rt_bounce = 2; // ray-traced bounce light (radiance cascades): off/low/medium/high
+    int vol_light = 2; // ray-traced volumetric light in haze and smoke: off/low/medium/high
     bool voxels = false;
     bool shockwaves = false, brass = false, muzzle_flash = true;
     int room_cinema = 2; // 0 off, 1 low, 2 medium, 3 high

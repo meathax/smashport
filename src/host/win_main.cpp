@@ -1649,6 +1649,8 @@ stv::host::PcMenuContext menu_context() {
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     // DXR traces actor shadows itself and the renderer disables the 2.5D contact pass.
     context.set_available(stv::host::PcMenuItem::ContactShadows, !g_settings.hardware_rt);
+    context.set_available(stv::host::PcMenuItem::RtBounce, g_settings.hardware_rt);
+    context.set_available(stv::host::PcMenuItem::VolumetricLight, g_settings.hardware_rt);
     const bool in_room = g_lobby && g_lobby->state() != stv::net::LobbyState::Idle &&
                          g_lobby->state() != stv::net::LobbyState::Searching;
     if (context.public_host) {
@@ -2507,8 +2509,10 @@ std::string menu_value(stv::host::PcMenuItem item) {
     switch (item) {
     case I::Glow: case I::Sharpen: case I::Curvature:
     case I::Atmosphere: case I::SpriteRim: case I::ContactShadows: case I::WetMaterials:
-    case I::HeatDistortion: case I::EmissiveSpill: case I::CinematicGrade: {
+    case I::HeatDistortion: case I::EmissiveSpill: case I::CinematicGrade: case I::RtBounce: case I::VolumetricLight: {
         const char* levels[]={"off","low","medium","high"};
+        if(item==I::VolumetricLight) return levels[g_settings.vol_light];
+        if(item==I::RtBounce) return levels[g_settings.rt_bounce];
         if(item==I::Glow) return levels[g_settings.glow];
         if(item==I::Sharpen) return levels[g_settings.sharpen];
         if(item==I::Curvature) return levels[g_settings.curvature];
@@ -2600,6 +2604,8 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::WeaponImpacts: return "BALLISTIC, GRENADE AND ENERGY IMPACTS";
     case I::FluidSmoke: return "LIT SMOKE ROLLS AROUND WALLS AND RESPONDS TO SHOTS";
     case I::HardwareRT: return "DXR 1.1 / ROOM MOODS, LIVE LIGHTS AND SPRITE SHADOWS";
+    case I::RtBounce: return "RADIANCE CASCADES / LIGHT BOUNCES OFF FLOORS, WALLS AND BLASTS";
+    case I::VolumetricLight: return "RAY-TRACED BEAMS IN HAZE AND SMOKE / ACTORS CUT SHADOW SHAFTS";
     case I::Atmosphere: return "SUBTLE ROOM HAZE / LIGHT CONES / DRIFTING DUST";
     case I::SpriteRim: return "PIXEL-EDGE RIM LIGHT / ORIGINAL SPRITE ART PRESERVED";
     case I::ContactShadows: return "CHEAP 2.5D GROUND CONTACT / HUD EXCLUDED";
@@ -3175,6 +3181,8 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::Voxels: g_settings.voxels = !g_settings.voxels; break;
             case I::Atmosphere: g_settings.atmosphere = (g_settings.atmosphere + event.delta + 4) % 4; break;
             case I::SpriteRim: g_settings.sprite_rim = (g_settings.sprite_rim + event.delta + 4) % 4; break;
+            case I::RtBounce: g_settings.rt_bounce = (g_settings.rt_bounce + event.delta + 4) % 4; break;
+            case I::VolumetricLight: g_settings.vol_light = (g_settings.vol_light + event.delta + 4) % 4; break;
             case I::ContactShadows: g_settings.contact_shadows = (g_settings.contact_shadows + event.delta + 4) % 4; break;
             case I::WetMaterials: g_settings.wet_materials = (g_settings.wet_materials + event.delta + 4) % 4; break;
             case I::HeatDistortion: g_settings.heat_distortion = (g_settings.heat_distortion + event.delta + 4) % 4; break;
@@ -3223,7 +3231,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             default: break;
             }
             if (((event.item >= I::EnhanceAll && event.item <= I::ExplosiveDebris) ||
-                 event.item==I::RoomCinema || event.item==I::HardwareRT ||
+                 event.item==I::RoomCinema || event.item==I::HardwareRT || event.item==I::RtBounce || event.item==I::VolumetricLight ||
                  (event.item >= I::Atmosphere && event.item <= I::CinematicGrade) ||
                  (event.item>=I::CombatFeedback && event.item<=I::ReduceMotion)) &&
                 g_frame_ready && g_resident_ready) {

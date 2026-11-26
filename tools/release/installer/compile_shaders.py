@@ -6,7 +6,7 @@ import tempfile
 
 SOURCE = Path(__file__).resolve().parents[3] / "src/host"
 COMPUTE = ("integrate", "spawn", "binParticles", "composite", "markHud",
-           "markReceiver", "stepSmoke", "stampBodies")
+           "markReceiver", "stepSmoke", "stampBodies", "giScene", "giCascade")
 
 
 def compile_shaders(fxc, output):

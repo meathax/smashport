@@ -65,6 +65,8 @@ struct LightingFrame {
     float leftGate{}, previousLeftGate{}, lightTime{}, previousLightTime{};
     bool previousVisible{}, holdingOrigin{};
     RoomLightingLook look{}, previousLook{};
+    // Volumetric in-scatter samples per half-resolution column (0 = off).
+    unsigned volumetricSteps{};
 };
 
 class RoomLightRig {

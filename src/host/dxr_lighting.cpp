@@ -29,6 +29,8 @@ struct Float4 {
 struct Constants {
     Float4 extent, floor, ambient, world, tone;
     Float4 previousFloor, previousAmbient, previousTone;
+    Float4 fog; // on, column height, samples, light-map x origin
+    Float4 temporal; // history weight
     GpuLight lights[RoomLightRig::MaxLights];
 };
 // One front/cross pair per retail object, plus walls and the active set's
@@ -67,6 +69,8 @@ struct DxrLighting::Impl {
     UINT64 submitted{}, released{}, awaited{};
     bool simultaneous{};
     LightingFrame lastFrame;
+    std::array<float, 10> lastHistoryKey{};
+    bool historyKeyValid{};
     D3D12_RAYTRACING_GEOMETRY_DESC geometry{}, quadGeometry{};
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom{}, quadBottom{}, top{};
 
@@ -350,15 +354,59 @@ struct DxrLighting::Impl {
         }
         // geometry.solids are ROBO TYPTEXT objects (score, timers, message windows):
         // overlay text, so they never occlude room light.
+        // Stand every card on its lowest drawn row, not its object rectangle.
+        // The floor is one plane (z=0); a rectangle bottom includes transparent
+        // rows that change with animation frame, aim and the player's gun part,
+        // which lifted the silhouette off the floor and made the shadow start a
+        // varying distance below the feet. Players keep one shared foot line:
+        // the lowest drawn row of any of their parts.
+        const bool scanCoverage = coverage.size() >= size_t(height) * 32;
+        const bool scanOwners = coverage.size() >= size_t(height) * (32 + 256);
+        auto drawnFoot = [&](float x, float y, float w, float foot, unsigned tag) {
+            if (!scanCoverage) return foot;
+            const int x0 = std::max(0, int(std::floor(x))), x1 = std::min(width, int(std::ceil(x + w)));
+            const int top = std::max(0, int(std::floor(y)));
+            for (int row = std::min(height, int(std::ceil(foot))) - 1; row >= top; --row)
+                for (int col = x0; col < x1; ++col) {
+                    if (!((coverage[size_t(row) * 32 + (unsigned(col) >> 5)] >> (unsigned(col) & 31)) & 1)) continue;
+                    if (scanOwners && ((coverage[size_t(height) * 32 + size_t(row) * 256 + (unsigned(col) >> 2)] >>
+                                        ((unsigned(col) & 3) * 8)) & 255) != tag) continue;
+                    return float(row + 1);
+                }
+            return foot;
+        };
+        struct Placed { float foot; bool bossPart; unsigned tag; };
+        std::vector<Placed> placed;
+        placed.reserve(p.casters.size());
+        float playerFoot[2]{-1e6f, -1e6f};
         for (const auto &c : p.casters) {
             const float bank = std::clamp(c.palette, 0.f, 4095.f);
+            const unsigned tag = unsigned(bank) / 64 + 1;
             const bool bossPart=bossType && std::any_of(p.foreground.begin(),p.foreground.end(),[&](const auto& part){
                 return ((part.oid>>8)&31)==bossType && part.x==c.x && part.y==c.y && part.w==c.w && part.h==c.h;
             });
-            actor(c.x + offset, c.y, c.w, std::max(c.foot, c.y + 2), float(unsigned(bank) / 64 + 1), c.material,bossPart);
+            const float foot = bossPart ? c.foot : drawnFoot(c.x + offset, c.y, c.w, c.y + c.h, tag);
+            placed.push_back({foot, bossPart, tag});
+            const int player = int(c.player);
+            if (player == 1 || player == 2) playerFoot[player - 1] = std::max(playerFoot[player - 1], foot);
+        }
+        for (size_t i = 0; i < p.casters.size(); ++i) {
+            const auto &c = p.casters[i];
+            const int player = int(c.player);
+            const float foot = (!placed[i].bossPart && (player == 1 || player == 2)) ? playerFoot[player - 1] : placed[i].foot;
+            actor(c.x + offset, c.y, c.w, std::max(foot, c.y + 2), float(placed[i].tag), c.material, placed[i].bossPart);
         }
         const auto &mood = lastFrame.mood;
         Constants c{};
+        // Keep the previous light map as history only while it describes the same
+        // screen content: same camera, room, floor rectangle and size.
+        const std::array<float, 10> historyKey{float(p.camera_x), float(p.camera_y), fx, fy, floor[2], floor[3],
+                                               float(p.room), float(width * 4096 + height), float(offset),
+                                               lastFrame.previousVisible ? 1.f : 0.f};
+        // A scene cut (reset) never blends with the previous picture.
+        c.temporal = {!p.reset && historyKeyValid && historyKey == lastHistoryKey ? .62f : 0.f, 0, 0, 0};
+        lastHistoryKey = historyKey;
+        historyKeyValid = true;
         const bool useCoverage = coverage.size() >= size_t(height) * 32;
         const bool useOwners = coverage.size() >= size_t(height) * (32+256);
         c.extent = {float(width), float(height), float(offset), lastFrame.lightTime};
@@ -375,6 +423,9 @@ struct DxrLighting::Impl {
             c.previousTone = {oldMood.actorFloor, oldMood.occlusion, float(lastFrame.previousRoomLights),
                               lastFrame.previousLightTime};
         }
+        // Half-resolution in-scatter lives right of the ground irradiance.
+        if (lastFrame.volumetricSteps && width <= 560)
+            c.fog = {1, 48, float(std::min(lastFrame.volumetricSteps, 12u)), 560};
         std::copy(lastFrame.lights.begin(), lastFrame.lights.end(), c.lights);
         void *out;
         D3D12_RANGE empty{};

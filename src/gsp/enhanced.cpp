@@ -522,6 +522,8 @@ bool apply_enhanced(Machine& m, int widen) {
             int shift = x < 132 ? 0 : x < 242 ? wl : widen;
             if (bw == 112 && bh == 33 && (y == 45 || y == 46))
                 shift = x < 196 ? 0 : widen; // complete score bezels
+            if (hdrs == 0xfff8c050u && b.h == 0x0082u && bw == 100 && bh == 67 && x >= 196)
+                shift = widen; // Cobra's right head hole follows the right head (+widen)
             if (bw >= 150 && bh <= 17 && y >= 238) {
                 const bool left = x < 100;
                 extend(b, left ? wl : wr, left ? 120 : bw - 120,
@@ -531,11 +533,31 @@ bool apply_enhanced(Machine& m, int widen) {
                 // Jungle/temple side walls: repeat the complete masonry/foliage
                 // texture, not a four-column slice through a carved face.
                 const bool left = x == 52;
-                extend(b, left ? wl : wr, left ? 36 : 4, 4, 32, left ? x : x + wl);
+                // Carved faces stay over their wall-side snake spawn heads
+                // (arena_x: left +0, right +widen), so the masonry moves rigidly
+                // and the faces carry the inserted masonry run instead.
+                const bool faces = std::any_of(original.begin(), original.end(), [](const B& o) {
+                    return o.y == 0 && (o.w == 68 || o.w == 72) && o.ht >= 46 && o.ht <= 54 &&
+                           ((o.x >= 89 && o.x <= 90) || (o.x >= 230 && o.x <= 235)); });
+                if (faces) move(b, left ? 0 : widen);
+                else extend(b, left ? wl : wr, left ? 36 : 4, 4, 32, left ? x : x + wl);
             } else if ((hdrs == 0xfff82400u || hdrs == 0xfff8c050u) &&
                        y == 0 && (bw == 68 || bw == 72) && bh >= 46 && bh <= 54 &&
                        ((x >= 89 && x <= 90) || (x >= 230 && x <= 235))) {
-                move(b, wl); // complete carved faces/plaques stay with the centre doorway
+                // Faces match the snake spawn heads (left wall +0, right wall
+                // +widen); the gap toward the centre doorway is filled with the
+                // room's own masonry run (columns 4..35 of its 40x46 wall block).
+                const bool left = x < 196;
+                const auto wall = std::find_if(original.begin(), original.end(), [&](const B& o) {
+                    return o.y == 0 && o.w == 40 && o.ht == 46 && o.x == (left ? 52 : 299); });
+                const int gap = left ? wl : wr, gx = left ? x + bw : x + wl;
+                if (wall != original.end()) {
+                    B dest = *wall;
+                    dest.x = u16(gx);
+                    const B src = *wall;
+                    materialize(dest, gap, src.ht, [&](int dx, int yy) { return pixel(src, 4 + dx % 32, yy); });
+                }
+                move(b, left ? 0 : widen);
             } else if ((hdrs == 0xfff82400u || hdrs == 0xfff8c050u) &&
                        y == 0 && bw == 104 && bh == 49 && (x == 52 || x == 235)) {
                 // Pillared temple variant contains its plain masonry and unique

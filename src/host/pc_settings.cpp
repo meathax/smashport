@@ -40,7 +40,7 @@ bool valid(const PcSettings& s) {
            s.atmosphere >= 0 && s.atmosphere <= 3 && s.sprite_rim >= 0 && s.sprite_rim <= 3 &&
            s.contact_shadows >= 0 && s.contact_shadows <= 3 && s.wet_materials >= 0 && s.wet_materials <= 3 &&
            s.heat_distortion >= 0 && s.heat_distortion <= 3 && s.emissive_spill >= 0 && s.emissive_spill <= 3 &&
-           s.cinematic_grade >= 0 && s.cinematic_grade <= 3 &&
+           s.cinematic_grade >= 0 && s.cinematic_grade <= 3 && s.rt_bounce >= 0 && s.rt_bounce <= 3 && s.vol_light >= 0 && s.vol_light <= 3 &&
            s.room_cinema >= 0 && s.room_cinema <= 3 &&
            s.atmosphere >= 0 && s.atmosphere <= 3 && s.sprite_rim >= 0 && s.sprite_rim <= 3 &&
            s.contact_shadows >= 0 && s.contact_shadows <= 3 && s.wet_materials >= 0 && s.wet_materials <= 3 &&
@@ -106,6 +106,9 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
         else if (key == "wet_materials") candidate.wet_materials = n;
         else if (key == "heat_distortion") candidate.heat_distortion = n;
         else if (key == "emissive_spill") candidate.emissive_spill = n;
+        else if (key == "rt_bounce") candidate.rt_bounce = n;
+        else if (key == "vol_light") candidate.vol_light = n;
+        else if (key == "rt_reflect") { /* removed option; old files stay valid */ }
         else if (key == "cinematic_grade") candidate.cinematic_grade = n;
         else if (key == "volume") candidate.volume = n;
         else if (key == "hardware_rt" || key == "explosive_debris" || key == "enhance" || key == "particles" || key == "blood" || key == "debris" || key == "smoke" || key == "fire" || key == "lighting" || key == "ray_tracing" || key == "voxels" || key == "shockwaves" || key == "tracers" || key == "brass" || key == "muzzle_flash" || key == "room_lights" || key == "persistent_gore" || key == "materials" || key == "destruction" || key == "studio" || key == "weapon_impacts" || key == "fluid_smoke") {
@@ -202,6 +205,8 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\nsmoke=" << int(settings.smoke)
            << "\nfire=" << int(settings.fire)
            << "\nhardware_rt=" << int(settings.hardware_rt)
+           << "\nrt_bounce=" << settings.rt_bounce
+           << "\nvol_light=" << settings.vol_light
            << "\nvoxels=" << int(settings.voxels)
            << "\nshockwaves=" << int(settings.shockwaves) << "\nbrass=" << int(settings.brass) << "\nmuzzle_flash=" << int(settings.muzzle_flash)
            << "\npersistent_gore=" << int(settings.persistent_gore)

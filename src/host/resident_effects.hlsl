@@ -96,7 +96,7 @@ bool spritePixel(int2 p,int4 rect,uint bank){
     int2 p=int2(x-shift,y);
     uint pen=pixelCoverage ? arcade.Load(int3(p,0)) : 0;
     if(pen&0x4000)continue; // displayed world sprite, even inside a same-palette exit arrow
-    if(bank<0 || (backdrop && pixelCoverage && !(pen&4096)) || spritePixel(p,sprite,bank))
+    if(bank<0 || backdrop || spritePixel(p,sprite,bank))
      InterlockedOr(shadowBits[int2(x,y)],scorePanel?32:8);
    }
 }
@@ -369,6 +369,75 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   rgb+=tint*saturate(coverage)*.12;
  }
 }
+// Ray-traced bounce light (phase 1): world-locked 2D radiance cascades over the
+// light-map plane. giScene writes an emitter field (bright unlit sprite pixels:
+// shots, blasts, flashes; translucent so light never piles up) and a bounce field
+// (art albedo times the DXR direct irradiance, plus lit actors). giCascade marches
+// each cascade's ray interval top-down and merges the parent cascade; level 0 is
+// read here as indirect irradiance. Probe grids are anchored to world multiples of
+// their spacing so cascade structure does not crawl during camera pans.
+cbuffer GiParams : register(b1) {
+ uint giLevel,giLevels,giEnabled;float giEmitHeight;
+ float giGain,giEmit,giFlatten,giFalloff;
+ float giOcclude,giSpriteBounce,giBounceScale,giFogGain;
+ int2 giCamera; float giPadA; uint giPadB;
+ // Light-emitting sprite boxes (x0,y0,x1,y1): player projectiles (OIDs
+ // 4201..4206) and the explosion lights already submitted to DXR.
+ uint giEmitterCount,giFogOn; float giFogHaze,giFogSmoke;
+ float4 giEmitters[64];
+};
+bool giEmitterAt(uint2 p){
+ float2 q=float2(p)+.5;
+ for(uint i=0;i<giEmitterCount;++i)
+  if(all(q>=giEmitters[i].xy) && all(q<giEmitters[i].zw))return true;
+ return false;
+}
+Texture2D<float4> giCascadeRead : register(t18);
+Texture2D<float2> giLuma : register(t19);
+Texture2D<float4> giEmitField : register(t20);
+Texture2D<float4> giBounceField : register(t21);
+uint2 giProbes(uint level){
+ uint s=1u<<level;
+ return uint2((width+s-1)/s+1,(height+s-1)/s+1);
+}
+float3 giIrradiance(uint2 p){
+ if(!giEnabled)return 0;
+ uint2 probes=giProbes(0);
+ float3 sum=0;
+ [unroll]for(uint d=0;d<4;++d)
+  sum+=giCascadeRead.Load(int3(uint2(d&1,d>>1)*probes+p,0)).rgb;
+ return sum*(.25*giGain);
+}
+// Painted-in shading: compare local (16 px) and regional (64 px) background
+// luminance and pull the art part-way back towards its regional level, so DXR and
+// bounce light are not applied on top of light already painted into the artwork.
+float giAlbedoScale(uint2 p){
+ if(!giEnabled || giFlatten<=0)return 1;
+ float2 uv=(float2(p)+.5)/float2(width,height);
+ float2 local=giLuma.SampleLevel(smokeSampler,uv,4.);
+ float2 region=giLuma.SampleLevel(smokeSampler,uv,6.);
+ if(local.y<.25 || region.y<.25)return 1;
+ float l=local.x/local.y,r=region.x/region.y;
+ return clamp(pow(max(r,.03)/max(l,.03),giFlatten),.85,1.18);
+}
+// Half-resolution ray-traced in-scatter (dxr_lighting.hlsl inscatter), stored
+// right of the ground irradiance at x = 560, upsampled bilinearly.
+float3 giVolumetric(uint2 p){
+ uint2 halfSize=uint2((width+1)/2,(height+1)/2);
+ float2 q=(float2(p)+.5)*.5-.5;
+ int2 b=int2(floor(q));float2 f=q-float2(b);
+ float3 s=0;
+ [unroll]for(uint j=0;j<4;++j){
+  int2 o=int2(j&1,j>>1);
+  int2 c=clamp(b+o,int2(0,0),int2(halfSize)-1);
+  s+=dxrLight.Load(int3(int2(560,0)+c,0)).rgb*((o.x?f.x:1-f.x)*(o.y?f.y:1-f.y));
+ }
+ return s;
+}
+float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float specBase,float specScale){
+ float3 albedo=rgb*giAlbedoScale(p);
+ return lightShoulder(albedo*(groundLight+giIrradiance(p))+groundSpec*(specBase+specScale*rgb));
+}
 [numthreads(8,8,1)] void composite(uint3 id:SV_DispatchThreadID) {
  if(id.x>=width||id.y>=height)return;
  uint original=originalPixel(id.xy);
@@ -427,7 +496,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
      if(at.y<256)shine+=dxrLight.Load(int3(at+int2(1024,256),0)).rgb*w;
     }
     body.rgb=bodySum/max(weight,1e-4);shine/=max(weight,1e-4);
-    lit=inkColor*body.rgb+shine*((tag&128)?.55:.16);
+    lit=inkColor*(body.rgb+giIrradiance(id.xy)*giSpriteBounce)+shine*((tag&128)?.55:.16);
    }else{
     float k=.55*(1-smoothstep(.55,.95,max(inkColor.r,max(inkColor.g,inkColor.b))));
     lit=inkColor*lerp(float3(1,1,1),groundLight,k);
@@ -441,16 +510,16 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
  cinemaRgb=roomCinema(cinemaRgb,id.xy,protectedHud || (visibleSprite && !scorePanel),departing);
  uint3 cinema8=(uint3)(saturate(cinemaRgb)*255+.5);
  original=(cinema8.x<<16)|(cinema8.y<<8)|cinema8.z;
- float3 sceneTint=dxrOn?min(groundLight,1.6):1;
+ float3 sceneTint=dxrOn?min(groundLight+giIrradiance(id.xy),1.6):1;
  uint tile=(id.y/16)*tileWidth+id.x/16;
  uint overlays=tiles[tile*55+54];
  bool spriteEffect=((overlays&1) && (mask&(1u<<20))) || ((overlays&2) && (mask&1024));
  bool protectedSprite=visibleSprite && !scorePanel && !spriteEffect;
  bool combatProtected=protectedHud || (visibleSprite && !scorePanel);
  if(protectedSprite || protectedHud || mask==0 ||
-    id.x<4||id.x>=width-4||(id.y<25 && !scorePanel)||id.y>=height-4){
+    id.x<4||id.x>=width-4||id.y<4||id.y>=height-4){
   if(dxrOn && !visibleSprite){
-   float3 lit=lightShoulder(float3((original>>16)&255,(original>>8)&255,original&255)/255.*groundLight+groundSpec*.42);
+   float3 lit=giGround(float3((original>>16)&255,(original>>8)&255,original&255)/255.,id.xy,groundLight,groundSpec,.42,0);
    uint3 c8=(uint3)(saturate(lit)*255+.5);original=(c8.x<<16)|(c8.y<<8)|c8.z;
   }
   float3 direct=float3((original>>16)&255,(original>>8)&255,original&255)/255.;
@@ -472,7 +541,11 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
             (spriteAtOutput(id.xy-uint2(0,1))?1:0)+(spriteAtOutput(id.xy+uint2(0,1))?1:0);
   float3 color=lerp(float3(1,1,1),roomTint(pixelMood),.5);
   float3 lit=max(sceneTint,float3(.72,.72,.72));
-  rgb+=color*lit*edge*(.010+.008*rimLevel);
+  // Overhead room lights: the edge facing up the screen takes the strong rim,
+  // the sides a weaker one, the underside none.
+  float top=spriteAtOutput(id.xy-uint2(0,1))?0.:1.;
+  float rimGain=(.012+.010*rimLevel)*(.45+1.9*top);
+  rgb+=color*lit*edge*rimGain;
  }
  if(!frontWall && !visibleSprite && !scorePanel && contactLevel && (shadows[id.xy]&16))
   rgb*=1-(.035+.025*contactLevel);
@@ -565,8 +638,6 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   }
  }
  if((!visibleSprite || scorePanel) && (mask&65536)){
-  int2 grate=int2(id.xy)-int2(vent.xy);
-  if(vent.z && !owner && !scorePanel && abs(grate.x)<4 && abs(grate.y)<6)rgb=(grate.y&1)?float3(.27,.29,.32):float3(.08,.09,.105);
   float4 fog=smokeField.SampleLevel(smokeSampler,(float2(id.xy)+.5)/(ceil(float2(width,height)/4)*4),0);
   if(fog.z>.012){
    float2 pos=(float2(id.xy)-fog.xy*.22)*.095+float2(tick*.004,-tick*.003);
@@ -588,7 +659,7 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
    rgb=lerp(rgb,scatter,opacity);
   }
  }
- if(dxrOn && !visibleSprite)rgb=lightShoulder(rgb*groundLight+groundSpec*(.42+.4*rgb));
+ if(dxrOn && !visibleSprite)rgb=giGround(rgb,id.xy,groundLight,groundSpec,.42,.4);
  uint base=tile*55;
  uint groups=tiles[base], slots=0, group=0,slotBase=0;
  uint brassGroups=(mask&(512|262144))?tiles[base+33]:0;
@@ -606,6 +677,8 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
   if(state.pos.w<=0)continue;
   Particle p;p.shape=float4(state.pos.x,state.pos.y-state.pos.z,state.color.w,state.misc.x);
   uint kind=(uint)state.misc.x;
+  // The life/score HUD sits above all gore, spray and debris.
+  if(scorePanel)continue;
   if(visibleSprite && kind!=10 && (kind==20 ? (ink&0xfc0)!=uint(state.misc.w) : !scorePanel))continue;
   float fadeTime=(kind==3 || kind==4 || kind==16)?.8:.4;
   p.color=float4(state.color.rgb,saturate(state.pos.w/fadeTime));p.phase=float4(state.pos.w/state.vel.w,state.pos.z,state.pos.y,0);
@@ -828,6 +901,15 @@ void applyCombatGlyphs(inout float3 rgb,float2 p){
                                              1+.004*gradeLevel+roomSeed*.003,
                                              1-.003*gradeLevel-roomSeed*.004)));
   rgb=lerp(rgb,graded,strength*3.25);
+ }
+ if(dxrOn && giFogOn && !scorePanel){
+  // Light scattered by thin room haze and by the live smoke field in front of
+  // the scene; the same air slightly dims what lies behind it.
+  float plume=(mask&65536)?smokeField.SampleLevel(smokeSampler,(float2(id.xy)+.5)/(ceil(float2(width,height)/4)*4),0).z:0;
+  float density=giFogHaze+giFogSmoke*saturate(plume*3);
+  // Soft shoulder: dense smoke in a hot beam glows without clipping to white.
+  float3 scatter=giVolumetric(id.xy)*density*giFogGain;
+  rgb=rgb*(1-density*.12)+scatter/(1+scatter*1.6);
  }
  if(!combatProtected)applyCombatGlyphs(rgb,float2(id.xy)+.5);
  uint3 c=(uint3)(saturate(rgb)*255+.5);outputImage[id.xy]=(c.x<<16)|(c.y<<8)|c.z;
@@ -1539,4 +1621,113 @@ bool smokeSolid(float2 p){
  if(smokeSolid(p+float2(sign(f.x)*4,0)))f.x*=-.32;
  if(smokeSolid(p+float2(0,sign(f.y)*4)))f.y*=-.32;
  smokeNext[id.xy]=clamp(f,float4(-135,-135,0,0),float4(135,135,2.3,2));
+}
+
+// ---- Radiance cascade passes (see GiParams above) ----
+RWTexture2D<float4> giEmitWrite : register(u0);
+RWTexture2D<float4> giBounceWrite : register(u1);
+RWTexture2D<float2> giLumaWrite : register(u2);
+[numthreads(8,8,1)] void giScene(uint3 id:SV_DispatchThreadID){
+ if(id.x>=width||id.y>=height)return;
+ uint2 p=id.xy;
+ float4 emit=0;float3 bounce=0;float2 luma=0;
+ bool hud=p.y<25 || (shadows[p]&8)!=0;
+ if(!hud){
+  float3 c=decoded(originalPixel(p));
+  float maxc=max(c.r,max(c.g,c.b)),minc=min(c.r,min(c.g,c.b));
+  if(spriteAtOutput(p)){
+   float4 body=dxrLight.Load(int3(p+uint2(1024,0),0));
+   uint tag=uint(round(body.a*255));
+   uint ink=arcade.Load(int3(int2(p)-int2(sourceMode==2?68:0,0),0));
+   float luminance=dot(c,float3(.3,.59,.11));
+   if(giEmitterAt(p)){
+    // A shot or blast: its visible pixels are the light source.
+    float density=smoothstep(.35,.8,luminance)*.9;
+    emit=float4(c*c*giEmit*6*density,density);
+   }else if(tag && (tag&127)==1+((ink&4032)>>6)){
+    // A lit actor blocks light and re-radiates its own lit colour.
+    bounce=c*body.rgb*giSpriteBounce;
+    emit.a=giOcclude;
+   }else{
+    // Unmatched bright sprite pixels (shots, blasts, flashes) are light sources.
+    // Gate on luminance, not the brightest channel: saturated blood red is not a lamp.
+    float density=smoothstep(.64,.9,dot(c,float3(.3,.59,.11)))*.9;
+    emit=float4(c*c*giEmit*6*density,density);
+   }
+  }else{
+   luma=float2(dot(c,float3(.3,.59,.11)),1);
+   float3 direct=dxrLight.Load(int3(p,0)).rgb;
+   bounce=c*direct*giBounceScale;
+   // Saturated, near-white art (neon strips, lamps, toxic pools) glows on its own.
+   float sat=(maxc-minc)/max(maxc,1e-3);
+   float density=smoothstep(.8,.98,maxc)*smoothstep(.45,.85,sat)*.25;
+   emit=float4(c*c*giEmit*.6*density,density);
+  }
+ }
+ giEmitWrite[p]=emit;
+ giBounceWrite[p]=float4(bounce,1);
+ giLumaWrite[p]=luma;
+}
+RWTexture2D<float4> giCascadeWrite : register(u0);
+float2 giCameraPhase(uint level){
+ return float2(uint2(giCamera)&((1u<<level)-1));
+}
+[numthreads(8,8,1)] void giCascade(uint3 id:SV_DispatchThreadID){
+ uint level=giLevel;
+ uint2 probes=giProbes(level);
+ uint side=2u<<level;
+ if(id.x>=probes.x*side||id.y>=probes.y*side)return;
+ uint2 dir2=id.xy/probes,probe=id.xy-dir2*probes;
+ uint dirs=side*side,d=dir2.y*side+dir2.x;
+ float spacing=float(1u<<level);
+ float2 origin=(float2(probe)+.5)*spacing-giCameraPhase(level);
+ float angle=(float(d)+.5)/float(dirs)*6.2831853;
+ float2 dir=float2(cos(angle),sin(angle));
+ float t0=(float(1u<<(2*level))-1)/3.,t1=(float(1u<<(2*level+2))-1)/3.;
+ float len=t1-t0;
+ uint steps=uint(ceil(len/max(1.,spacing*.5)));
+ float stepLen=len/float(steps);
+ float mip=max(0.,float(level)-1.);
+ float2 size=float2(width,height);
+ float h2=giFalloff*giFalloff,norm=2./(3.14159265*giFalloff);
+ float3 rad=0;float T=1;
+ for(uint i=0;i<steps;++i){
+  float t=t0+(float(i)+.5)*stepLen;
+  float2 pos=origin+dir*t;
+  if(any(pos<0) || any(pos>=size)){T=0;break;}
+  float2 uv=pos/size;
+  float4 em=giEmitField.SampleLevel(smokeSampler,uv,mip);
+  float3 bo=giBounceField.SampleLevel(smokeSampler,uv,mip).rgb;
+  // Diffuse bounce: an integrable falloff (unit integral) so uniformly lit
+  // surroundings return their own colour instead of growing with ray length.
+  rad+=T*bo*(stepLen*norm*h2/(h2+t*t));
+  float a=1-exp(-em.a*stepLen);
+  // Emitters hang giEmitHeight above the floor: the flatland gather (source
+  // angle ~ size/t) times 2.83*h^2*max(t,.7h)/(h^2+t^2)^1.5 gives a raised point
+  // source's floor irradiance, a bright pool that falls off like a real lamp.
+  float he=giEmitHeight;
+  float lift=2.83*he*he*max(t,.7*he)/pow(he*he+t*t,1.5);
+  rad+=T*(em.a>1e-5?em.rgb/em.a:0)*a*lift;
+  T*=1-a;
+  if(T<.01){T=0;break;}
+ }
+ if(level+1<giLevels && T>0){
+  uint up=level+1;
+  uint2 pu=giProbes(up);
+  uint sideU=2u<<up;
+  float2 g=(origin+giCameraPhase(up))/(spacing*2)-.5;
+  int2 b=int2(floor(g));float2 f=g-float2(b);
+  float3 acc=0;
+  [unroll]for(uint k=0;k<4;++k){
+   uint dc=d*4+k;uint2 dd=uint2(dc%sideU,dc/sideU);
+   [unroll]for(uint j=0;j<4;++j){
+    int2 o=int2(j&1,j>>1);
+    int2 q=clamp(b+o,int2(0,0),int2(pu)-1);
+    float w=(o.x?f.x:1-f.x)*(o.y?f.y:1-f.y);
+    acc+=giCascadeRead.Load(int3(int2(dd*pu)+q,0)).rgb*w;
+   }
+  }
+  rad+=T*acc*.25;
+ }
+ giCascadeWrite[id.xy]=float4(rad,T);
 }
