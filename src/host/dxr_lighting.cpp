@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <cmath>
@@ -504,8 +505,39 @@ struct DxrLighting::Impl {
     }
 };
 DxrLighting::DxrLighting() = default;
-DxrLighting::~DxrLighting() = default;
-bool DxrLighting::prepare(ID3D11Device *dev, ID3D11DeviceContext *ctx) {
+DxrLighting::~DxrLighting() {
+    if (pending_.valid())
+        pending_.wait();
+}
+bool DxrLighting::take(bool wait) {
+    if (!pending_.valid())
+        return true;
+    if (!wait && pending_.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return false;
+    pending_.get();
+    impl_ = std::move(built_);
+    if (!impl_ && error_.empty())
+        error_ = builtError_.empty() ? "DXR preparation failed" : builtError_;
+    return true;
+}
+void DxrLighting::prepare_async(ID3D11Device *dev, ID3D11DeviceContext *ctx) {
+    if (impl_ || pending_.valid() || !error_.empty())
+        return;
+    ComPtr<ID3D11Device> owner(dev);
+    ComPtr<ID3D11DeviceContext> context(ctx);
+    pending_ = std::async(std::launch::async, [this, owner, context] {
+        try {
+            auto next = std::make_unique<Impl>();
+            next->init(owner.Get(), context.Get());
+            built_ = std::move(next);
+        } catch (const std::exception &e) {
+            builtError_ = e.what();
+        }
+    });
+}
+bool DxrLighting::prepare(ID3D11Device *dev, ID3D11DeviceContext *ctx, bool wait) {
+    if (!take(wait))
+        return false;
     if (impl_)
         return error_.empty();
     if (!error_.empty())

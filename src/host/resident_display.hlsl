@@ -40,7 +40,9 @@ float4 ps(V v):SV_Target{
   rgb=saturate(rgb+(rgb-neighbors)*sharpen*.2);
   if(glow>0){float3 bloom=0;[unroll]for(int y=-2;y<=2;y++)[unroll]for(int x=-2;x<=2;x++){float3 c=sampleImage(uv+float2(x/sw,y/sh));bloom+=max(0,c-.55);}rgb+=bloom*glow*.018;}
  }
- if(mode==3){float scan=1-.45*(1-sin(3.14159265*frac(uv.y*sh)));int phosphor=int(v.p.x)%3;rgb*=scan*float3(phosphor==0?1:.8,phosphor==1?1:.8,phosphor==2?1:.8);}
+ // Scanlines follow source lines; fade them when there are too few output rows
+ // per line to resolve the profile. The phosphor triplet widens with resolution.
+ if(mode==3){float depth=.45*saturate((dh/sh-1.5)/1.5);float scan=1-depth*(1-sin(3.14159265*frac(uv.y*sh)));int phosphor=int(v.p.x/max(1.,round(dh/1080.)))%3;rgb*=scan*float3(phosphor==0?1:.8,phosphor==1?1:.8,phosphor==2?1:.8);}
  float edgeDistance=min(min(v.uv.x,v.uv.y),min(1-v.uv.x,1-v.uv.y));
  if(!protect){
   rgb*=1-vignette*.42*(1-smoothstep(0,.24,edgeDistance));
@@ -48,4 +50,4 @@ float4 ps(V v):SV_Target{
  }
  return float4(saturate(rgb),1);
 }
-float4 overlayPS(V v):SV_Target {float3 c=overlay.Load(int3(int2(v.p.xy),0)).rgb;if(all(abs(c-float3(1,0,1))<.001))discard;return float4(c,1);}
+float4 overlayPS(V v):SV_Target {float3 c=overlay.Load(int3(int2(v.p.xy),0)).rgb;if(all(abs(c-float3(1,0,1))<.001))discard;if(all(abs(c-float3(1,0,128./255.))<.002))return float4(.012,.02,.035,.64);return float4(c,1);}

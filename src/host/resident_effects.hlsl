@@ -96,7 +96,7 @@ bool spritePixel(int2 p,int4 rect,uint bank){
     int2 p=int2(x-shift,y);
     uint pen=pixelCoverage ? arcade.Load(int3(p,0)) : 0;
     if(pen&0x4000)continue; // displayed world sprite, even inside a same-palette exit arrow
-    if(bank<0 || backdrop || spritePixel(p,sprite,bank))
+    if(bank<0 || (backdrop && !(pen&4096)) || spritePixel(p,sprite,bank))
      InterlockedOr(shadowBits[int2(x,y)],scorePanel?32:8);
    }
 }

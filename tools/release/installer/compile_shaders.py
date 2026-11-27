@@ -13,7 +13,9 @@ def compile_shaders(fxc, output):
     header = ["#pragma once", "#include <cstddef>", "namespace resident_shader {"]
     stages = [(entry, "cs", "effects") for entry in COMPUTE]
     stages.extend([("vs", "vs", "display"), ("ps", "ps", "display"),
-                   ("overlayPS", "ps", "display")])
+                   ("overlayPS", "ps", "display"),
+                   ("menuScenePS", "ps", "menu"), ("menuBlitPS", "ps", "menu"),
+                   ("menuGlowPS", "ps", "menu")])
     with tempfile.TemporaryDirectory() as scratch:
         blob = Path(scratch) / "shader.cso"
         for entry, stage, source in stages:

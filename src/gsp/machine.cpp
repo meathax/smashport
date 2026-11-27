@@ -225,6 +225,7 @@ void Machine::reset() {
     aim_inputs.fill(0);
     shot_aim.fill(0);
     shot_muzzles.fill(0);
+    variants = VariantState{};
     c = Cpu{};
     c.st = 0x10;
     io.fill(0);
@@ -446,6 +447,7 @@ void Machine::render_line(int scanline) {
     u16* shown=presentation_frame.empty()?nullptr:presentation_frame.data()+usize(scanline)*vram_w;
     u16* clean=shown?presentation_without_blobs.data()+usize(scanline)*vram_w:nullptr;
     if (!enabled) {
+        if (skip_pixels) return;
         std::fill(dest, dest + vram_w, 0);
         if(shown){std::fill_n(shown,vram_w,0);std::fill_n(clean,vram_w,0);}
         return;
@@ -469,6 +471,11 @@ void Machine::render_line(int scanline) {
             }
             return true;
         });
+    }
+    if (skip_pixels) {
+        autoerase_line(rowaddr - 1);
+        if (scanline == VIS_MAXY) autoerase_line(rowaddr);
+        return;
     }
     // Clear only the columns outside the displayed span; the loop below writes
     // every column inside it (same contents as a full-line clear first).
@@ -567,12 +574,16 @@ void Machine::dma_write(u32 idx, u16 v) {
 
 void Machine::dma_draw(u16 command, int width, int height, int xpos, int ypos, s32 rowbytes, u32 offset,
                        u16 pal, u16 colorlo) {
-    if (enhanced && (offset >> 3) >= aim_graphics_base && (command & 0x3f) == 2) {
-        draw_aimed_sprite(offset >> 3, width, height, xpos, ypos, rowbytes, pal);
-        return;
-    }
     // DMAINT loads B14 past the five-longword record before launching it.
     const u32 record=c.b[14]-display_record_bits-display_queue_base;
+    dma_tint=0;
+    if(variants_active() && record<display_records*display_record_bits && record%display_record_bits==0)
+        dma_tint=variant_draw_tint(variants.queue_node[record/display_record_bits]);
+    if (enhanced && (offset >> 3) >= aim_graphics_base && (command & 0x3f) == 2) {
+        draw_aimed_sprite(offset >> 3, width, height, xpos, ypos, rowbytes, pal);
+        dma_tint=0;
+        return;
+    }
     const u8 foreground=!display_queue_coverage.empty() && record<display_records*display_record_bits &&
                         record%display_record_bits==0 ? display_queue_coverage[record/display_record_bits] : 0;
     const int dx = (command & 0x10) ? -1 : 1;
@@ -615,7 +626,7 @@ void Machine::dma_draw(u16 command, int width, int height, int xpos, int ypos, s
                 else if(!under)under=has_shadow_underlay|display_pen(dest[x])|(u16(sprite_coverage[cell])<<12);
                 sprite_coverage[cell]=foreground;
             }
-            dest[x]=v;
+            dest[x]=dma_tint ? variant_pen(v,dma_tint) : v;
         };  // MAME indexes dest[tx] unchecked; x is clipped above
         switch (command) {
         case 0x00: break;
@@ -634,6 +645,7 @@ void Machine::dma_draw(u16 command, int width, int height, int xpos, int ypos, s
         default: for (int x = 0; x < width; ++x, tx += dx) put(color); break;
         }
     }
+    dma_tint=0;
 }
 
 // ---------------------------------------------------------------- TMS34010 I/O registers
@@ -694,7 +706,7 @@ void Machine::io_write(u32 idx, u16 data) {
 }
 
 // ---------------------------------------------------------------- bus
-u16 Machine::rw(u32 a) {
+u16 Machine::rw_slow(u32 a) {
     const u32 w = a >> 4;
     if (a >= 0x01000000u && a < 0x01100000u) return ram[(a - 0x01000000u) >> 4];
     if (a >= PROG_BASE) return prog[(a - PROG_BASE) >> 4];
@@ -737,6 +749,8 @@ void Machine::ww(u32 a, u16 v) {
            (a-object_pool_base)%object_stride==0x150 && dst!=v)
             on_object(ObjectEvent::Retag,a-0x150,v);
         const u32 q=a-display_queue_base;
+        if(variants_active() && q<display_records*display_record_bits && q%display_record_bits==0)
+            variants.queue_node[q/display_record_bits]=c.a[0];   // DCLIPL: A0 is the queued object
         if(!display_queue_coverage.empty() && q<display_records*display_record_bits && q%display_record_bits==0){
             // DCLIPL queues A0's clipped image. Its return address identifies
             // OBJLST versus BAKLST even when a transparent image uses bank zero.
@@ -783,6 +797,7 @@ void Machine::ww(u32 a, u16 v) {
         const u32 k = (a - 0x01800000u) >> 4;
         palette[k] = v;
         pens[k & 0x0fff] = pen_rgb(v);
+        ++palette_epoch;
         return;
     }
     if ((a & ~0x00080000u) >= 0x01a00000u && (a & ~0x00080000u) < 0x01a000a0u) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <d3d11.h>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <span>
 #include <string>
@@ -13,7 +14,12 @@ class DxrLighting {
   public:
     DxrLighting();
     ~DxrLighting();
-    bool prepare(ID3D11Device *, ID3D11DeviceContext *);
+    // wait=false: if a background preparation is still running, return false
+    // (no ray tracing this frame) instead of blocking the caller.
+    bool prepare(ID3D11Device *, ID3D11DeviceContext *, bool wait = true);
+    // Build the D3D12 device, queue, fences and pipeline on a worker thread.
+    // The D3D11 device is free-threaded; the context is only queried.
+    void prepare_async(ID3D11Device *, ID3D11DeviceContext *);
     // coverage: one bit per light-map pixel (32 words per row) marking sprite
     // pixels, optionally followed by 256 words/row of packed palette-owner bytes.
     // Empty selects the elliptical fallback silhouette.
@@ -27,7 +33,9 @@ class DxrLighting {
 
   private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
-    std::string error_;
+    bool take(bool wait);
+    std::unique_ptr<Impl> impl_, built_;
+    std::string error_, builtError_;
+    std::future<void> pending_;
 };
 } // namespace stv::host

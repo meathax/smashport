@@ -13,8 +13,8 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
-HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state snd/board snd/audio snd/voices game/cosched
-net/rollback net/udp net/lobby host/pc_menu host/pc_settings host/video_filter
+HOST = """base zip gsp/machine gsp/gfx gsp/run gsp/state gsp/variants snd/board snd/audio snd/voices game/cosched
+net/rollback net/udp net/lobby host/pc_menu host/pc_settings host/variant_toast host/video_filter
 host/enhance host/gpu_effects host/ray_scene host/room_lighting host/gpu_resident host/dxr_lighting host/gpu_filter
 host/win_main host/wasapi host/audio_fx""".split()
 GENERATOR = """tools/player/prepare.py tools/player/l8_locations.json tools/gsp2cpp/compare.py
@@ -205,17 +205,18 @@ def runtime(stage, eos, config):
         copy(eos / "ThirdPartyNotices/ThirdPartySoftwareNotice.txt", rt / "licenses/EOS.txt")
     for lib in ("ymfm", "tmnt-port", "arcade-lan-lobby"):
         copy(ROOT / "third_party" / lib / "LICENSE", rt / "licenses" / (lib + ".txt"))
+    copy(ROOT / "third_party/fonts/pressstart2p/OFL.txt", rt / "licenses/PressStart2P-OFL.txt")
     copy(ROOT / "THIRD_PARTY_NOTICES.md", rt / "licenses/THIRD_PARTY_NOTICES.md")
 
 
 def check_host_sources(eos):
-    """Every player host/net source must be precompiled into the kit; a new file
+    """Every player host/net/gsp source must be precompiled into the kit; a new file
     left out of HOST would only fail at the end user's first-run link."""
-    compiled = set(HOST) | {"net/handshake"}  # handshake is compiled during setup
+    compiled = set(HOST) | {"net/handshake", "gsp/enhanced"}  # both are compiled during setup
     if eos:
         compiled.add("net/epic_rooms")
     present = {p.relative_to(ROOT / "src").with_suffix("").as_posix()
-               for d in ("host", "net") for p in (ROOT / "src" / d).glob("*.cpp")}
+               for d in ("host", "net", "gsp") for p in (ROOT / "src" / d).glob("*.cpp")}
     if not eos:
         present.discard("net/epic_rooms")
     # The Windows kit always uses win_main. SDL can supply pad input there.

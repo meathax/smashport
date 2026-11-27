@@ -644,7 +644,7 @@ def main():
     if len(stages)!=48 or {(s["circuit"],s["wave"]) for s in stages}!=required:
         raise SystemExit("stage balance requires all 48 retail rooms")
     population = ["// Generated from data/enhanced_stage_balance.json; private retail data.",
-                  "struct StagePopulation { u32 address; std::array<u16,6> original; u16 budget; };",
+                  "struct StagePopulation { u32 address; std::array<u16,6> original; u16 budget; u16 release; u16 onscreen; };",
                   "constexpr StagePopulation stage_population[] = {"]
     for stage in stages:
         for row in stage["rows"]:
@@ -653,9 +653,15 @@ def main():
                 row["original"] = W[start:start + 6]
             if row.get("budget") is None:
                 row["budget"] = row["original"][1]
-            if len(row["original"])!=6 or any(not 0<=v<=65535 for v in row["original"]+[row["budget"]]):
+            # Optional authored release sleep and wave-start on-screen count
+            # (tools/balance/widescreen_balance_model.py); default to retail.
+            release = row.get("release", row["original"][3])
+            onscreen = row.get("onscreen", row["original"][4])
+            if len(row["original"])!=6 or any(not 0<=v<=65535 for v in row["original"]+[row["budget"],release,onscreen]):
                 raise SystemExit("invalid stage balance row")
-            population.append("    {%su, {%s}, %d}," % (row["address"], ",".join(map(str,row["original"])),row["budget"]))
+            if (release<1 and release!=row["original"][3]) or ("onscreen" in row and onscreen!=row["budget"]):
+                raise SystemExit("invalid stage balance release/on-screen value")
+            population.append("    {%su, {%s}, %d, %d, %d}," % (row["address"], ",".join(map(str,row["original"])),row["budget"],release,onscreen))
     population += ["};", ""]
     # Only locations, widths and strides ship. Read comparison tables from the selected image.
     from retail_tables import table_initializers
@@ -701,6 +707,59 @@ def main():
         0xffe60cc0: (201, 2),   # SNDLDX        (exit: accepted or dropped)
     }
     sound_emitted = set()
+    # Weapon/power-up variants (src/gsp/variants.cpp, docs/WEAPON_VARIANTS.md).
+    # Every hook is guarded by m.variants_active() (enhanced profile and an
+    # enabled variant mode); the retail instruction is the default path. A
+    # nonzero result redirects to another retail PC. "after" hooks run after
+    # the named statement of a register load (orbit and saw-count overrides).
+    variant_sites = {
+        0xffe0a440: ("CLR A0", None),                          # PRCDSP after L_TIMER: once per dispatch pass
+        0xffe0ac50: ("MOVE A0,*A13,1", "MPROC.ASM:219"),        # GETPRC: tag the new process
+        0xffed6990: ("MOVE A0,A8", None),                      # SEND_ICON after DO_ALL_STUFF: roll the icon
+        0xffed25d0: ("MMTM SP,A1,A7,A10,A14,SP", "POW1.ASM:64"),   # POW1ON  (blades)
+        0xffed3ba0: ("MOVE A0,A9", "POW2.ASM:76"),                 # POW2ON  (helper / default gun)
+        0xffe31a80: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:791"), # SPRAYON
+        0xffe31cc0: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:810"), # PODON
+        0xffe27880: ("MMTM SP,A1,A7,A10,A14,SP", "SCORE.ASM:81"),  # EXTRA
+        0xffe31700: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:765"), # GRENON
+        0xffe2fd40: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:536"), # RINGON
+        0xffe314c0: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:748"), # NSTPON  (rockets)
+        0xffe30230: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:577"), # SHOEON
+        0xffe30450: ("MMTM SP,A1,A7,A10,A14,SP", "SHOTS.ASM:597"), # SMRTON
+        0xffe27920: ("CALLR {REL}", "SCORE.ASM:88"),           # EXTRA: CALLR DO_EXTRA
+        0xffe28150: ("MOVB *A10({W1}),A0", "SCORE.ASM:166"),   # FILLUP after GETCNT
+        0xffe337a0: ("MOVB *A13({W1}),A11", "SHOTS.ASM:953"),  # STRT_WPN
+        0xffe33c10: ("MOVE *A13({W1}),A0,1", "SHOTS.ASM:985"), # spray: after the third CREATE WPN2
+        0xffe34320: ("RETS", "SHOTS.ASM:1054"),                # grenade: after CREATE WPN4
+        0xffe34450: ("MOVE *A13({W1}),A0,1", "SHOTS.ASM:1067"),# rockets: after CREATE WPN5
+        0xffe36c60: ("MOVI {L1},A2", "SHOTS.ASM:1558"),        # NEED: spray velocity loaded
+        0xffe373d0: ("CALLA {L1}", "SHOTS.ASM:1674"),          # DO_IT BEGINOBJ2 (after analog aim)
+        0xffe37400: ("MOVI {L1},A2", "SHOTS.ASM:1678"),        # LP_TP bullet loop
+        0xffe374a0: ("MOVE A0,A10", "SHOTS.ASM:1685"),         # LP_TP wall
+        0xffe36510: ("CALLA {L1}", "SHOTS.ASM:1480"),          # DOME BEGINOBJ2 (after analog aim)
+        0xffe36540: ("MOVI {L1},A9", "SHOTS.ASM:1483"),        # DOME: pod object created
+        0xffe365d0: ("MOVE A0,*A8({W1}),1", "SHOTS.ASM:1489"), # W3_TP: pod fuse expired
+        0xffe35160: ("CALLA {L1}", "SHOTS.ASM:1250"),          # WPN4 BEGINOBJ2 (after analog aim)
+        0xffe35c10: ("CLR A0", "SHOTS.ASM:1364"),              # BLW2 grenade impact
+        0xffe346f0: ("CALLA {L1}", "SHOTS.ASM:1102"),          # DO_MISS BEGINOBJ2 (after analog aim)
+        0xffe34720: ("MOVI {L1},A2", "SHOTS.ASM:1106"),        # LPZ_TP rocket loop
+        0xffe347c0: ("MOVE A0,A10", "SHOTS.ASM:1113"),         # LPZ_TP wall
+        0xffe557c0: ("MOVE B1,B1", "COLL2.ASM:371"),           # ColLists: both collision routines chosen
+        0xfff2bb40: ("MOVI {L1},A2", "ROBOTS.ASM:202"),        # RBT_EXP: killer process in A10
+        0xffe19560: ("MOVE @{L1},A10,0", "ROBO.ASM:1391"),     # KILL_PLYR: confirmed kill
+        0xffe10af0: ("MOVB A9,*A13({W1})", "ROBO.ASM:378"),    # RINGS entry
+        0xffe30360: ("MOVE A1,*A0({W1}),0", "SHOTS.ASM:587"),  # SHOEON: SHOECNT store
+        0xffe1ff50: ("MOVE A1,*A8({W1}),1", None),             # STUFF_VEL (after analog velocity)
+        0xffed2890: ("MOVK 5h,A11", "POW1.ASM:88", "c.a[11]=5u;"),      # DOSAWS saw count (after)
+        0xffed2b90: ("MOVK 5h,A0", "POW1.ASM:124", "? 7u : 5u;"),       # ENCIRCLE orbit X (after)
+        0xffed2c20: ("MOVK 5h,A0", "POW1.ASM:130", "? 7u : 5u;"),       # ENCIRCLE orbit Y (after)
+        0xffed3920: ("CMPI {~W1},A1", "POW1.ASM:267"),         # CHAINHIT before CMPI MAXHITS
+        0xffed2cf0: ("MOVI {W1},A0", "POW1.ASM:139>SLOOP:280"),# ENCIRCLE: saw position stored
+        0xffed4090: ("MOVI {W1},A0", "POW2.ASM:131>SLOOP:280"),# helper ENCIRCLE: position stored
+    }
+    variant_after_aim = {0xffe373d0, 0xffe36510, 0xffe35160, 0xffe346f0, 0xffe1ff50}
+    variant_emitted = set()
+    variant_victims = 0
     balance_patched = set()
     data_patched = set()
     files = [chunks[i:i + per_file] for i in range(0, len(chunks), per_file)]
@@ -769,6 +828,11 @@ def main():
                         old = f"s16({int(pt['reference_imm'], 16)})"
                         new = f"s16({guard} ? {int(pt['enhanced_imm'], 16)} : {int(pt['reference_imm'], 16)})"
                         k = next((j for j, b in enumerate(body) if old in b), None)
+                    if k is None and i.text.startswith("MOVK "):
+                        # 5-bit MOVK constants are emitted as a plain decimal store.
+                        old = f"={int(pt['reference_imm'], 16)}u;"
+                        new = f"=({guard} ? {int(pt['enhanced_imm'], 16)}u : {int(pt['reference_imm'], 16)}u);"
+                        k = next((j for j, b in enumerate(body) if old in b), None)
                     if k is None:
                         raise SystemExit(f"patch point {pt['name']} at {i.pc:08x}: {old} not in emitted code")
                     body = list(body)
@@ -785,6 +849,7 @@ def main():
                     if event == "Insert":
                         # Presentation-only spawn anchor; no machine state changes.
                         body.insert(0, "m.object_inserted(c.a[0]);")
+                        body.insert(0, "if (m.variants_active()) m.variant_object_inserted(c.a[0]);")
                 if note in ("COLL2.ASM:375", "COLL2.ASM:382"):
                     if i.pc not in (0xffe55800, 0xffe55850):
                         raise SystemExit("Changed accepted collision dispatch")
@@ -794,6 +859,8 @@ def main():
                 if note in ("SHOTS.ASM:644", "SHOTS.ASM:654", "SHOTS.ASM:664", "SHOTS.ASM:674",
                             "SHOTS.ASM:683", "SHOTS.ASM:693", "SHOTS.ASM:703", "SHOTS.ASM:712", "SHOTS.ASM:722"):
                     body.insert(0, "if (m.on_object) m.on_object(ObjectEvent::SmartBombVictim, c.a[8], c.a[9]);")
+                    body.insert(0, "if (m.variants_active()) m.variant_hook(1u);")   # GoldRushBomb cash
+                    variant_victims += 1
                 # One notification at the confirmed arm separation or eye blowout.
                 wound_sites = {0xffef53f0: ("MUTOID.ASM:679>CREATE:301", 10),
                                0xffef5830: ("MUTOID.ASM:699>CREATE:301", 10),
@@ -809,6 +876,10 @@ def main():
                     if note != "MPROC.ASM:219":
                         raise SystemExit("Changed retail process allocation owner")
                     body.insert(0, "if (m.enhanced && c.a[1]==286) m.latch_shot_aim();")
+                if i.pc == 0xffe1f640:  # UPDATE_PLYRXY TSTDN, after both X-boundary checks
+                    if i.text != "BTST 1h,A2":
+                        raise SystemExit("Changed retail vertical walk test")
+                    body.insert(0, "if (m.enhanced) m.side_doorway_lock();")
                 if i.pc == 0xffe1f840:  # UPDATE_PLYRXY after both axis-boundary checks
                     if i.text != "MOVE A3,A5": raise SystemExit("Changed retail walk direction")
                     body.insert(0, "if (m.enhanced) m.analog_walk_facing();")
@@ -837,6 +908,21 @@ def main():
                     if note != f"SHOTS.ASM:{line}":
                         raise SystemExit(f"Changed analog weapon owner at {i.pc:08x}: {note}")
                     body.insert(0, f"if (m.enhanced) {hook};")
+                if i.pc in variant_sites:
+                    site = variant_sites[i.pc]
+                    if i.text != site[0] or (site[1] is not None and note != site[1]):
+                        raise SystemExit(f"Changed retail variant owner at {i.pc:08x}: {i.text} [{note}]")
+                    body = list(body)
+                    if len(site) > 2:
+                        k = [j for j, b in enumerate(body) if site[2] in b]
+                        if len(k) != 1:
+                            raise SystemExit(f"variant site {i.pc:08x}: expected one '{site[2]}'")
+                        body.insert(k[0] + 1, f"if (m.variants_active()) m.variant_hook({h(i.pc)});")
+                    else:
+                        hook = (f"if (m.variants_active()) {{ if (const u32 vr = m.variant_hook({h(i.pc)})) "
+                                "{ c.cyc += 1; return m.boundary(vr); } }")
+                        body.insert(1 if i.pc in variant_after_aim else 0, hook)
+                    variant_emitted.add(i.pc)
                 if i.pc in balance_hooks:
                     rule = balance_hooks[i.pc]
                     if not matches_reference(rule, "instruction", i.text) or not matches_reference(rule, "operands", [[o.kind,o.reg,o.value] for o in i.ops]):
@@ -882,6 +968,13 @@ def main():
                         body[line] = body[line].replace(old,
                             "u32 a=(m.enhanced && c.a[9]>=0xff000000u && c.a[9]<0xff800000u) ? "
                             "c.a[9]+0x00800000u : c.a[9],")
+                    elif rule.get("policy") == "continue_score_penalty":
+                        # P1GAMEDI/P2GAMEDI entry: once per buy-in, after the retail
+                        # score retain/clear decision. RAM-only; flags/cycles retail.
+                        pdata = int(rule["player_data"], 16)
+                        if pdata not in (0x01086220, 0x010863e0):
+                            raise SystemExit(f"continue penalty at {i.pc:08x}: unknown player data")
+                        body.insert(0, f"if (m.enhanced) enhanced_continue_penalty(m, {h(pdata)});")
                     else:
                         raise SystemExit(f"Unknown enhanced balance policy at {i.pc:08x}: {rule.get('policy')}")
                     balance_patched.add(i.pc)
@@ -928,6 +1021,11 @@ def main():
         raise SystemExit("unresolved enhancement scene-write sites")
     if sound_emitted != set(sound_sites):
         raise SystemExit("unresolved sound loader probe sites")
+    if variant_emitted != set(variant_sites) or variant_victims != 9:
+        missing = sorted(set(variant_sites) - variant_emitted)
+        raise SystemExit("unresolved weapon variant sites: " + ", ".join(f"{pc:08x}" for pc in missing) +
+                         f" (smart-bomb victims {variant_victims})")
+    print(f"weapon variant sites applied: {len(variant_emitted)} + {variant_victims} smart-bomb victims")
     print(f"native scene-bound refresh sites applied: {len(scene_patched)}")
     # dispatch
     d = ['// GENERATED by tools/gsp2cpp/emit.py. Private: do not redistribute.', '#include "stv/gsp/ops.hpp"',

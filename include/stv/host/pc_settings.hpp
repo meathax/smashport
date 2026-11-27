@@ -33,7 +33,10 @@ struct PcSettings {
     int run_ahead = 0; // offline speculative video frames, 0..3
     bool fullscreen = false;
     bool vsync = false;    // existing QPC/audio pacing remains the default
-    bool sync_presentation() const noexcept { return vsync || smooth_motion; }
+    // Unlocked: present as fast as the GPU allows (exclusive fullscreen, tearing).
+    // The game still advances at the arcade rate; camera motion is interpolated.
+    bool unlocked_fps = false;
+    bool sync_presentation() const noexcept { return !unlocked_fps && (vsync || smooth_motion); }
     bool show_fps = false;
     int volume = 100;
     bool muted = false;
@@ -42,6 +45,9 @@ struct PcSettings {
     int reverb = 1;               // 0 off, 1 studio, 2 arena
     bool audio_wide = true;       // stereo widening
     bool audio_hifi = true;       // analog-style smoothing, bass and limiter
+    // Weapon variants are not a setting: Widescreen always plays them at the
+    // balanced rate and Arcade never does (stv::gsp::kWidescreenVariantMode).
+    bool variant_notify = true;    // presentation only: pickup toast
     bool swap_pads = false;
     std::string player_name = "PLAYER";
     bool operator==(const PcSettings&) const = default;

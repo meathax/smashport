@@ -81,3 +81,18 @@ The SDL player and Windows gamepad backend (bundled as SDL3.dll) use SDL3 under 
 license. Recomp Achievements is pinned in
 `third_party/recomp_achievements/UPSTREAM.txt`. That directory retains the
 SDK license and the notices for its cJSON and rcheevos dependencies.
+
+## Press Start 2P pixel font (26 November 2026)
+
+The weapon-variant pickup notification draws its text with glyphs from
+**Press Start 2P**, copyright 2012 The Press Start 2P Project Authors
+(cody@zone38.net), Reserved Font Name "Press Start 2P", licensed under the SIL
+Open Font License 1.1. Source:
+`https://github.com/google/fonts/tree/main/ofl/pressstart2p`
+(`PressStart2P-Regular.ttf`, SHA-256
+`034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d`).
+The unmodified TTF and `OFL.txt` are kept in `third_party/fonts/pressstart2p/`;
+`tools/fonts/bake_pixel_font.py` rasterises printable ASCII at the native 8px
+grid into `include/stv/host/pixel_font_data.hpp` (a 1-bit bitmap table; the
+player carries no font file). The license is staged as
+`licenses/PressStart2P-OFL.txt`. The font is not sold on its own.

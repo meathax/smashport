@@ -56,7 +56,7 @@ if(STV_SANITIZE AND NOT MSVC)
 endif()
 # PC presentation and room UI, adapted from TMNT-port/arcade-lan. This library
 # owns no translated machine, simulation clock, snapshots or confirmed audio.
-add_library(stv_pc_frontend STATIC src/host/pc_menu.cpp src/host/pc_settings.cpp src/host/video_filter.cpp src/host/enhance.cpp src/host/gpu_effects.cpp src/host/ray_scene.cpp src/host/room_lighting.cpp src/host/audio_fx.cpp src/net/lobby.cpp)
+add_library(stv_pc_frontend STATIC src/host/pc_menu.cpp src/host/pc_settings.cpp src/host/variant_toast.cpp src/host/video_filter.cpp src/host/enhance.cpp src/host/gpu_effects.cpp src/host/ray_scene.cpp src/host/room_lighting.cpp src/host/audio_fx.cpp src/net/lobby.cpp)
 target_include_directories(stv_pc_frontend PUBLIC include PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(stv_pc_frontend PRIVATE STV_PLAYER_RELEASE=$<BOOL:${STV_PLAYER_RELEASE}>)
 if(WIN32)
@@ -94,7 +94,7 @@ if(WIN32)
  set(STV_SHADER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/resident_bytecode.hpp")
  add_custom_command(OUTPUT "${STV_SHADER_HEADER}"
    COMMAND "${Python3_EXECUTABLE}" "${STV_SHADER_BUILDER}" "${STV_FXC}" "${STV_SHADER_HEADER}"
-   DEPENDS "${STV_SHADER_BUILDER}" src/host/resident_effects.hlsl src/host/resident_display.hlsl
+   DEPENDS "${STV_SHADER_BUILDER}" src/host/resident_effects.hlsl src/host/resident_display.hlsl src/host/resident_menu.hlsl
    VERBATIM)
  add_custom_target(stv_resident_bytecode DEPENDS "${STV_SHADER_HEADER}")
  add_dependencies(stv_pc_frontend stv_resident_bytecode)
@@ -121,7 +121,7 @@ else()
  target_compile_options(stv_pc_frontend PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_library(stv_gsp STATIC src/gsp/machine.cpp src/gsp/gfx.cpp src/gsp/run.cpp src/gsp/enhanced.cpp src/gsp/state.cpp)
+add_library(stv_gsp STATIC src/gsp/machine.cpp src/gsp/gfx.cpp src/gsp/run.cpp src/gsp/enhanced.cpp src/gsp/state.cpp src/gsp/variants.cpp)
 target_include_directories(stv_gsp PUBLIC include PRIVATE "${STV_GENERATED}/l8")
 target_link_libraries(stv_gsp PUBLIC stv_base)
 # ---- Translated sound program (PLAN P6): MC6809E code from the user's sound ROMs,

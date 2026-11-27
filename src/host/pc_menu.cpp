@@ -122,6 +122,7 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::Enhance, "Enhance", Kind::Submenu);
         add(Item::Audio, "Audio", Kind::Submenu);
         add(Item::Controls, "Controls", Kind::Submenu);
+        add(Item::VariantNotify, "Variant notifications", Kind::Adjustment);
         if (in_game_) offline(Item::RestartGame, "Restart game", Kind::Command);
         if (!context.title_options) offline(Item::OperatorMenu, "Operator menu", Kind::Command);
         if (!context.title_options) add(Item::Quit, "Quit to desktop", Kind::Command, true, "", true);
@@ -131,6 +132,7 @@ std::vector<PcMenuRow> PcMenu::make_rows(const PcMenuContext& context) const {
         add(Item::Fullscreen, "Fullscreen", Kind::Adjustment);
         add(Item::PixelFilter, "Picture mode", Kind::Adjustment);
         add(Item::Scaling, "Scaling", Kind::Adjustment);
+        add(Item::FrameRate, "Frame rate", Kind::Adjustment);
         add(Item::Vsync, "VSync", Kind::Adjustment);
         add(Item::ShowFps, "Show FPS", Kind::Adjustment);
         add(Item::Motion, "Camera motion", Kind::Adjustment);

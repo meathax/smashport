@@ -18,9 +18,14 @@ namespace stv::host {
 inline constexpr std::size_t kMaxReplayBytes = 900'000;
 // Profile byte of a proof: 0 Classic, otherwise the Widescreen ruleset. Ruleset 1
 // is the v1.0.0-v1.0.4 balance; 2 is the 25 November 2026 player rebalance (speed,
-// fire cadence, special charges). Bump it whenever Widescreen gameplay rules change
-// so a verifier only replays proofs recorded under its own rules.
-inline constexpr std::uint8_t kWidescreenRuleset = 2;
+// fire cadence, special charges); 3 is the 27 November 2026 crowd rebalance
+// (about 2.25x enemies in larger gangs, 70% mines, more pickups); 4 is the
+// 27 November 2026 rule where Widescreen always plays weapon variants at the
+// balanced rate (stv::gsp::kWidescreenVariantMode); 5 is the 28 November 2026
+// pressure rebalance (172/172/192% budgets, 1.9x release, slower pickups). Bump it whenever
+// Widescreen gameplay rules change so a verifier only replays proofs recorded
+// under its own rules.
+inline constexpr std::uint8_t kWidescreenRuleset = 5;
 
 class ReplayProof {
 public:

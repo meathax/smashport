@@ -6,6 +6,7 @@
 // points and HCOUNT reads can be compared with reference recordings.
 #include "stv/gsp/core.hpp"
 #include "stv/gsp/object_lifecycle.hpp"
+#include "stv/gsp/variant_state.hpp"
 #include <array>
 #include <functional>
 #include <memory>
@@ -106,6 +107,9 @@ struct Machine {
     // Enhanced host input and immutable launch bearings by retail process pool slot.
     void analog_walk_facing();
     void analog_velocity();
+    // UPDATE_PLYRXY TSTDN: no vertical walk while still in a side doorway.
+    void side_doorway_lock();
+    bool in_side_doorway(u32 proc, u32 x);
     // MUTOID.GETY: redirect an action that would press the tank into a wall.
     void mutoid_wall_action();
     std::array<u16,2> move_inputs{};
@@ -152,12 +156,46 @@ struct Machine {
     std::function<void(u16)> on_hcount_read;
     std::function<void(ObjectEvent,u32,u32)> on_object; // subject and optional contact partner
     std::function<void()> on_vblank;       // MAME Lua frame_done point (vblank begin)
+    // Weapon/power-up variants (include/stv/gsp/variants.hpp). Host sets the
+    // mode from the options menu; 0 (Off) leaves retail pickups untouched and is
+    // forced when !enhanced. on_variant_pickup is presentation only (pickup
+    // notification): player 0/1, Variant id. It must not alter machine state.
+    std::uint8_t variant_mode{};
+    std::function<void(int, std::uint8_t)> on_variant_pickup;
+    // Gameplay owner (src/gsp/variants.cpp). Machine state, serialized by
+    // save_state when variants are on or the state is not empty.
+    VariantState variants;
+    bool variants_active() const { return enhanced && variant_mode != 0; }
+    // Retail hook point (tools/gsp2cpp/emit.py). Returns 0 to continue with the
+    // retail instruction, otherwise the PC to continue from.
+    u32 variant_hook(u32 pc);
+    void variant_object_inserted(u32 node);
+    bool variant_state_empty() const;
+    u32 variant_spawn(u32 prev, u16 pid, u32 wake, u32 a8, u32 a9, u32 a10, u32 a11);
+    // DMA recolour of variant-owned objects: 0, or 0xRRGGBB (bit 24 = icon flash).
+    u32 variant_draw_tint(u32 node) const;
+    u16 variant_pen(u16 vram_word, u32 tint);
+    u32 dma_tint{};             // transient: tint of the DMA record being drawn
+    u64 palette_epoch{1};       // bumps on palette writes; invalidates the pen cache
+    struct PenCacheEntry { u64 epoch{}; u32 key{}, tint{}; u16 value{}; };
+    std::vector<PenCacheEntry> variant_pen_cache;
     // SOUNDS.ASM SNDLD observation (0 passed SOUNDSUP with A0 = table, 1 accepted,
     // 2 exit). Host presentation only: the extended sound channels.
     std::function<void(int)> on_sound_probe;
 
     u64 now_ps() const { return c.cyc * PS_PER_CYCLE; }
-    u16 rw(u32 bitaddr);
+    // Work RAM and program ROM reads are the translated code's hot path and
+    // have no side effects: decode them inline, everything else out of line.
+    u16 rw(u32 bitaddr) {
+        if (bitaddr - 0x01000000u < 0x00100000u) return ram[(bitaddr - 0x01000000u) >> 4];
+        if (bitaddr >= 0xFF800000u) return prog[(bitaddr - 0xFF800000u) >> 4];
+        return rw_slow(bitaddr);
+    }
+    u16 rw_slow(u32 bitaddr);
+    // Host-owned, never saved: render_line keeps every side effect (muzzle
+    // markers, autoerase) but skips writing displayed pixels. Only for frames
+    // that are never shown (the unseen power-on boot).
+    bool skip_pixels = false;
     void ww(u32 bitaddr, u16 v);
     void note_big_field_quirk(u32 a, int size);
     void fault(const char* what, u32 addr);
@@ -203,5 +241,12 @@ private:
 // actor ownership before applying their enhanced-profile writes.
 bool enhanced_tank_reaction_parent(const Machine& m);
 bool enhanced_mutoid_lineup_parent(const Machine& m);
+
+// Widescreen continue penalty: subtract this BCD amount from the player's
+// 8-digit BCD PSCORE (player_data + 0x40), clamped at zero. PNEXTREP is not
+// touched, so the deduction can never re-award an extra life.
+constexpr u32 ENHANCED_CONTINUE_PENALTY_BCD = 0x00100000u; // 100,000 points
+u32 bcd_sub_clamped(u32 score, u32 amount);
+void enhanced_continue_penalty(Machine& m, u32 player_data);
 
 } // namespace stv::gsp

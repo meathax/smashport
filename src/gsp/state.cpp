@@ -12,6 +12,9 @@ namespace stv::gsp {
 
 namespace {
 constexpr char kMagic[8] = {'S', 'T', 'V', 'M', 'S', '0', '0', '3'};   // 003: original/native data images and latched scene width
+// Optional enhanced trailer: weapon/power-up variant state (VariantState, version-checked).
+constexpr char kVariantTag[4] = {'V', 'A', 'R', '1'};
+static_assert(std::is_trivially_copyable_v<VariantState>);
 
 struct Out {
     std::vector<u8>& b;
@@ -69,7 +72,11 @@ void Machine::save_state(std::vector<u8>& out, u32 pc, bool with_prog) const {
     const u8 flags = with_prog ? 1 : 0;
     o.pod(flags);
     fields(o, *this, with_prog);
-    if (enhanced) { o.pod(aim_inputs); o.pod(shot_aim); o.pod(shot_muzzles); o.pod(move_inputs); }
+    if (enhanced) {
+        o.pod(aim_inputs); o.pod(shot_aim); o.pod(shot_muzzles); o.pod(move_inputs);
+        // Variants off and never used: the snapshot keeps its previous layout.
+        if (variant_mode || !variant_state_empty()) { o.raw(kVariantTag, sizeof kVariantTag); o.pod(variants); }
+    }
 }
 
 bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
@@ -92,6 +99,12 @@ bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
             i.pod(staged.aim_inputs); i.pod(staged.shot_aim);
             if (i.at < in.size()) i.pod(staged.shot_muzzles);
             if (i.at < in.size()) i.pod(staged.move_inputs);
+            if (i.ok && in.size() - i.at >= sizeof kVariantTag + sizeof(VariantState) &&
+                std::memcmp(in.data() + i.at, kVariantTag, sizeof kVariantTag) == 0) {
+                i.at += sizeof kVariantTag;
+                i.pod(staged.variants);
+                if (i.ok && staged.variants.version != VariantState::kVersion) return false;
+            }
             // Older widescreen snapshots appended two 12-byte movement records.
             if (i.ok && in.size() - i.at == 24) i.at += 24;
         }
@@ -123,6 +136,7 @@ bool Machine::load_state(const std::vector<u8>& in, u32& pc) {
         fields(commit, *this, flags != 0);
         move_inputs=staged.move_inputs;
         aim_inputs=staged.aim_inputs; shot_aim=staged.shot_aim; shot_muzzles=staged.shot_muzzles;
+        variants=staged.variants;
         sprite_coverage.swap(staged.sprite_coverage);
         display_queue_coverage.swap(staged.display_queue_coverage);
         presentation_frame.swap(staged.presentation_frame);

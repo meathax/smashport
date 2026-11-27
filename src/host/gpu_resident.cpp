@@ -43,6 +43,25 @@ struct GiParamsGpu {uint32_t level,levels,enabled;float emitHeight;float gain,em
 static_assert(sizeof(GiParamsGpu)==80+64*16);
 constexpr uint32_t kGiLevels=6; // 1365 px ray reach covers the 547 px light map
 }
+
+// Benchmark-only GPU interval timer (D3D11 timestamps). Results are read back
+// non-blocking, several frames later, so it never stalls the pipeline.
+struct GpuInterval{
+ struct Slot{ComPtr<ID3D11Query> disjoint,begin,end;bool pending{};};
+ std::array<Slot,8> slots{};unsigned next{};int open{-1};double sumMs{},maxMs{};uint64_t count{};
+ void start(ID3D11Device* device,ID3D11DeviceContext* c){
+  if(open>=0)return;Slot& slot=slots[next];collect(c,slot,true);
+  if(!slot.disjoint){D3D11_QUERY_DESC d{D3D11_QUERY_TIMESTAMP_DISJOINT,0};D3D11_QUERY_DESC t{D3D11_QUERY_TIMESTAMP,0};
+   if(FAILED(device->CreateQuery(&d,&slot.disjoint))||FAILED(device->CreateQuery(&t,&slot.begin))||FAILED(device->CreateQuery(&t,&slot.end))){slot={};return;}}
+  c->Begin(slot.disjoint.Get());c->End(slot.begin.Get());open=int(next);next=(next+1)%slots.size();
+ }
+ void stop(ID3D11DeviceContext* c){if(open<0)return;Slot& slot=slots[size_t(open)];c->End(slot.end.Get());c->End(slot.disjoint.Get());slot.pending=true;open=-1;}
+ void collect(ID3D11DeviceContext* c,Slot& slot,bool wait){
+  if(!slot.pending)return;D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};UINT64 a{},b{};
+  for(int tries=0;;++tries){if(c->GetData(slot.disjoint.Get(),&dj,sizeof dj,0)==S_OK&&c->GetData(slot.begin.Get(),&a,sizeof a,0)==S_OK&&c->GetData(slot.end.Get(),&b,sizeof b,0)==S_OK)break;if(!wait||tries>2000){slot.pending=false;return;}SwitchToThread();}
+  slot.pending=false;if(dj.Disjoint||!dj.Frequency||b<a)return;const double ms=1000.0*double(b-a)/double(dj.Frequency);sumMs+=ms;maxMs=std::max(maxMs,ms);++count;
+ }
+};
 struct ResidentEffects::Impl {
  ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> ctx;
  DxrLighting hardware;
@@ -55,6 +74,17 @@ struct ResidentEffects::Impl {
  ComPtr<ID3D11UnorderedAccessView> giEmitUAV,giBounceUAV,giLumaUAV,giCascadeUAV[2];
  ComPtr<ID3D11Buffer> giConstants;int giW{},giH{};
  ComPtr<ID3D11VertexShader> vs;ComPtr<ID3D11PixelShader> ps,overlayPS;
+ // Main-menu live arena (resident_menu.hlsl): HDR scene at an adaptive
+ // internal size, upscaled with bloom/tonemap; GDI menu glass blends over it.
+ ComPtr<ID3D11PixelShader> menuScenePS,menuBlitPS,menuGlowPS;
+ ComPtr<ID3D11Texture2D> menuGlow;ComPtr<ID3D11RenderTargetView> menuGlowRTV;ComPtr<ID3D11ShaderResourceView> menuGlowSRV;
+ // GPU time of the scene pass steers its internal resolution (CPU-side
+ // paint time includes the GDI overlay and says nothing about the GPU).
+ struct MenuTimer{ComPtr<ID3D11Query> dj,a,b;bool pending{};};
+ std::array<MenuTimer,4> menuTimers;int menuTimerSlot{};float menuAuto{1},menuBudget{6};ComPtr<ID3D11Buffer> menuConstants;ComPtr<ID3D11BlendState> overlayBlend;
+ ComPtr<ID3D11Texture2D> menuHdr;ComPtr<ID3D11RenderTargetView> menuRTV;ComPtr<ID3D11ShaderResourceView> menuSRV;int menuW{},menuH{};
+ bool menuScene{};float menuTime{},menuScale{1},menuCalm{};
+ int menuFeedSlots{},menuLeaders{};ComPtr<ID3D11Texture2D> menuFeed;ComPtr<ID3D11ShaderResourceView> menuFeedSRV; // ROM title frame on the monitors
  ComPtr<ID3D11Buffer> constants,displayConstants,combatConstants,pool,tiles,lights,cursors,combatGlyphs,combatTiles;
  ComPtr<ID3D11ShaderResourceView> poolSRV,tileSRV,lightSRV,inputSRV,outputSRV,illumSRV,overlaySRV,combatGlyphSRV,combatTileSRV;
  ComPtr<ID3D11UnorderedAccessView> poolUAV,tileUAV,lightUAV,cursorUAV,outputUAV,illumUAV;
@@ -93,7 +123,27 @@ struct ResidentEffects::Impl {
  ComPtr<ID3D11Texture2D> filteredTexture;ComPtr<ID3D11RenderTargetView> filteredRTV;ComPtr<ID3D11ShaderResourceView> filteredSRV;int fw{},fh{};
  ComPtr<IDXGISwapChain1> swap;
  bool supportsTearing{},useTearing{},retryPresent{},lastOverlay{},oneShot{};
+ uint64_t presentRetries{};
+ // Unlocked frame rate: a borderless window can still be composed by DWM at the
+ // display refresh even with ALLOW_TEARING, so it uses DXGI exclusive fullscreen.
+ bool wantExclusive{},inExclusive{},exclusiveFailed{};long exclusiveError{};uint64_t exclusiveRequests{},exclusiveEntries{};
+ void leaveExclusive(){if(swap&&inExclusive)swap->SetFullscreenState(FALSE,nullptr);inExclusive=false;}
+ void applyExclusive(HWND hwnd,int w,int h){
+  if(!swap||!hwnd)return;
+  const bool want=wantExclusive&&!exclusiveFailed;
+  BOOL fs=FALSE;swap->GetFullscreenState(&fs,nullptr);inExclusive=fs!=FALSE;
+  if(inExclusive==want)return;
+  if(want)++exclusiveRequests;
+  if(const HRESULT hr=swap->SetFullscreenState(want?TRUE:FALSE,nullptr);FAILED(hr)){if(want){exclusiveFailed=true;exclusiveError=long(hr);}return;}
+  if(want)++exclusiveEntries;
+  inExclusive=want;cw=ch=0;resizeTarget(hwnd,w,h); // DXGI asks for ResizeBuffers after every transition
+ }
+ GpuInterval gpuCompose,gpuDisplay;bool gpuTiming=GetEnvironmentVariableW(L"STV_HOST_FRAMES",nullptr,0)>0;
  uint64_t postFrame=~uint64_t(0);int postGlow=-1,postSharpen=-1;
+ // The CRT chain input (postSRV) changes only with the source frame, so a repeat
+ // present of the same frame reuses the chain output instead of re-running every
+ // viewport-sized pass (and re-advancing the afterglow history) per display refresh.
+ uint64_t chainPost=~uint64_t(0),postSerial=0;int chainMode=-1;void* chainHandle=nullptr;
  ImpactDirectorState director{};
  std::array<uint32_t,kCombatTileMax*kCombatTileCapacity> combatTileIndices{};
  int sw{},sh{},cw{},ch{};HWND window{};uint64_t serial=~uint64_t(0),reads{},frame{};
@@ -109,7 +159,7 @@ struct ResidentEffects::Impl {
  PFN_libra_error_free errorFree{};
  struct Prepared {libra_d3d11_filter_chain_t chain{};ComPtr<ID3D11CommandList> commands;int mode{};std::string error;};
  libra_d3d11_filter_chain_t chain{};int requested{},active{};std::future<Prepared> preparing;
- ~Impl(){if(preparing.valid()){auto p=preparing.get();if(p.chain)chainFree(&p.chain);}if(chain)chainFree(&chain);destroyUI();}
+ ~Impl(){leaveExclusive();if(preparing.valid()){auto p=preparing.get();if(p.chain)chainFree(&p.chain);}if(chain)chainFree(&chain);destroyUI();}
  // librashader_d3d11.dll stays loaded for the process: its worker threads can
  // still be running library code after the chain is freed, and FreeLibrary
  // then makes them execute unmapped memory (an intermittent crash under load).
@@ -136,6 +186,16 @@ struct ResidentEffects::Impl {
   check(device->CreateVertexShader(resident_shader::vs,sizeof(resident_shader::vs),nullptr,&vs),"vs");
   check(device->CreatePixelShader(resident_shader::ps,sizeof(resident_shader::ps),nullptr,&ps),"ps");
   check(device->CreatePixelShader(resident_shader::overlayPS,sizeof(resident_shader::overlayPS),nullptr,&overlayPS),"overlayPS");
+  check(device->CreatePixelShader(resident_shader::menuScenePS,sizeof(resident_shader::menuScenePS),nullptr,&menuScenePS),"menuScenePS");
+  check(device->CreatePixelShader(resident_shader::menuBlitPS,sizeof(resident_shader::menuBlitPS),nullptr,&menuBlitPS),"menuBlitPS");
+  check(device->CreatePixelShader(resident_shader::menuGlowPS,sizeof(resident_shader::menuGlowPS),nullptr,&menuGlowPS),"menuGlowPS");
+  texture(16,1,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,menuGlow);
+  check(device->CreateRenderTargetView(menuGlow.Get(),nullptr,&menuGlowRTV),"menu glow RTV");
+  check(device->CreateShaderResourceView(menuGlow.Get(),nullptr,&menuGlowSRV),"menu glow SRV");
+  {D3D11_BUFFER_DESC mb{};mb.ByteWidth=32;mb.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&mb,nullptr,&menuConstants),"menu params");
+   D3D11_BLEND_DESC bd{};auto& t=bd.RenderTarget[0];t.BlendEnable=TRUE;t.SrcBlend=D3D11_BLEND_SRC_ALPHA;t.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;t.BlendOp=D3D11_BLEND_OP_ADD;
+   t.SrcBlendAlpha=D3D11_BLEND_ONE;t.DestBlendAlpha=D3D11_BLEND_ZERO;t.BlendOpAlpha=D3D11_BLEND_OP_ADD;t.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
+   check(device->CreateBlendState(&bd,&overlayBlend),"overlay blend");}
   D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(Params);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&constants),"params");b.ByteWidth=sizeof(Display);check(device->CreateBuffer(&b,nullptr,&displayConstants),"display params");b.ByteWidth=sizeof(CombatParamsGpu);check(device->CreateBuffer(&b,nullptr,&combatConstants),"combat params");
   structured(1696,64,pool,poolSRV,poolUAV);structured(65,16,lights,lightSRV,lightUAV);
   {ComPtr<ID3D11UnorderedAccessView> unused;
@@ -425,6 +485,7 @@ struct ResidentEffects::Impl {
  }
  void compose(const EffectPacket& packet,const PcSettings& s){
   if(!output)throw std::runtime_error("No captured frame");
+  if(gpuTiming)gpuCompose.start(device.Get(),ctx.Get());
   const int w=sw,h=sh;
   bool fresh=serial!=packet.serial;Params p{};p.width=w;p.height=h;p.sourceMode=sourceMode;p.pad=pixelCoverage;p.tileWidth=(w+15)/16;
   p.dt=fresh?packet.dt:0;p.reset=fresh&&packet.reset;p.mask=s.enhance?((s.particles?1:0)|(s.blood?2:0)|(s.debris?4:0)|(s.smoke?8:0)|(s.fire?16:0)|(s.voxels?32:0)|arena_effect_mask(s)|environment_effect_mask(s)):0;
@@ -455,7 +516,7 @@ struct ResidentEffects::Impl {
   ID3D11ShaderResourceView* dxr=nullptr;
   // Every arena room, its entry pan and room-to-room scrolls (room_lighting.cpp).
   if(s.hardware_rt && lighting.floor[2]>0 &&
-     hardware.prepare(device.Get(),ctx.Get())){
+     hardware.prepare(device.Get(),ctx.Get(),false)){
       static constexpr unsigned fogSteps[]{0,4,6,8};
       lighting.volumetricSteps=fogSteps[std::clamp(s.vol_light,0,3)];
       dxr=hardware.render(packet,std::move(lighting),w,h,lightOffset,
@@ -605,17 +666,18 @@ struct ResidentEffects::Impl {
   auto bodies=bodySRV.Get();ctx->CSSetShaderResources(14,1,&bodies);
   std::fill(std::begin(u),std::end(u),nullptr);u[1]=outputUAV.Get();ctx->CSSetUnorderedAccessViews(0,6,u,nullptr);ctx->CSSetShaderResources(0,14,srvs);ctx->CSSetShader(cs[3].Get(),nullptr,0);ctx->Dispatch((w+7)/8,(h+7)/8,1);unbind();
   {ID3D11ShaderResourceView* noGi[4]{};ctx->CSSetShaderResources(18,4,noGi);}
+  if(gpuTiming)gpuCompose.stop(ctx.Get());
   if(dxr)hardware.consumed();serial=packet.serial;++frame;
  }
  void resizeTarget(HWND hwnd,int w,int h){if(cw==w&&ch==h&&window==hwnd&&target)return;unbind();target.Reset();screen.Reset();destroyUI();
-  if(window!=hwnd){swap.Reset();window=hwnd;}
+  if(window!=hwnd){leaveExclusive();swap.Reset();window=hwnd;}
   if(hwnd){
    if(!swap){ComPtr<IDXGIDevice> dx;device.As(&dx);ComPtr<IDXGIAdapter> ad;dx->GetAdapter(&ad);ComPtr<IDXGIFactory2> factory;check(ad->GetParent(IID_PPV_ARGS(&factory)),"DXGI factory");
     ComPtr<IDXGIFactory5> modernFactory;BOOL tearing=FALSE;
     supportsTearing=SUCCEEDED(factory.As(&modernFactory)) && SUCCEEDED(modernFactory->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,&tearing,sizeof(tearing))) && tearing;
-    DXGI_SWAP_CHAIN_DESC1 d{};d.Flags=supportsTearing?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0;d.Width=w;d.Height=h;d.Format=DXGI_FORMAT_B8G8R8A8_UNORM;d.SampleDesc.Count=1;d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.BufferCount=2;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;check(factory->CreateSwapChainForHwnd(device.Get(),hwnd,&d,nullptr,nullptr,&swap),"flip swap chain");factory->MakeWindowAssociation(hwnd,DXGI_MWA_NO_ALT_ENTER);
+    DXGI_SWAP_CHAIN_DESC1 d{};d.Flags=supportsTearing?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0;d.Width=w;d.Height=h;d.Format=DXGI_FORMAT_B8G8R8A8_UNORM;d.SampleDesc.Count=1;d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.BufferCount=3;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;check(factory->CreateSwapChainForHwnd(device.Get(),hwnd,&d,nullptr,nullptr,&swap),"flip swap chain");factory->MakeWindowAssociation(hwnd,DXGI_MWA_NO_ALT_ENTER);
     ComPtr<IDXGIDevice1> dx1;device.As(&dx1);dx1->SetMaximumFrameLatency(1);
-   }else check(swap->ResizeBuffers(2,w,h,DXGI_FORMAT_B8G8R8A8_UNORM,supportsTearing?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0),"swap resize");
+   }else check(swap->ResizeBuffers(3,w,h,DXGI_FORMAT_B8G8R8A8_UNORM,supportsTearing?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0),"swap resize");
    check(swap->GetBuffer(0,IID_PPV_ARGS(&screen)),"back buffer");
   }else texture(w,h,DXGI_FORMAT_B8G8R8A8_UNORM,D3D11_BIND_RENDER_TARGET,screen);
   check(device->CreateRenderTargetView(screen.Get(),nullptr,&target),"back buffer RTV");cw=w;ch=h;
@@ -655,28 +717,36 @@ struct ResidentEffects::Impl {
    return out;});
  }
  void draw(HWND hwnd,int width,int height,int x,int y,int w,int h,const PcSettings& s,bool ui,bool one_shot,float dx,float dy,int baseW=0,int baseH=0){
-  if(!device||!output||width<1||height<1||width>16384||height>16384||uint64_t(width)*height>16777216||w<=0||h<=0)throw std::runtime_error("Invalid resident destination");
+  if(!device||(!output&&!menuScene)||width<1||height<1||width>16384||height>16384||uint64_t(width)*height>16777216||w<=0||h<=0)throw std::runtime_error("Invalid resident destination");
   // A nonblocking Present can leave the finished image queued in the back
   // buffer. Retry that image without adding another fullscreen draw ahead of it.
   oneShot=one_shot;
   if(!oneShot && retryPresent && hwnd==window && width==cw && height==ch && ui==lastOverlay)return;
   retryPresent=false;lastOverlay=ui;
-  resizeTarget(hwnd,width,height);float black[4]={0,0,0,1};ctx->ClearRenderTargetView(target.Get(),black);ensurePreset(s.filter);
-  syncMotion=s.smooth_motion;
-  useTearing=supportsTearing&&!s.sync_presentation();
+  if(gpuTiming)gpuDisplay.start(device.Get(),ctx.Get());
+  resizeTarget(hwnd,width,height);applyExclusive(hwnd,width,height);float black[4]={0,0,0,1};ctx->ClearRenderTargetView(target.Get(),black);ensurePreset(s.filter);
+  syncMotion=s.sync_presentation()&&s.smooth_motion;
+  // Exclusive fullscreen tears natively; ALLOW_TEARING is invalid there.
+  useTearing=supportsTearing&&!s.sync_presentation()&&!inExclusive;
+  if(menuScene)drawMenuScene(width,height);
+  else{
   if(s.filter>=4&&(postFrame!=frame||postGlow!=s.glow||postSharpen!=s.sharpen)){
    PcSettings pre=s;pre.filter=4;pre.curvature=0;
    quad(postRTV.Get(),0,0,sw,sh,pre,0,0,false);
-   postFrame=frame;postGlow=s.glow;postSharpen=s.sharpen;
+   postFrame=frame;postGlow=s.glow;postSharpen=s.sharpen;++postSerial;
   }
   if(s.filter>=5&&active==s.filter&&chain){
    // Zoom punch scales the final quad only. Keep the CRT chain at the
    // unzoomed size so its targets are not rebuilt on every impact.
    const int fwW=baseW>0?baseW:w,fwH=baseH>0?baseH:h;
-   if(fw!=fwW||fh!=fwH){unbind();texture(fwW,fwH,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,filteredTexture);check(device->CreateRenderTargetView(filteredTexture.Get(),nullptr,filteredRTV.ReleaseAndGetAddressOf()),"filtered RTV");check(device->CreateShaderResourceView(filteredTexture.Get(),nullptr,filteredSRV.ReleaseAndGetAddressOf()),"filtered SRV");fw=fwW;fh=fwH;}
-   libra_viewport_t viewport{0,0,unsigned(fw),unsigned(fh)};frame_d3d11_opt_t options{};options.version=0;options.frame_direction=1;options.total_subframes=options.current_subframe=1;auto e=chainFrame(&chain,ctx.Get(),size_t(frame),postSRV.Get(),filteredRTV.Get(),&viewport,nullptr,&options);if(e){errorFree(&e);throw std::runtime_error("D3D11 CRT frame failed");}PcSettings final=s;final.filter=8;final.glow=final.sharpen=0;quad(target.Get(),x,y,w,h,final,dx,dy);}
+   if(fw!=fwW||fh!=fwH){unbind();texture(fwW,fwH,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,filteredTexture);check(device->CreateRenderTargetView(filteredTexture.Get(),nullptr,filteredRTV.ReleaseAndGetAddressOf()),"filtered RTV");check(device->CreateShaderResourceView(filteredTexture.Get(),nullptr,filteredSRV.ReleaseAndGetAddressOf()),"filtered SRV");fw=fwW;fh=fwH;chainPost=~uint64_t(0);}
+   if(chainPost!=postSerial||chainMode!=s.filter||chainHandle!=static_cast<void*>(chain)){
+   libra_viewport_t viewport{0,0,unsigned(fw),unsigned(fh)};frame_d3d11_opt_t options{};options.version=0;options.frame_direction=1;options.total_subframes=options.current_subframe=1;auto e=chainFrame(&chain,ctx.Get(),size_t(frame),postSRV.Get(),filteredRTV.Get(),&viewport,nullptr,&options);if(e){errorFree(&e);throw std::runtime_error("D3D11 CRT frame failed");}
+   chainPost=postSerial;chainMode=s.filter;chainHandle=static_cast<void*>(chain);}
+   PcSettings final=s;final.filter=8;final.glow=final.sharpen=0;quad(target.Get(),x,y,w,h,final,dx,dy);}
   else if(s.filter>=4){PcSettings final=s;final.filter=9;quad(target.Get(),x,y,w,h,final,dx,dy);}
   else quad(target.Get(),x,y,w,h,s,dx,dy);
+  }
   overlayPending=ui;
   if(ui){if(!uiDC){BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=cw;info.bmiHeader.biHeight=-ch;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;uiDC=CreateCompatibleDC(nullptr);uiBitmap=CreateDIBSection(uiDC,&info,DIB_RGB_COLORS,&uiPixels,nullptr,0);if(!uiDC||!uiBitmap)throw std::runtime_error("Menu upload bitmap");uiOld=SelectObject(uiDC,uiBitmap);texture(cw,ch,DXGI_FORMAT_B8G8R8A8_UNORM,D3D11_BIND_SHADER_RESOURCE,overlayTexture);check(device->CreateShaderResourceView(overlayTexture.Get(),nullptr,overlaySRV.ReleaseAndGetAddressOf()),"overlay SRV");
     std::fill_n(static_cast<uint32_t*>(uiPixels),size_t(cw)*ch,0x00ff00ff);uiDirty={0,0,cw,ch};}
@@ -686,6 +756,52 @@ struct ResidentEffects::Impl {
      std::fill(rows+size_t(row)*cw+std::max(0L,uiDirty.left),rows+size_t(row)*cw+std::min<LONG>(cw,uiDirty.right),0x00ff00ffu);
    }
    GdiFlush();SetBoundsRect(uiDC,nullptr,DCB_RESET|DCB_ENABLE);}
+ }
+ void drawMenuScene(int width,int height){
+  // Read finished timings without stalling; aim the scene at ~6 ms of GPU.
+  for(auto& slot:menuTimers){
+   if(!slot.pending)continue;
+   D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};UINT64 a{},b{};
+   if(ctx->GetData(slot.dj.Get(),&dj,sizeof dj,D3D11_ASYNC_GETDATA_DONOTFLUSH)!=S_OK)continue;
+   slot.pending=false;
+   if(dj.Disjoint||!dj.Frequency||ctx->GetData(slot.a.Get(),&a,sizeof a,D3D11_ASYNC_GETDATA_DONOTFLUSH)!=S_OK||
+      ctx->GetData(slot.b.Get(),&b,sizeof b,D3D11_ASYNC_GETDATA_DONOTFLUSH)!=S_OK||b<=a)continue;
+   const float ms=float(double(b-a)*1000.0/double(dj.Frequency));
+   const float want=std::clamp(menuAuto*std::sqrt(menuBudget/std::max(ms,.1f)),.4f,1.f);
+   menuAuto+=(want-menuAuto)*(want<menuAuto?.35f:.08f);
+  }
+  const float limit=std::min(1.f,1440.f/float(height))*std::min(menuScale,menuAuto);
+  const int iw=std::max(64,int(width*limit)),ih=std::max(36,int(height*limit));
+  if(iw!=menuW||ih!=menuH){unbind();ID3D11ShaderResourceView* none=nullptr;ctx->PSSetShaderResources(5,1,&none);
+   texture(iw,ih,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,menuHdr);
+   check(device->CreateRenderTargetView(menuHdr.Get(),nullptr,menuRTV.ReleaseAndGetAddressOf()),"menu RTV");
+   check(device->CreateShaderResourceView(menuHdr.Get(),nullptr,menuSRV.ReleaseAndGetAddressOf()),"menu SRV");menuW=iw;menuH=ih;}
+  const float params[8]{menuTime,float(iw),float(ih),menuCalm,float(width),float(height),menuFeedSRV?float(menuFeedSlots):0.f,menuFeedSRV?float(menuLeaders):0.f};
+  ctx->UpdateSubresource(menuConstants.Get(),0,nullptr,params,0,0);
+  auto cb=menuConstants.Get();ctx->PSSetConstantBuffers(3,1,&cb);
+  auto sam=sampler.Get();ctx->PSSetSamplers(0,1,&sam);
+  ctx->VSSetShader(vs.Get(),nullptr,0);ctx->IASetInputLayout(nullptr);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  ctx->RSSetState(raster.Get());ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->OMSetDepthStencilState(nullptr,0);
+  auto rtv=menuRTV.Get();ctx->OMSetRenderTargets(1,&rtv,nullptr);D3D11_VIEWPORT v{0,0,float(iw),float(ih),0,1};ctx->RSSetViewports(1,&v);
+  {auto glowRTV=menuGlowRTV.Get();ctx->OMSetRenderTargets(1,&glowRTV,nullptr);D3D11_VIEWPORT gv{0,0,16,1,0,1};ctx->RSSetViewports(1,&gv);
+   auto f=menuFeedSRV.Get();ctx->PSSetShaderResources(6,1,&f);ctx->PSSetShader(menuGlowPS.Get(),nullptr,0);ctx->Draw(3,0);}
+  ctx->OMSetRenderTargets(1,&rtv,nullptr);ctx->RSSetViewports(1,&v);
+  {auto g=menuGlowSRV.Get();ctx->PSSetShaderResources(7,1,&g);}
+  MenuTimer* timer=&menuTimers[size_t(menuTimerSlot)];
+  if(timer->pending)timer=nullptr;
+  else{if(!timer->dj){D3D11_QUERY_DESC d{D3D11_QUERY_TIMESTAMP_DISJOINT,0},t{D3D11_QUERY_TIMESTAMP,0};
+    check(device->CreateQuery(&d,&timer->dj),"menu timer");check(device->CreateQuery(&t,&timer->a),"menu timer");check(device->CreateQuery(&t,&timer->b),"menu timer");}
+   ctx->Begin(timer->dj.Get());ctx->End(timer->a.Get());}
+  ctx->PSSetShader(menuScenePS.Get(),nullptr,0);ctx->Draw(3,0);
+  if(timer){ctx->End(timer->b.Get());ctx->End(timer->dj.Get());timer->pending=true;menuTimerSlot=(menuTimerSlot+1)%int(menuTimers.size());}
+  rtv=target.Get();ctx->OMSetRenderTargets(1,&rtv,nullptr);v={0,0,float(width),float(height),0,1};ctx->RSSetViewports(1,&v);
+  auto srv=menuSRV.Get();ctx->PSSetShaderResources(5,1,&srv);ctx->PSSetShader(menuBlitPS.Get(),nullptr,0);ctx->Draw(3,0);
+  ID3D11ShaderResourceView* none[3]{};ctx->PSSetShaderResources(5,3,none);unbind();
+ }
+ void setMenuImage(const uint32_t* px,int w,int h){
+  D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=d.ArraySize=1;d.Format=DXGI_FORMAT_B8G8R8A8_UNORM;d.SampleDesc.Count=1;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA init{px,UINT(w*4),0};check(device->CreateTexture2D(&d,&init,menuFeed.ReleaseAndGetAddressOf()),"menu feed");
+  check(device->CreateShaderResourceView(menuFeed.Get(),nullptr,menuFeedSRV.ReleaseAndGetAddressOf()),"menu feed SRV");
  }
  bool present(){
   if(overlayPending){GdiFlush();
@@ -698,9 +814,10 @@ struct ResidentEffects::Impl {
     ctx->UpdateSubresource(overlayTexture.Get(),0,&box,static_cast<const uint32_t*>(uiPixels)+size_t(upload.top)*cw+upload.left,cw*4,0);
    }
    uiDirty=painted?drawn:RECT{};uiContent=painted;}
-  if(overlayPending && uiContent){auto rtv=target.Get();ctx->OMSetRenderTargets(1,&rtv,nullptr);D3D11_VIEWPORT v{0,0,float(cw),float(ch),0,1};ctx->RSSetViewports(1,&v);ctx->RSSetState(raster.Get());auto srv=overlaySRV.Get();ctx->PSSetShaderResources(1,1,&srv);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(overlayPS.Get(),nullptr,0);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->IASetInputLayout(nullptr);ctx->OMSetBlendState(nullptr,nullptr,~0u);ctx->Draw(3,0);unbind();overlayPending=false;}
+  if(overlayPending && uiContent){auto rtv=target.Get();ctx->OMSetRenderTargets(1,&rtv,nullptr);D3D11_VIEWPORT v{0,0,float(cw),float(ch),0,1};ctx->RSSetViewports(1,&v);ctx->RSSetState(raster.Get());auto srv=overlaySRV.Get();ctx->PSSetShaderResources(1,1,&srv);ctx->VSSetShader(vs.Get(),nullptr,0);ctx->PSSetShader(overlayPS.Get(),nullptr,0);ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);ctx->IASetInputLayout(nullptr);ctx->OMSetBlendState(overlayBlend.Get(),nullptr,~0u);ctx->Draw(3,0);ctx->OMSetBlendState(nullptr,nullptr,~0u);unbind();overlayPending=false;}
   overlayPending=false;
-  if(!swap)return true;auto hr=swap->Present(syncMotion && !oneShot ? 1 : 0,(oneShot ? 0u : DXGI_PRESENT_DO_NOT_WAIT)|(useTearing?DXGI_PRESENT_ALLOW_TEARING:0));retryPresent=hr==DXGI_ERROR_WAS_STILL_DRAWING;if(retryPresent||hr==DXGI_STATUS_OCCLUDED)return false;check(hr,"Present");return true;
+  if(gpuTiming)gpuDisplay.stop(ctx.Get());
+  if(!swap)return true;auto hr=swap->Present(syncMotion && !oneShot ? 1 : 0,(oneShot ? 0u : DXGI_PRESENT_DO_NOT_WAIT)|(useTearing?DXGI_PRESENT_ALLOW_TEARING:0));retryPresent=hr==DXGI_ERROR_WAS_STILL_DRAWING;if(retryPresent)++presentRetries;if(retryPresent||hr==DXGI_STATUS_OCCLUDED)return false;check(hr,"Present");return true;
  }
  void finish(){D3D11_QUERY_DESC d{D3D11_QUERY_EVENT,0};ComPtr<ID3D11Query> q;check(device->CreateQuery(&d,&q),"completion query");ctx->End(q.Get());ctx->Flush();auto start=GetTickCount64();for(;;){auto hr=ctx->GetData(q.Get(),nullptr,0,0);check(hr,"completion");if(hr==S_OK)break;if(GetTickCount64()-start>10000)throw std::runtime_error("GPU completion timeout");SwitchToThread();}}
  void capture(std::vector<uint32_t>& pixels,bool display){auto source=display?screen.Get():output.Get();if(!source)throw std::runtime_error("No image to capture");D3D11_TEXTURE2D_DESC d{};source->GetDesc(&d);d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;d.BindFlags=0;ComPtr<ID3D11Texture2D> readback;check(device->CreateTexture2D(&d,nullptr,&readback),"diagnostic readback");ctx->CopyResource(readback.Get(),source);D3D11_MAPPED_SUBRESOURCE mapped{};check(ctx->Map(readback.Get(),0,D3D11_MAP_READ,0,&mapped),"diagnostic capture");pixels.resize(size_t(d.Width)*d.Height);for(UINT y=0;y<d.Height;y++)memcpy(pixels.data()+size_t(y)*d.Width,(char*)mapped.pData+size_t(y)*mapped.RowPitch,size_t(d.Width)*4);ctx->Unmap(readback.Get(),0);reads+=pixels.size()*4;}
@@ -710,6 +827,7 @@ ResidentEffects::ResidentEffects():impl_(std::make_unique<Impl>()){}ResidentEffe
 const std::string& ResidentEffects::dxr_error() const{return impl_->hardware.error().empty()?impl_->failure:impl_->hardware.error();}
 const LightingFrame* ResidentEffects::dxr_frame() const{return impl_->hardware.last_frame();}
 bool ResidentEffects::prepare_dxr(){return prepare() && impl_->hardware.prepare(impl_->device.Get(),impl_->ctx.Get());}
+bool ResidentEffects::prepare_dxr_async(){if(!prepare())return false;impl_->hardware.prepare_async(impl_->device.Get(),impl_->ctx.Get());return true;}
 bool ResidentEffects::prepare(){STV_RESIDENT_TRY(impl_->init())}
 bool ResidentEffects::update(std::span<const uint32_t> p,int w,int h,const EffectPacket& packet,const PcSettings& s){STV_RESIDENT_TRY(impl_->update(p,w,h,packet,s))}
 bool ResidentEffects::update_arcade(std::span<const uint16_t> pixels,int stride,int w,int h,std::span<const uint32_t> pens,
@@ -727,6 +845,15 @@ bool ResidentEffects::recover(bool dxr){
  return dxr?prepare_dxr():prepare();
 }
 void* ResidentEffects::overlay_dc(){return impl_->uiDC;}
+bool ResidentEffects::set_menu_image(const uint32_t* pixels,int w,int h,int slots,int leaders){if(!impl_->device||!pixels||w<1||h<1||slots<0||leaders<0)return false;impl_->menuFeedSlots=slots;impl_->menuLeaders=leaders;if(slots<1&&leaders<1)return true;STV_RESIDENT_TRY(impl_->setMenuImage(pixels,w,h))}
+void ResidentEffects::set_menu_budget(float ms){impl_->menuBudget=std::clamp(ms,1.f,16.f);}
+void ResidentEffects::set_menu_scene(bool on,float seconds,float scale,bool calm){impl_->menuScene=on;impl_->menuTime=seconds;impl_->menuScale=std::clamp(scale,.2f,1.f);impl_->menuCalm=calm?1.f:0.f;}
+std::string ResidentEffects::gpu_timing_json() const{if(!impl_)return "{}";char t[256];auto& c=impl_->gpuCompose;auto& d=impl_->gpuDisplay;std::snprintf(t,sizeof t,"{\"compose\": {\"count\": %llu, \"mean_ms\": %.4f, \"max_ms\": %.4f}, \"display\": {\"count\": %llu, \"mean_ms\": %.4f, \"max_ms\": %.4f}}",(unsigned long long)c.count,c.count?c.sumMs/double(c.count):0.0,c.maxMs,(unsigned long long)d.count,d.count?d.sumMs/double(d.count):0.0,d.maxMs);return t;}
+void ResidentEffects::set_exclusive_fullscreen(bool on){if(!impl_)return;impl_->wantExclusive=on;if(!on)impl_->exclusiveFailed=false;} // a refusal is retried after the next focus change
+bool ResidentEffects::exclusive_fullscreen() const{return impl_&&impl_->inExclusive;}
+std::string ResidentEffects::exclusive_json() const{if(!impl_)return "{}";char t[200];std::snprintf(t,sizeof t,"{\"wanted\": %s, \"active\": %s, \"requests\": %llu, \"entries\": %llu, \"error\": \"%08lx\"}",impl_->wantExclusive?"true":"false",impl_->inExclusive?"true":"false",(unsigned long long)impl_->exclusiveRequests,(unsigned long long)impl_->exclusiveEntries,(unsigned long)impl_->exclusiveError);return t;}
+uint64_t ResidentEffects::present_retries() const{return impl_?impl_->presentRetries:0;}
+bool ResidentEffects::present_tearing() const{return impl_&&impl_->useTearing;}
 bool ResidentEffects::present(){try{impl_->failure.clear();return impl_->present();}catch(const std::exception& e){impl_->failure=e.what();return false;}}
 bool ResidentEffects::filter_ready(int mode)const{return mode<5||impl_->active==mode;}
 bool ResidentEffects::finish(){STV_RESIDENT_TRY(impl_->finish())}

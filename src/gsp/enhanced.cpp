@@ -186,6 +186,30 @@ void Machine::analog_walk_facing() {
     if(std::abs(dy)*1000 < std::abs(dx)*414)c.a[3]=dx<0 ? 7 : 4;
 }
 
+// A death respawn or join (DRAW_PLYR_TORSO A9=1/2, ROBO.ASM:1844/1861 and
+// 2371/2376) places the player behind a side door, outside LFTBND/RGTBND.
+// SCRIPTPLAY walks him in by writing PRYTE/PLEFT to P1CTRL/P2CTRL, but
+// JOY_UPDATE rewrites the same word from the live stick every tick, and
+// UPDATE_PLYRXY tests up/down only against UPBND/DNBND. Holding down at
+// respawn therefore walks the player down the door column inside the wall.
+// Treat a player more than one walk step beyond a side bound as still in the
+// doorway: only lateral motion is allowed until he reaches the floor. The
+// margin exceeds the largest wall overshoot (3-tick walk cel x 1.94 px/tick),
+// so a player sliding along the wall keeps full vertical movement. ININTRO
+// scripted transitions (GAMSTATE 0x18) keep the retail path.
+bool Machine::in_side_doorway(u32 proc, u32 x) {
+    if(!enhanced_scene(*this) || game_scene_state(*this)!=0x10)return false;
+    constexpr s64 margin=8ll<<16;
+    const s64 px=s32(x);
+    return px < s64(s32(rlong(*this,proc+0x280)))-margin ||
+           px > s64(s32(rlong(*this,proc+0x2a0)))+margin;
+}
+
+void Machine::side_doorway_lock() {
+    // A7 = torso process (bounds), A4 = legs OXVAL, A2 = masked stick copy.
+    if(in_side_doorway(c.a[7],c.a[4]))c.a[2]&=~3u;
+}
+
 void Machine::analog_velocity() {
     if ((!move_inputs[0] && !move_inputs[1]) || game_scene_state(*this)!=0x10)return;
     const u32 proc=rlong(*this,c.a[13]+0x160); // legs' TSO_PRC
@@ -203,6 +227,7 @@ void Machine::analog_velocity() {
     };
     c.a[0]=u32(component(dx,rlong(*this,ytable-0x140+4*32),0x60,0x280,0x2a0));
     c.a[1]=u32(component(dy,rlong(*this,ytable+2*32),0x80,0x240,0x260));
+    if(in_side_doorway(proc,rlong(*this,c.a[8]+0x60)))c.a[1]=0;
 }
 
 void Machine::queue_aimed_sprite() {
@@ -269,7 +294,7 @@ void Machine::draw_aimed_sprite(u32 offset,int width,int height,int x,int y,int 
                             pivot.y+int(std::lround(dy*cosA-dx*sinA)));
         if(pen){
             const auto cell=std::size_t(y+row)*vram_w+x+col;
-            vram[cell]=palette_bank|pen;
+            vram[cell]=dma_tint ? variant_pen(u16(palette_bank|pen),dma_tint) : u16(palette_bank|pen);
             if(!sprite_coverage.empty()){
                 sprite_coverage[cell]=world_ink;
                 shadow_underlay[cell]=0;
@@ -958,6 +983,47 @@ bool apply_enhanced(Machine& m, int widen) {
         }
         for (const u32 slot : slots) r.sl(slot, enhanced_data_address(r.l(slot)));
     }
+    // Widescreen pickup rotation. SEND_ICON (ICONS.ASM:79) rolls 0..20 into a
+    // per-room byte table; entry zero (and any zero) is an empty roll. Boss
+    // tables are the only retail ones carrying GRENX. Every other room gives
+    // two slots to the grenade gun: from shoes while more than one remains,
+    // otherwise from the most numerous of blades, helper, ring and smart bomb.
+    // Short retail tables overlap their successor, so only a table's own
+    // non-zero entries are edited and each table is visited once.
+    {
+        constexpr u32 kIconTyp[3]={0xffed8f00u,0xffed9060u,0xffed92e0u};
+        constexpr u32 kRooms[3]={11,20,23};
+        enum : unsigned {Blade=1,Helper=2,Grenade=6,Ring=8,Shoes=10,Smart=11};
+        const auto get=[&](u32 a){return unsigned((r.w(a&~15u)>>(a&8u))&0xffu);};
+        const auto put=[&](u32 a,unsigned v){auto& word=r.w(a&~15u);word=u16((word&~(0xffu<<(a&8u)))|(v<<(a&8u)));};
+        std::set<u32> tables;
+        for (u32 c=0; c<3; ++c) for (u32 k=1; k<kRooms[c]; ++k) {
+            const u32 slot=kIconTyp[c]+k*32, table=r.l(slot);
+            if (table<0xffed9000u || table>=0xffedc000u || (table&7u)) { m.fault("widescreen pickup table mismatch",slot); m.stop=true; return false; }
+            tables.insert(table);
+            r.sl(slot, enhanced_data_address(table));
+        }
+        for (const u32 table : tables) {
+            unsigned count[12]{}; bool boss=false;
+            for (u32 i=1; i<=20; ++i) {
+                const unsigned type=get(table+8*i);
+                if (type>11) { m.fault("widescreen pickup type mismatch",table); m.stop=true; return false; }
+                ++count[type]; boss=boss||type==Grenade;
+            }
+            if (boss) continue;
+            for (unsigned n=0; n<2; ++n) {
+                unsigned donor=Shoes;
+                if (count[Shoes]<=1) {
+                    donor=0;
+                    for (const unsigned type : {Blade,Helper,Ring,Smart})
+                        if (count[type]>count[donor] || !donor) donor=type;
+                    if (count[donor]<=1) { m.fault("widescreen pickup table has no donor",table); m.stop=true; return false; }
+                }
+                for (u32 i=20; i>=1; --i) if (get(table+8*i)==donor) { put(table+8*i,Grenade); break; }
+                --count[donor];
+            }
+        }
+    }
     // The retail MOVB/ADJMAX path observes signed bytes. Keep the widened cap
     // below the sign bit after the 6-point difficulty modifier; 248 became
     // negative after SETMAX and prevented later spawns. The fixed L8 process and
@@ -973,8 +1039,9 @@ bool apply_enhanced(Machine& m, int widen) {
         {0xffe12e40u, STV_ROM_POP_ffe12e40}, // FMAX
     };
     for (const auto& [base, values] : population) {
-        const bool ordinary=base==0xffe13018u || base==0xffe12f58u ||
-                            base==0xffe13178u || base==0xffe130d8u;
+        const bool robot=base==0xffe13018u || base==0xffe12f58u;
+        const bool squad=base==0xffe13178u || base==0xffe130d8u;
+        const bool opening_grunt=base==0xffe12d80u, late_grunt=base==0xffe132c8u;
         for (u32 i=0; i<values.size(); ++i) {
             const u32 address=base+i*8, aligned=address&~15u;
             const unsigned shift=(address&8u);
@@ -983,9 +1050,14 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen population table mismatch",address);
                 m.stop=true; return false;
             }
-            // Preserve the authored mix at the point of admission: ordinary
-            // squads get twice the slots, specialist groups get half again.
-            const unsigned scaled=ordinary?2u*original:(3u*original+1u)/2u;
+            // The admission cap, not the release timer, sets the crowd in most
+            // rooms (tools/balance/widescreen_balance_model.py). Robot and
+            // Galaga squads get 175% of the slots, circuit-3 grunts 150%,
+            // circuit-1 grunts 140% (rounded to nearest; a gang can overshoot
+            // the cap once), orbs and heavy shooters 125% (rounded up).
+            const unsigned scaled=robot||squad?(7u*original+2u)/4u:
+                                  late_grunt?(3u*original+1u)/2u:
+                                  opening_grunt?(7u*original+2u)/5u:(5u*original+3u)/4u;
             const u8 count=original<=2?original:u8(std::min(120u,scaled));
             r.w(aligned)=u16((r.w(aligned)&~(0xffu<<shift))|(u16(count)<<shift));
         }
@@ -1011,18 +1083,16 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.stop=true; return false;
             }
         }
+        // Budget, release sleep (3-tick units, retail minimum 1) and the
+        // wave-start on-screen count come from the reviewed stage table
+        // (tools/balance/widescreen_balance_model.py). Release keeps each
+        // boosted row's spawn tail near 115% of retail after the widened
+        // gangs, capped at 135%; mines keep budget == on-screen count.
         r.w(row.address+16)=row.budget;
-        if(row.budget>row.original[1] && row.original[3]>0) {
-            // Keep the spawn tail at about 105% of retail while admitting the
-            // larger population sooner. Rate is measured in 3-tick sleeps;
-            // one is already the fastest representable release cadence.
-            const u64 retail=row.original[3];
-            const u64 release=(retail*row.original[1]*21u)/
-                               (u64(row.budget)*20u);
-            r.w(row.address+48)=u16(std::max<u64>(1,release));
-        }
+        r.w(row.address+48)=row.release;
+        r.w(row.address+64)=row.onscreen;
     }
-    // Widescreen movement: 40% faster, preserving directions and shoe advantage.
+    // Widescreen movement: 30% faster, preserving directions and shoe advantage.
     {
         constexpr s32 expected[] = STV_ROM_expected_FFE1F8A0;
         for (u32 i=0; i<10; ++i) {
@@ -1031,7 +1101,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*7/5)));
+            r.sl(address,u32(s32(s64(expected[i])*13/10)));
         }
     }
     {
@@ -1042,7 +1112,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*7/5)));
+            r.sl(address,u32(s32(s64(expected[i])*13/10)));
         }
     }
     {
@@ -1053,7 +1123,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*7/5)));
+            r.sl(address,u32(s32(s64(expected[i])*13/10)));
         }
     }
     {
@@ -1064,7 +1134,7 @@ bool apply_enhanced(Machine& m, int widen) {
                 m.fault("widescreen player velocity table mismatch",address);
                 m.stop=true; return false;
             }
-            r.sl(address,u32(s32(s64(expected[i])*7/5)));
+            r.sl(address,u32(s32(s64(expected[i])*13/10)));
         }
     }
     m.enhanced_data = std::move(working);
@@ -1129,6 +1199,26 @@ bool enhanced_mutoid_lineup_parent(const Machine& m) {
         p=value(p);
     }
     return false;
+}
+
+u32 bcd_sub_clamped(u32 score, u32 amount) {
+    if (score <= amount) return 0;  // 8-digit BCD orders like its integer value
+    u32 out = 0, borrow = 0;
+    for (int d = 0; d < 32; d += 4) {
+        int digit = int((score >> d) & 0xfu) - int((amount >> d) & 0xfu) - int(borrow);
+        borrow = digit < 0;
+        if (borrow) digit += 10;
+        out |= u32(digit) << d;
+    }
+    return out;
+}
+
+void enhanced_continue_penalty(Machine& m, u32 player_data) {
+    const u32 i = (player_data + 0x40u - 0x01000000u) >> 4;
+    const u32 score = u32(m.ram[i]) | (u32(m.ram[i + 1]) << 16);
+    const u32 next = bcd_sub_clamped(score, ENHANCED_CONTINUE_PENALTY_BCD);
+    m.ram[i] = u16(next);
+    m.ram[i + 1] = u16(next >> 16);
 }
 
 }  // namespace stv::gsp

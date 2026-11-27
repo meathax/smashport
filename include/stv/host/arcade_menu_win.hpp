@@ -143,4 +143,56 @@ inline void arcade_title_controls(HDC dc,int cw,int ch,const ArcadeMenuFont& fon
     font.draw(dc,{x+pad,y+h-h/10,x+w-pad,y+h-h/25},
               selection==0?"LEFT / RIGHT   CHANGE":"ENTER / A   SELECT",false,steel,dark,DT_CENTER);
 }
+
+// GPU live-arena main menu. RGB(255,0,255) is a transparent overlay key and
+// RGB(255,0,128) a translucent dark glass key (resident_display.hlsl overlayPS).
+constexpr COLORREF kOverlayClear=RGB(255,0,255), kOverlayGlass=RGB(255,0,128);
+inline RECT arcade_scene_panel(int cw,int ch) {
+    const int margin=std::max(12,cw/28);
+    // A small card at the bottom centre: the booth behind it is the show.
+    const int w=std::clamp(cw*20/100,std::min(cw-2*margin,260),std::max(260,cw-2*margin));
+    const int bottom=ch*95/100, h=std::max(std::min(ch*85/100,240),ch*46/100);
+    const int left=(cw-w)/2;
+    return {left,bottom-h,left+w,bottom};
+}
+inline void arcade_scene_controls(HDC dc,int cw,int ch,const ArcadeMenuFont& font,int selection,bool enhanced,
+                                  unsigned long long ms) {
+    const RECT panel=arcade_scene_panel(cw,ch);
+    const int x=panel.left,y=panel.top,w=panel.right-panel.left,h=panel.bottom-panel.top;
+    const int unit=std::max(1,h/220);
+    auto fill=[&](int l,int t,int r,int b,COLORREF c) {
+        RECT box{l,t,r,b};SetDCBrushColor(dc,c);FillRect(dc,&box,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+    };
+    const COLORREF steel=RGB(84,159,158), red=RGB(127,26,28), gold=RGB(255,212,78), glass=kOverlayGlass;
+    fill(x,y,x+w,y+h,glass);
+    fill(x,y,x+w,y+unit,steel);fill(x,y+h-unit,x+w,y+h,steel);
+    fill(x,y,x+unit,y+h,steel);fill(x+w-unit,y,x+w,y+h,steel);
+    const int pad=w/14, head=h*17/100;
+    fill(x+unit,y+unit,x+w-unit,y+head,red);
+    fill(x+unit,y+head,x+w-unit,y+head+2*unit,gold);
+    font.draw(dc,{x+pad,y+head/6,x+w-pad,y+head*3/5},"SMASH T.V.",true,gold,red,DT_CENTER);
+    font.draw(dc,{x+pad,y+head*13/20,x+w-pad,y+head*9/10},"LIVE FROM THE ARENA",false,RGB(221,235,233),red,DT_CENTER);
+    const int top=y+head+h/20, mode_h=h*13/100;
+    if(selection==0){fill(x+unit,top,x+w-unit,top+mode_h,red);fill(x+unit,top,x+5*unit,top+mode_h,gold);}
+    const COLORREF mpaper=selection==0?red:glass;
+    font.draw(dc,{x+pad,top+unit*2,x+w-pad,top+mode_h*2/5},enhanced?"CUSTOM MODE":"CLASSIC ARCADE EXPERIENCE",false,steel,mpaper);
+    font.draw(dc,{x+pad,top+mode_h/2,x+w-pad,top+mode_h-unit*2},
+              std::string("< ")+game_mode_label(enhanced)+" >",true,gold,mpaper);
+    const char* actions[]={"START","MULTIPLAYER","OPTIONS","GLOBAL LEADERBOARDS","EXIT"};
+    const int first=top+mode_h+h/28,row=h*9/100;
+    for(int i=0;i<5;++i) {
+        const int t=first+i*row;
+        const bool on=selection==i+1;
+        if(on){fill(x+unit,t,x+w-unit,t+row-unit,red);fill(x+unit,t,x+5*unit,t+row-unit,gold);}
+        font.draw(dc,{x+pad,t+row/5,x+w-pad,t+row*4/5},actions[i],true,on?gold:RGB(221,235,233),on?red:glass);
+    }
+    font.draw(dc,{x+pad,y+h-h/11,x+w-pad,y+h-h/28},
+              selection==0?"LEFT / RIGHT   CHANGE":"ENTER / A   SELECT",false,steel,glass,DT_CENTER);
+    // broadcast bug: blinking ON AIR light, top right
+    const int bh=std::max(14,ch/22),bw=bh*4,bx=cw-std::max(12,cw/28)-bw,by=ch*8/100;
+    fill(bx,by,bx+bw,by+bh,red);
+    if((ms/600)%2==0)fill(bx+bh/4,by+bh/3,bx+bh/4+bh/3,by+bh/3+bh/3,RGB(255,236,200));
+    font.draw(dc,{bx+bh*3/4,by+bh/5,bx+bw-bh/5,by+bh*4/5},"ON AIR",true,gold,red,DT_CENTER);
+    font.draw(dc,{bx-bw/2,by+bh+unit*3,bx+bw,by+bh+bh*3/5},"ARENA CAM 1",false,RGB(221,235,233),glass,DT_RIGHT);
+}
 }

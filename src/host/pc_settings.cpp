@@ -144,6 +144,8 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
         else if (key == "weapon_signatures") candidate.weapon_signatures = n;
         else if (key == "temporal_trails") { if (n < 0 || n > 3) return invalid(); } // retired preference
         else if (key == "reverb") candidate.reverb = n;
+        else if (key == "weapon_variants") { if (n < 0 || n > 2) return invalid(); } // retired: Widescreen always plays variants
+        else if (key == "variant_notify") { if (n != 0 && n != 1) return invalid(); candidate.variant_notify = n != 0; }
         else if (key == "reduce_shake" || key == "reduce_flashing" || key == "reduce_motion") {
             if (n != 0 && n != 1) return invalid();
             if (key == "reduce_shake") candidate.reduce_shake = n != 0;
@@ -160,11 +162,12 @@ SettingsLoad load_pc_settings(const std::filesystem::path& file, PcSettings& set
             if (key == "audio_wide") candidate.audio_wide = n != 0;
             if (key == "audio_hifi") candidate.audio_hifi = n != 0;
         }
-        else if (key == "smooth_motion" || key == "fullscreen" || key == "vsync" || key == "fps" || key == "muted" || key == "swap_pads") {
+        else if (key == "smooth_motion" || key == "unlocked_fps" || key == "fullscreen" || key == "vsync" || key == "fps" || key == "muted" || key == "swap_pads") {
             if (n != 0 && n != 1) return invalid();
             if (key == "smooth_motion") candidate.smooth_motion = n != 0;
             if (key == "fullscreen") candidate.fullscreen = n != 0;
             if (key == "vsync") candidate.vsync = n != 0;
+            if (key == "unlocked_fps") candidate.unlocked_fps = n != 0;
             if (key == "fps") candidate.show_fps = n != 0;
             if (key == "muted") candidate.muted = n != 0;
             if (key == "swap_pads") candidate.swap_pads = n != 0;
@@ -233,11 +236,12 @@ bool save_pc_settings(const std::filesystem::path& file, const PcSettings& setti
            << "\nreduce_motion=" << int(settings.reduce_motion)
            << "\nfilter=" << settings.filter << "\nfullscreen=" << int(settings.fullscreen)
            << "\nsmooth_motion=" << int(settings.smooth_motion) << "\nrun_ahead=" << settings.run_ahead
-           << "\nvsync=" << int(settings.vsync) << "\nfps=" << int(settings.show_fps)
+           << "\nvsync=" << int(settings.vsync) << "\nunlocked_fps=" << int(settings.unlocked_fps) << "\nfps=" << int(settings.show_fps)
            << "\nvolume=" << settings.volume << "\nmuted=" << int(settings.muted)
            << "\nextended_sound=" << int(settings.extended_sound) << "\nreverb=" << settings.reverb
            << "\naudio_wide=" << int(settings.audio_wide) << "\naudio_hifi=" << int(settings.audio_hifi)
-           << "\nswap_pads=" << int(settings.swap_pads) << "\nname=" << settings.player_name << '\n';
+           << "\nvariant_notify=" << int(settings.variant_notify)
+           << "\nswap_pads=" << int(settings.swap_pads)<< "\nname=" << settings.player_name << '\n';
     output.flush();
     bool ok = bool(output);
     output.close();

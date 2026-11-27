@@ -7,6 +7,7 @@
 #include "stv/host/arcade_menu_win.hpp"
 #include "stv/host/arcade_scores.hpp"
 #include "stv/host/pad.hpp"
+#include "stv/host/replay_proof.hpp"
 
 #include <algorithm>
 #include <array>
@@ -52,9 +53,28 @@ public:
 };
 
 // ---------------------------------------------------------------- navigation
-inline constexpr const char* kLeaderboardBoards[2] = {"arcade", "wide2"};
-// "wide2" holds Widescreen ruleset 2 (kWidescreenRuleset). The retired "wide" board
-// keeps v1.0.0-v1.0.4 scores, which were set under different Widescreen rules.
+// The Widescreen board is derived from the ruleset ("wide" + kWidescreenRuleset),
+// so a ruleset bump moves to a fresh board automatically; the Worker accepts
+// any "wideN" whose replay proof carries ruleset N. Ruleset 5 ("wide5") is the
+// 28 November pressure rebalance. Retired "wide" (v1.0.0-v1.0.4), "wide2"
+// (v1.0.5-v1.0.8), "wide3" (crowd rebalance) and "wide4" (always-on variants)
+// keep earlier scores.
+struct LeaderboardBoardName { char text[8]; };
+constexpr LeaderboardBoardName widescreen_board_name(unsigned ruleset) {
+    LeaderboardBoardName b{{'w', 'i', 'd', 'e'}};
+    int i = 4;
+    if (ruleset >= 10) b.text[i++] = char('0' + ruleset / 10 % 10);
+    b.text[i++] = char('0' + ruleset % 10);
+    b.text[i] = 0;
+    return b;
+}
+static_assert(kWidescreenRuleset >= 2 && kWidescreenRuleset < 100, "Widescreen board name needs a two-digit ruleset");
+inline constexpr LeaderboardBoardName kWidescreenBoard = widescreen_board_name(kWidescreenRuleset);
+// Build label sent with every submission. The Worker accepts scores only from
+// the release labels listed in its GAMES "versions" rule, so bump this with
+// each public release and add the new label there before publishing.
+inline constexpr const char* kLeaderboardClientVersion = "l8-player-1.0.9";
+inline constexpr const char* kLeaderboardBoards[2] = {"arcade", kWidescreenBoard.text};
 inline constexpr const char* kLeaderboardBoardLabels[2] = {"ARCADE  4:3", "WIDESCREEN  16:9"};
 inline constexpr const char* kLeaderboardPeriods[3] = {"all", "week", "day"};
 inline constexpr const char* kLeaderboardPeriodLabels[3] = {"ALL TIME", "LAST 7 DAYS", "LAST 24 HOURS"};

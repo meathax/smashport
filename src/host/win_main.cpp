@@ -7,6 +7,7 @@
 // code are compiled C++ (generated/private).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <future>
 #include <windows.h>
 #include <commdlg.h>
 #include <objbase.h>
@@ -34,6 +35,8 @@
 #include "stv/host/menu_draw_win.hpp"
 #include "stv/host/global_leaderboard.hpp"
 #include "stv/host/replay_proof.hpp"
+#include "stv/host/variant_toast.hpp"
+#include "stv/gsp/variants.hpp"
 #include "stv/host/gpu_filter.hpp"
 #include "stv/gsp/rom_import.hpp"
 #include "resources/resource.h"
@@ -52,6 +55,7 @@
 #include "stv/host/firing_point.hpp"
 #include "stv/host/drop_player.hpp"
 #include "stv/host/audio_fx.hpp"
+#include "stv/host/menu_music.hpp"
 #include "stv/host/room_cinema.hpp"
 #include "stv/snd/voices.hpp"
 #include <algorithm>
@@ -81,6 +85,7 @@ stv::snd::Board g_snd;
 std::unique_ptr<stv::game::CoScheduler> g_sched;
 std::unique_ptr<stv::snd::Mixer> g_mixer;
 stv::host::AudioOut g_audio;
+stv::host::MenuMusic g_menu_music;
 stv::host::AudioTelemetry g_audio_telemetry;
 std::vector<float> g_pcm;
 stv::host::AudioPeakObserver g_audio_peaks;
@@ -177,6 +182,8 @@ const stv::net::LobbyRoom* selected_room();
 void select_room(const stv::net::LobbyRoom& room);
 bool lobby_menu_lines(std::vector<std::string>& lines);
 bool reset_coupled_game(bool keep_cmos = true);
+u64 g_machine_resets = 0;   // reset_coupled_game() count (main-loop boot re-arm)
+u32 g_preboot_frames = 0;   // power-on frames already run behind the main menu
 bool scripted_run();
 void poll_pad_controls();
 void write_player_log(std::string_view text);
@@ -198,6 +205,10 @@ HWND g_wnd = nullptr;
 WINDOWPLACEMENT g_place{sizeof(WINDOWPLACEMENT)};
 std::vector<u32> g_pixels;
 std::wstring g_data_dir;
+// Weapon variants (gameplay option) and their pickup notification (presentation only).
+stv::host::VariantToastQueue g_variant_toasts;
+ULONGLONG g_variant_toast_last = 0;
+void sync_variant_state();
 bool g_enhanced = true;        // default to the enhanced_l8_16_9 widened playfield
 std::string g_status;
 std::string g_toast;           // short notice (pad connected), shown for 3 s
@@ -245,6 +256,7 @@ bool g_menu = false;
 stv::host::ArcadeMenuFont g_menu_font;
 bool g_menu_font_ready = false;
 bool g_mode_menu = false;
+float g_menu_scene_scale = 1.0f;    // upper bound of the booth scene resolution (GPU-timed below it)
 int g_mode_selection = 1; // Start
 bool g_title_submenu = false;
 bool g_online_room = false, g_epic_room = false, g_close_room_requested = false;
@@ -471,6 +483,7 @@ stv::host::EnhanceEffects g_enhance_effects;
 stv::host::EnemyRemainsTracker g_enemy_remains;
 stv::host::ResidentEffects g_resident_effects;
 bool g_resident_ready = false;
+bool g_resident_prepared = false;   // D3D11 device up (the live menu arena needs no game frame)
 
 void build_software_frame(const Machine& m) {
     g_frame_width = stv::gsp::scene_view_width(m);
@@ -492,9 +505,18 @@ void build_software_frame(const Machine& m) {
 // Menu artwork comes only from the player's ROM: a private machine boots the
 // retail program in the background (no sound board, no presentation) until the
 // title page has faded in, and keeps that 410x256 frame. Nothing is shipped.
+// Booth monitor feed atlas: kMenuFeedCols x kMenuFeedRows tiles of 547x256.
+// The last kMenuLeaderSlots tiles hold the widescreen leaderboard's top ten
+// (resident_menu.hlsl LEADER_SLOT0 must match kMenuFrameSlots).
+constexpr int kMenuFeedCols = 8, kMenuFeedRows = 6, kMenuFeedSlots = kMenuFeedCols * kMenuFeedRows;
+constexpr int kMenuLeaderSlots = 10, kMenuFrameSlots = kMenuFeedSlots - kMenuLeaderSlots;
 struct MenuTitle {
     std::mutex lock;
     std::vector<u32> pixels;          // 547x256, native page centred
+    // Further distinct attract-mode frames (arena rooms, demo gameplay) for
+    // the booth monitors; same 547x256 layout. Never shipped, never saved.
+    std::vector<std::vector<u32>> extras;
+    std::atomic<int> extra_count{0};
     std::atomic<bool> ready{false}, stop{false};
     std::thread worker;
     ~MenuTitle() { stop = true; if (worker.joinable()) worker.join(); }
@@ -532,9 +554,114 @@ void capture_menu_title(std::filesystem::path rom) {
             }
             g_menu_title.ready = true;
             if (g_wnd) PostMessageW(g_wnd, WM_APP + 12, 0, 0);
-            return;
+            break;
+        }
+        if (!g_menu_title.ready) return;
+        // Keep running the attract sequence at low priority and keep frames
+        // that are well lit and differ from every kept frame. Once the attract
+        // loop has given what it has, this private machine (never saved, no
+        // sound board, no CMOS write-back) coins up two contestants and a bot
+        // plays, so the booth monitors also carry live studio floor action.
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+        std::vector<std::array<int, 48>> signatures;
+        unsigned last_kept = 0;
+        bool playing = false;
+        unsigned join_frame[2]{}, bot_hold = 0;
+        u32 bot[2]{};
+        u32 bot_seed = 0x9e3779b9u;
+        auto bot_rand = [&] { bot_seed ^= bot_seed << 13; bot_seed ^= bot_seed >> 17; bot_seed ^= bot_seed << 5; return bot_seed; };
+        // MAME smashtv IN0 nibbles: up, down, left, right (move low, fire high)
+        static constexpr u32 kDirs[9] = {0, 1, 2, 4, 8, 1 | 4, 1 | 8, 2 | 4, 2 | 8};
+        for (unsigned frame = 0; frame < 120000 && !m->stop && !g_menu_title.stop &&
+                                 g_menu_title.extra_count < kMenuFrameSlots - 1; ++frame) {
+            if (!playing && (g_menu_title.extra_count >= 16 || frame >= 24000)) playing = true;
+            if (playing) {
+                if (bot_hold == 0) {
+                    bot_hold = 25 + bot_rand() % 50;
+                    for (auto& b : bot) b = kDirs[bot_rand() % 9] | (kDirs[1 + bot_rand() % 8] << 4);
+                } else --bot_hold;
+                stv::net::PlayerInput in[2]{};
+                for (int p = 0; p < 2; ++p) {
+                    if (stv::host::player_active(*m, p)) { join_frame[p] = 0; in[p] = bot[p]; continue; }
+                    const auto pulse = stv::host::join_pulse(join_frame[p]++ % 120);
+                    in[p] = (pulse.coin ? 0x100u : 0u) | (pulse.start ? 0x200u : 0u);
+                }
+                stv::net::apply_inputs(*m, in[0], in[1]);
+            }
+            frame_done = false;
+            m->run_until_cycle = ~0ull;
+            m->recompute_next_event();
+            while (!frame_done && !m->stop && !g_menu_title.stop) pc = stv::gsp::l8_run(*m, pc, m->c.cyc + 1000000);
+            if (frame - last_kept < (playing ? 90u : 150u) || frame % 10) continue;
+            if (game_scene_state(*m) == 0x30 && scene_background(*m) == 0xffea56d0u) continue;
+            std::vector<u32> page(std::size_t(VIS_W) * VIS_H);
+            std::size_t lit = 0;
+            for (int y = 0; y < VIS_H; ++y)
+                for (int x = 0; x < VIS_W; ++x) {
+                    const u32 c = m->pens[m->frame[std::size_t(y + VIS_MINY) * m->vram_w + VIS_MINX + x] & 0x0fff] & 0xffffffu;
+                    page[std::size_t(y) * VIS_W + x] = c;
+                    lit += c != 0;
+                }
+            if (lit < page.size() * 45 / 100) continue;
+            std::array<int, 48> sig{};
+            for (int i = 0; i < 48; ++i) {
+                const u32 c = page[std::size_t((i / 8) * 40 + 20) * VIS_W + (i % 8) * 50 + 25];
+                sig[std::size_t(i)] = int((c >> 16) & 255) + int((c >> 8) & 255) + int(c & 255);
+            }
+            bool distinct = true;
+            for (const auto& old : signatures) {
+                int diff = 0;
+                for (int i = 0; i < 48; ++i) diff += std::abs(sig[std::size_t(i)] - old[std::size_t(i)]) > 60;
+                if (diff < (playing ? 12 : 20)) { distinct = false; break; }
+            }
+            if (!distinct) continue;
+            signatures.push_back(sig);
+            last_kept = frame;
+            int width = VIS_W;
+            stv::host::extend_title(page, width, true);
+            {
+                std::lock_guard guard(g_menu_title.lock);
+                g_menu_title.extras.push_back(std::move(page));
+            }
+            ++g_menu_title.extra_count;
         }
     });
+}
+
+// One booth-monitor card for the widescreen leaderboard: rank, initials and
+// score in the ROM's RD15/RD7 fonts on black (the shader keys black out and
+// draws its own backdrop, shadow and shine). 547x256, native 410 columns centred.
+std::vector<u32> render_leader_card(int rank, const std::string& name, std::uint64_t score) {
+    std::vector<u32> out(std::size_t(547) * 256, 0);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = 547; bi.bmiHeader.biHeight = -256;
+    bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    HDC dc = CreateCompatibleDC(nullptr);
+    void* bits = nullptr;
+    HBITMAP bmp = dc ? CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    if (!bmp || !bits) { if (bmp) DeleteObject(bmp); if (dc) DeleteDC(dc); return out; }
+    HGDIOBJ old = SelectObject(dc, bmp);
+    std::memset(bits, 0, out.size() * 4);
+    SetStretchBltMode(dc, COLORONCOLOR);
+    const COLORREF black = RGB(0, 0, 0);
+    const COLORREF medal = rank == 1 ? RGB(255, 212, 78) : rank == 2 ? RGB(214, 224, 232) :
+                           rank == 3 ? RGB(232, 150, 80) : RGB(106, 204, 221);
+    std::string initials = name.empty() ? std::string("???") : name;
+    for (char& c : initials) if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+    // Three centred bands inside the bulb border: rank, initials, score.
+    // The score uses the large font too so it stays readable on a far monitor.
+    g_menu_font.draw(dc, {68 + 110, 26, 478 - 110, 80}, "#" + std::to_string(rank), true, medal, black, DT_CENTER);
+    g_menu_font.draw(dc, {68 + 40, 88, 478 - 40, 166}, initials, true, RGB(240, 244, 242), black, DT_CENTER);
+    g_menu_font.draw(dc, {68 + 30, 176, 478 - 30, 226}, stv::host::leaderboard_score_text(score), true,
+                     RGB(255, 212, 78), black, DT_CENTER);
+    GdiFlush();
+    std::memcpy(out.data(), bits, out.size() * 4);
+    for (auto& px : out) px &= 0xffffffu;
+    SelectObject(dc, old);
+    DeleteObject(bmp);
+    DeleteDC(dc);
+    return out;
 }
 
 std::vector<u32> build_menu_backdrop(const Machine& m) {
@@ -676,9 +803,29 @@ HANDLE presentation_wait_event() {
     return g_settings.sync_presentation() && !g_compositor_failed ? g_compositor.pending_event() : nullptr;
 }
 
+// Refresh rate of the monitor showing the window, re-read at most once a second
+// (moves between monitors and mode changes). Falls back to 60 Hz.
+double display_refresh_hz(HWND wnd) {
+    static double hz = 60.0;
+    static ULONGLONG checked = 0;
+    const ULONGLONG tick = GetTickCount64();
+    if (checked && tick - checked < 1000) return hz;
+    checked = tick;
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof info;
+    DEVMODEW mode{};
+    mode.dmSize = sizeof mode;
+    if (HMONITOR monitor = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
+        monitor && GetMonitorInfoW(monitor, &info) && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
+        mode.dmDisplayFrequency > 1)
+        hz = std::clamp(double(mode.dmDisplayFrequency), 30.0, 500.0);
+    return hz;
+}
+
 // One video frame: the scheduler runs both programs until the next vblank begins;
 // sound samples are produced as timeslices end.
 void run_one_frame() {
+    sync_variant_state();
     g_frame_done = false;
     if (!g_started) {
         g_started = true;
@@ -730,6 +877,7 @@ const Machine& local_video_frame() {
     future.on_hcount_read = {};
     future.on_object = {};
     future.on_sound_probe = {};
+    future.on_variant_pickup = {};   // speculative frames never notify
     sound.copy_prediction_state(g_snd);
     stv::game::CoScheduler scheduler(future, sound);
     scheduler.copy_prediction_timing(*g_sched);
@@ -1645,7 +1793,7 @@ stv::host::PcMenuContext menu_context() {
     context.reduce_shake = g_settings.reduce_shake;
     context.reduce_flashing = g_settings.reduce_flashing;
     context.reduce_motion = g_settings.reduce_motion;
-    context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion);
+    context.set_available(stv::host::PcMenuItem::Vsync, g_dwm_flush != nullptr && !g_settings.smooth_motion && !g_settings.unlocked_fps);
     context.set_available(stv::host::PcMenuItem::WindowScale, !g_fullscreen);
     // DXR traces actor shadows itself and the renderer disables the 2.5D contact pass.
     context.set_available(stv::host::PcMenuItem::ContactShadows, !g_settings.hardware_rt);
@@ -1657,6 +1805,7 @@ stv::host::PcMenuContext menu_context() {
         using I=stv::host::PcMenuItem;
         for (auto item : {I::Connections,I::PublicHost,I::PublicBrowser}) context.set_available(item,false);
     }
+    context.set_available(stv::host::PcMenuItem::VariantNotify, g_enhanced);   // variants exist only in Widescreen
     context.set_available(stv::host::PcMenuItem::HostMode, !in_room && !g_net.on);
     context.set_available(stv::host::PcMenuItem::PlayerName, !in_room && !g_net.on);
     return context;
@@ -1754,6 +1903,25 @@ bool scripted_run() {
     return GetEnvironmentVariableW(L"STV_HOST_INPUTS", nullptr, 0) != 0 || GetEnvironmentVariableW(L"STV_NET_INPUTS", nullptr, 0) != 0;
 }
 
+// Weapon variants are part of the Widescreen rules (ruleset 4): every
+// Widescreen machine, local, netplay (peers share one build) and the replay
+// verifier (stv::net::run_replay), plays them at the balanced rate; Arcade never
+// has them. They are not optional, so Widescreen scores and proofs stay valid.
+void sync_variant_state() {
+    const bool allowed = g_enhanced && g_m.enhanced;
+    const std::uint8_t mode = allowed ? stv::gsp::kWidescreenVariantMode : std::uint8_t(0);
+    if (g_m.variant_mode != mode) g_m.variant_mode = mode;
+    if (g_net.mr) g_net.mr->variant_mode = g_net.mr->enhanced ? stv::gsp::kWidescreenVariantMode : std::uint8_t(0);
+    if (allowed) {
+        if (!g_m.on_variant_pickup)
+            g_m.on_variant_pickup = [](int player, std::uint8_t variant) {
+                if (g_settings.variant_notify) g_variant_toasts.push(player, variant);
+            };
+    } else if (g_m.on_variant_pickup) {
+        g_m.on_variant_pickup = {};
+    }
+}
+
 void load_cmos() {
     if (scripted_run()) return;
     FILE* f = nullptr;
@@ -1839,7 +2007,7 @@ void start_leaderboard(bool automated) {
     }
     if (config.url.empty()) config.url = STV_LEADERBOARD_URL;
     config.game = "smashtv";
-    config.version = "l8-player";
+    config.version = stv::host::kLeaderboardClientVersion;
     config.data_dir = g_data_dir + L"\\leaderboard";
     if (g_portable) config.identity_dir = config.data_dir;   // not the shared AppData id
     if (!g_lb_client.start(config)) write_player_log("Global leaderboard client could not start.");
@@ -2041,6 +2209,8 @@ bool reset_coupled_game(bool keep_cmos) {
     g_frame_done = false;
     g_paused = false;
     g_test_frames = 0;
+    ++g_machine_resets;
+    g_preboot_frames = 0;
     g_status.clear();
     g_frame_width = stv::gsp::scene_view_width(g_m);
     g_pixels.assign(std::size_t(g_frame_width) * VIS_H, 0);
@@ -2052,6 +2222,7 @@ bool reset_coupled_game(bool keep_cmos) {
     g_keyboard_blocked = true;
     g_pad_router.suppress_until_neutral();
     g_proof.begin(g_enhanced, g_m.cmos);   // a fresh machine starts a new provable run
+    g_variant_toasts.clear();
     return true;
 }
 
@@ -2561,9 +2732,12 @@ std::string menu_value(stv::host::PcMenuItem item) {
     case I::PixelFilter: return stv::host::video_filter_name(static_cast<stv::host::VideoFilterMode>(g_settings.filter));
     case I::Motion: return g_settings.smooth_motion ? "SMOOTH MOTION" : "Arcade exact";
     case I::RunAhead: return g_settings.run_ahead ? std::to_string(g_settings.run_ahead) + (g_settings.run_ahead == 1 ? " frame" : " frames") : "Off";
-    case I::Vsync: if (g_settings.smooth_motion) return "on (Smooth Motion)";
+    case I::FrameRate: return g_settings.unlocked_fps ? "UNLOCKED" : "display sync";
+    case I::Vsync: if (g_settings.unlocked_fps) return "off (unlocked)";
+                   if (g_settings.smooth_motion) return "on (Smooth Motion)";
                    return g_settings.vsync ? "on (desktop sync)" : "off";
     case I::ShowFps: return g_settings.show_fps ? "on" : "off";
+    case I::VariantNotify: return g_settings.variant_notify ? "on" : "off";
     case I::HostMode: return stv::host::game_mode_label(g_host_mode.value_or(g_enhanced));
     case I::PlayfieldProfile: return g_enhanced ? "16:9 enhanced" : "reference";
     case I::MasterVolume: return std::to_string(g_settings.volume) + "%";
@@ -2635,6 +2809,7 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::StereoWidth: return "STEREO SPREAD / SUMS CLEANLY TO MONO";
     case I::HiFiAudio: return "SMOOTHS 8-BIT HASH / CABINET BASS / CLIP-FREE LIMITER";
     case I::Controls: return "REMAP KEYS AND PADS / TUNE YOUR STICKS";
+    case I::VariantNotify: return "PICKUP TOAST NAMES THE VARIANT / PRESENTATION ONLY";
     case I::HostMode: return g_host_mode.value_or(g_enhanced) != g_enhanced && g_record_local
         ? "HOSTING THIS MODE STARTS A NEW GAME" : "LEFT / RIGHT: CHOOSE THE MODE GUESTS WILL PLAY";
     case I::MainMenu: return "CHOOSE ORIGINAL ARCADE OR CUSTOM WIDESCREEN / ENDS THIS GAME";
@@ -2643,6 +2818,7 @@ const char* menu_help(stv::host::PcMenuItem item) {
     case I::Quit: return "LEAVE THE SHOW / CONFIRMATION REQUIRED";
     case I::Motion: return "SMOOTH CAMERA PANS BETWEEN ARCADE FRAMES";
     case I::RunAhead: return "PREDICT LOCAL VIDEO / HIGHER VALUES USE MORE CPU";
+    case I::FrameRate: return "UNLOCKED: EXCLUSIVE FULLSCREEN, NO FPS CAP / GAME SPEED STAYS EXACT";
     case I::Vsync: return "DISPLAY SYNC ONLY / GAME SPEED STAYS EXACT";
     case I::PixelFilter: return "GUEST: ARCADE / ROYALE: FINE MASK / LOTTES: FAST";
     case I::Glow: return "BRIGHT-PIXEL LIGHT SPILL / NOT OBJECT LIGHTING";
@@ -2705,7 +2881,7 @@ void paint(HWND wnd) {
         ?levels[std::clamp(g_settings.combat_feedback,0,3)]:0.f;
     float trauma=overall*levels[std::clamp(g_settings.camera_shake,0,3)]*director.camera_trauma;
     if(g_settings.reduce_shake || g_settings.reduce_motion || g_menu || g_paused || g_connecting)trauma=0;
-    const float phase = g_settings.smooth_motion &&
+    const float phase = (g_settings.smooth_motion || g_settings.unlocked_fps) &&
                         !g_menu && !g_paused && !g_connecting ? g_camera_phase : 1.0f;
     const float frame=float(g_enhance_effects.packet().frame);
     const float traumaX=std::sin(frame*2.399f)*trauma*3.2f;
@@ -2725,8 +2901,91 @@ void paint(HWND wnd) {
     bi.bmiHeader.biBitCount = 32;
     // A paused player may only receive this one WM_PAINT until the next input.
     const bool one_shot = !g_net.on && (g_menu || g_paused || g_m.stop || g_connecting);
-    bool overlay=g_menu||g_paused||g_m.stop||g_connecting||!g_status.empty()||(!g_toast.empty()&&GetTickCount64()<g_toast_until)||g_settings.show_fps;
-    bool direct=g_resident_ready&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,
+    // Pickup toasts run on host time; the PC menu freezes and hides them.
+    {
+        const ULONGLONG tick=GetTickCount64();
+        const double dt=g_variant_toast_last?double(std::min<ULONGLONG>(tick-g_variant_toast_last,50)):0.0;
+        g_variant_toast_last=tick;
+        g_variant_toasts.advance(g_menu?0.0:dt);
+        // Debug: STV_VARIANT_TOAST_DEMO=1 keeps two sample toasts on screen (screenshots).
+        static const bool demo=GetEnvironmentVariableW(L"STV_VARIANT_TOAST_DEMO",nullptr,0)!=0;
+        if(demo&&!g_menu&&!g_variant_toasts.active()){
+            g_variant_toasts.push(0,std::uint8_t(stv::gsp::Variant::ShrapnelSpread));
+            g_variant_toasts.push(1,std::uint8_t(stv::gsp::Variant::TwinSeekers));
+        }
+    }
+    const bool toast_visible=g_variant_toasts.active()&&!g_menu&&!g_connecting;
+    bool overlay=g_menu||g_paused||g_m.stop||g_connecting||!g_status.empty()||(!g_toast.empty()&&GetTickCount64()<g_toast_until)||g_settings.show_fps||toast_visible;
+    // Unlocked frame rate needs exclusive fullscreen; release it whenever the
+    // window is not the focused fullscreen game so Alt-Tab and other apps behave.
+    if(g_resident_ready)g_resident_effects.set_exclusive_fullscreen(g_settings.unlocked_fps&&g_fullscreen&&GetForegroundWindow()==wnd&&!IsIconic(wnd));
+    // Main menu: the presenter draws the live procedural arena behind the menu.
+    // Title menu and the Options/Multiplayer pages opened from it share the booth.
+    const bool menu_scene=(g_resident_ready||g_resident_prepared)&&(g_mode_menu||g_title_submenu)&&!g_connecting;
+    static LARGE_INTEGER scene_start{};
+    LARGE_INTEGER qpc{},qpf{};QueryPerformanceCounter(&qpc);QueryPerformanceFrequency(&qpf);
+    if(!menu_scene||!scene_start.QuadPart)scene_start=qpc;
+    // Monitor feed atlas: title, attract and bot-play frames, then the
+    // widescreen leaderboard's top ten as cards in the game's own font.
+    static int feed_uploaded=-1;
+    static std::vector<std::vector<u32>> leader_cards;
+    static std::string leader_signature;
+    static bool leaders_changed=false;
+    static ULONGLONG leader_poll=0;
+    // Only the live, current board is shown: offline, an error, an empty board
+    // or a cached page older than ten minutes drops the cards and the monitors
+    // fall back to the standard images until a fresh fetch succeeds.
+    if(menu_scene&&GetTickCount64()>=leader_poll){
+        leader_poll=GetTickCount64()+2000;
+        const char* board=stv::host::kLeaderboardBoards[1];
+        rl::lb::Page page;
+        std::int64_t fetched=0;
+        const bool usable=g_menu_font_ready&&g_lb_client.started()&&g_lb_client.configured();
+        if(usable)g_lb_client.request(board,"all",0);   // the client throttles repeats
+        const bool live=usable&&!g_lb_client.offline()&&g_lb_client.last_error().empty()&&
+                        g_lb_client.page(board,"all",0,page,&fetched)&&!page.rows.empty()&&
+                        lb_now()-fetched<=600;
+        {
+            std::string signature;
+            if(live)
+                for(std::size_t i=0;i<page.rows.size()&&i<std::size_t(kMenuLeaderSlots);++i)
+                    signature+=page.rows[i].name+''+std::to_string(page.rows[i].score)+'';
+            if(signature!=leader_signature){
+                leader_signature=signature;
+                leader_cards.clear();
+                for(std::size_t i=0;live&&i<page.rows.size()&&i<std::size_t(kMenuLeaderSlots);++i)
+                    leader_cards.push_back(render_leader_card(page.rows[i].rank>0?page.rows[i].rank:int(i+1),
+                                                              page.rows[i].name,page.rows[i].score));
+                leaders_changed=true;
+            }
+        }
+    }
+    const bool frames_new=g_menu_title.ready&&feed_uploaded<g_menu_title.extra_count;
+    if(menu_scene&&(frames_new||leaders_changed)){
+        std::lock_guard guard(g_menu_title.lock);
+        static std::vector<u32> atlas(std::size_t(547*kMenuFeedCols)*256*kMenuFeedRows);
+        std::vector<const std::vector<u32>*> pages;
+        if(g_menu_title.ready&&g_menu_title.pixels.size()==std::size_t(547)*256){
+            pages.push_back(&g_menu_title.pixels);
+            for(const auto& e:g_menu_title.extras)if(e.size()==g_menu_title.pixels.size()&&pages.size()<std::size_t(kMenuFrameSlots))pages.push_back(&e);
+        }
+        const int frames=int(pages.size());
+        pages.resize(std::size_t(kMenuFrameSlots),nullptr);
+        for(const auto& card:leader_cards)pages.push_back(&card);
+        for(std::size_t i=0;i<pages.size();++i)
+            if(pages[i]&&pages[i]->size()==std::size_t(547)*256)
+                for(int y=0;y<256;++y)
+                    std::copy_n(pages[i]->data()+std::size_t(y)*547,547,
+                                atlas.data()+(std::size_t((i/kMenuFeedCols)*256+y))*547*kMenuFeedCols+(i%kMenuFeedCols)*547);
+        if(g_resident_effects.set_menu_image(atlas.data(),547*kMenuFeedCols,256*kMenuFeedRows,frames,int(leader_cards.size()))){
+            if(g_menu_title.ready)feed_uploaded=int(g_menu_title.extras.size());
+            leaders_changed=false;
+        }
+    }
+    if(g_resident_ready||g_resident_prepared)g_resident_effects.set_menu_scene(menu_scene,
+        float(std::fmod(double(qpc.QuadPart-scene_start.QuadPart)/double(qpf.QuadPart)+4.0,3600.0)),
+        g_menu_scene_scale,g_settings.reduce_motion||g_settings.reduce_flashing);
+    bool direct=(g_resident_ready||menu_scene)&&g_resident_effects.draw(wnd,cw,ch,x0,y0,w,h,g_settings,overlay,one_shot,
         g_camera.offset(g_camera.dx,phase)+traumaX,g_camera.offset(g_camera.dy,phase)+traumaY,baseW,baseH);
     static MenuPaintSurface menu_surface;
     const HDC window_dc = dc;
@@ -2757,9 +3016,14 @@ void paint(HWND wnd) {
     SetTextColor(dc, RGB(255, 255, 255));
     if (g_menu || (g_connecting && g_lobby)) {
         RECT menu_background{0,0,cw,ch};
-        SetDCBrushColor(dc,RGB(0,0,0));
-        FillRect(dc,&menu_background,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-        if (g_mode_menu) {
+        const bool live_scene=direct&&menu_scene;
+        // The presenter clears last frame's overlay area to the transparent
+        // key itself; a full-screen fill would re-upload the whole client.
+        if(!live_scene){
+            SetDCBrushColor(dc,RGB(0,0,0));
+            FillRect(dc,&menu_background,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        }
+        if (g_mode_menu && !live_scene) {
             BITMAPINFO art = bi;
             art.bmiHeader.biWidth = 547; art.bmiHeader.biHeight = -256;
             // The release ships no game artwork. Menus show the frame the
@@ -2871,7 +3135,8 @@ void paint(HWND wnd) {
                 }
                 std::string label = std::string(row.selected ? "> " : "  ") + row.label;
                 const auto value = menu_value(row.item);
-                if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
+                if (row.item == I::Vsync && g_settings.unlocked_fps) label += " - off (unlocked)";
+                else if (row.item == I::Vsync && g_settings.smooth_motion) label += " - on (Smooth Motion)";
                 else if (!row.enabled) label += std::string(" - ") + row.unavailable_reason;
                 else if (!value.empty()) label += " - " + value;
                 else if (row.kind == stv::host::PcMenuRowKind::Submenu) label += " - >>";
@@ -2891,7 +3156,9 @@ void paint(HWND wnd) {
             g_global_lb.draw(dc, cw, ch, g_menu_font_ready ? &g_menu_font : nullptr, g_lb_client, lb_now());
         } else if(g_mode_menu && g_confirm == ConfirmAction::None && g_menu_status.empty()) {
             const auto layout=stv::host::arcade_title_layout(cw,ch);
-            if(g_menu_font_ready)
+            if(g_menu_font_ready&&live_scene)
+                stv::host::arcade_scene_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced,GetTickCount64());
+            else if(g_menu_font_ready)
                 stv::host::arcade_title_controls(dc,cw,ch,g_menu_font,g_mode_selection,g_enhanced);
             else
                 stv::host::draw_pc_menu(dc,cw,ch,std::move(lines),nullptr,&layout.controls);
@@ -2908,6 +3175,35 @@ void paint(HWND wnd) {
         InflateRect(&banner,-6,-banner_h/5);
         if(g_menu_font_ready) g_menu_font.draw(dc,banner,g_toast,false,RGB(255,212,78),RGB(127,26,28),DT_CENTER);
         else TextOutA(dc,banner.left,banner.top,g_toast.c_str(),int(g_toast.size()));
+    }
+    if (toast_visible) {
+        // Beside each player's lives box: P1 just right of it, P2 just left of it,
+        // top-aligned with the box and never overlapping it. Integer-scaled
+        // pixel font, nearest sampling; keyed glass only on the GPU overlay.
+        const bool keyed = direct;
+        const int unit = stv::host::toast_unit(w, h);
+        const bool wide_hud = g_frame_width > VIS_W;
+        static std::vector<std::uint32_t> card;
+        BITMAPINFO tb{};
+        tb.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        tb.bmiHeader.biPlanes = 1;
+        tb.bmiHeader.biBitCount = 32;
+        for (const auto& view : g_variant_toasts.views()) {
+            const int player = view.toast->player;
+            const auto room = stv::host::toast_place(player, wide_hud, g_frame_width, VIS_H, x0, y0, w, h, unit, 0);
+            const auto layout = stv::host::toast_layout(*view.toast, unit, room.max_width);
+            stv::host::render_toast(*view.toast, layout, keyed, card);
+            const auto at = stv::host::toast_place(player, wide_hud, g_frame_width, VIS_H, x0, y0, w, h,
+                                                   layout.unit, layout.width);
+            const int step = layout.height + layout.gap;
+            const int cx = at.x;
+            const int cy = at.y + int(view.slot * float(step) + 0.5f) -
+                           int((1.f - view.shown) * float(layout.height + at.y) + 0.5f);
+            tb.bmiHeader.biWidth = layout.width;
+            tb.bmiHeader.biHeight = -layout.height;
+            StretchDIBits(dc, cx, cy, layout.width, layout.height, 0, 0, layout.width, layout.height,
+                          card.data(), &tb, DIB_RGB_COLORS, SRCCOPY);
+        }
     }
     if (g_settings.show_fps && !g_menu) {
         char text[96];
@@ -2983,8 +3279,10 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
         }
         else if (wp == VK_RETURN && g_mode_selection == 1) {
             g_record_local = true;
-            g_room_boot_cmos = g_m.cmos;
-            g_room_history.clear(); g_room_frames = 0;
+            if (!g_preboot_frames) {   // otherwise kept from power-on by the menu pre-boot
+                g_room_boot_cmos = g_m.cmos;
+                g_room_history.clear(); g_room_frames = 0;
+            }
             frontend_event("title_start", g_enhanced);
             g_mode_menu = g_menu = g_paused = false;
             sync_menu_input();
@@ -3203,8 +3501,10 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::ReduceMotion: g_settings.reduce_motion=!g_settings.reduce_motion;break;
             case I::Motion: g_settings.smooth_motion = !g_settings.smooth_motion; break;
             case I::RunAhead: g_settings.run_ahead = (g_settings.run_ahead + event.delta + 4) % 4; break;
+            case I::FrameRate: g_settings.unlocked_fps = !g_settings.unlocked_fps; break;
             case I::Vsync: g_settings.vsync = !g_settings.vsync; break;
             case I::ShowFps: g_settings.show_fps = !g_settings.show_fps; break;
+            case I::VariantNotify: g_settings.variant_notify = !g_settings.variant_notify; break;
             case I::MasterVolume:
                 g_settings.volume = std::clamp(g_settings.volume + event.delta * 5, 0, 100);
                 g_audio.set_volume(g_settings.volume); break;
@@ -3224,7 +3524,7 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             case I::FindRooms: start_lobby_search(); break;
             case I::DirectJoin: g_join_edit = true; g_join_addr = last_join_addr(); break;
             case I::OperatorMenu: case I::SoundTest:
-                g_test_frames = 30; g_menu = false; g_paused = false; break;
+                g_test_frames = 30; g_title_submenu = false; g_menu = false; g_paused = false; break;
 #if !defined(STV_PLAYER_RELEASE) || !STV_PLAYER_RELEASE
             case I::PlayfieldProfile: select_profile(!g_enhanced); break;
 #endif
@@ -3242,6 +3542,9 @@ void handle_menu_key(HWND wnd, WPARAM wp) {
             if (g_confirm != ConfirmAction::None) {
                 g_confirm_yes = false; g_menu = true;
             }
+            // Any action that closes the PC menu leaves the pre-game title flow;
+            // a stale flag would later play menu music in the in-game options.
+            if (!g_menu) g_title_submenu = false;
             if (save) save_preferences();
             sync_menu_input();
             InvalidateRect(wnd, nullptr, FALSE);
@@ -3708,16 +4011,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         MessageBoxA(nullptr, ("The sound ROMs could not be imported:\n" + err).c_str(), "Smash T.V.", MB_ICONERROR);
         return 2;
     }
-    // Compile the resident shaders before starting the sound device and game clock.
+    // Create the D3D11 device and resident shaders (about 0.2 s) on a worker
+    // while the audio device, scheduler, pads and online services start; nothing
+    // touches the presenter until the join below, before the window exists and
+    // before the game clock starts.
     g_enhance_effects.use_gpu_simulation(true);
-    if (!g_resident_effects.prepare()) g_menu_status = "GPU effects: " + g_resident_effects.error();
-    log_startup_stage("GPU effects prepared");
+    auto gpu_preparation = std::async(std::launch::async, [] { return g_resident_effects.prepare(); });
     bool audio = g_audio.open();
     log_startup_stage("audio opened");
     load_preferences();
-    if(g_settings.hardware_rt && !g_resident_effects.prepare_dxr())
-        g_menu_status="Hardware ray tracing: "+g_resident_effects.dxr_error();
-    log_startup_stage("ray tracing prepared");
     const bool audio_initial_device = audio;
     g_mixer = std::make_unique<stv::snd::Mixer>(g_audio.rate());
     wchar_t audio_timeline[8]{};
@@ -3738,6 +4040,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 #endif
     g_achievements.start(scripted_run() || GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0) != 0);
     start_leaderboard(scripted_run() || GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0) != 0);
+    log_startup_stage("input and online services started");
+    g_resident_prepared = gpu_preparation.get();
+    if (!g_resident_prepared) g_menu_status = "GPU effects: " + g_resident_effects.error();
+    log_startup_stage("GPU effects prepared");
+    // Interactive launches overlap DXR setup (D3D12 device and pipeline, up to
+    // 0.6 s on a cold driver cache) with the window and power-on boot; scripted
+    // and smoke runs keep the synchronous order their fixtures expect.
+    const bool dxr_async = !scripted_run() && !GetEnvironmentVariableW(L"STV_HOST_FRAMES", nullptr, 0);
+    if(g_settings.hardware_rt && !(dxr_async ? g_resident_effects.prepare_dxr_async() : g_resident_effects.prepare_dxr()))
+        g_menu_status="Hardware ray tracing: "+g_resident_effects.dxr_error();
+    log_startup_stage("ray tracing prepared");
     if (HMODULE x = LoadLibraryExW(L"xinput1_4.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
         g_xinput = reinterpret_cast<XInputGetStateFn>(reinterpret_cast<void*>(GetProcAddress(x, "XInputGetState")));
 
@@ -3833,6 +4146,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     u32 boot_skip_frames = 0;
     unsigned intro_title_frames = 0;
     LARGE_INTEGER boot_skip_started{};
+    bool boot_last_unseen = false;
+    u64 seen_resets = g_machine_resets;
     constexpr u32 kBootSkipLimit = 4000;   // about 73 s of arcade time: then show whatever is there
     // ROM/window/lobby setup and scripted-input parsing can outlast the initial
     // device silence. Prime once at the actual game-clock epoch, never by
@@ -3947,6 +4262,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                              (unsigned long long)g_audio.dropped_source_samples(),
                              (unsigned long long)g_audio.dropped_device_frames(),
                              g_audio.pending_limit_samples(), g_audio.maximum_pending_samples());
+                std::fprintf(f, "\"present_still_drawing\": %llu, \"present_tearing\": %s, ", (unsigned long long)g_resident_effects.present_retries(), g_resident_effects.present_tearing() ? "true" : "false");
+                std::fprintf(f, "\"gpu_timing\": %s, \"exclusive_fullscreen\": %s, \"foreground\": %s, ", g_resident_effects.gpu_timing_json().c_str(), g_resident_effects.exclusive_json().c_str(), GetForegroundWindow() == g_wnd ? "true" : "false");
                 std::fprintf(f, "\"compositor_waits\": %llu, \"compositor_wait_errors\": %llu, \"compositor_wait_max_ms\": %.3f, ",
                              (unsigned long long)g_compositor.completed(), (unsigned long long)g_compositor.errors(),
                              g_compositor.maximum_ms());
@@ -3970,10 +4287,73 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // hidden/clipped windows and deadlines during the optional compositor wait.
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer) timer = CreateWaitableTimerW(nullptr, TRUE, nullptr);
+    u64 menu_music_last_qpc = 0;
+    bool menu_music_failed = false;
+    std::vector<float> menu_music_pcm;
+    // Runs unseen power-on frames for at most budget_ms; returns true when the
+    // boot has reached its first shown frame. preboot: the main menu is up.
+    auto run_boot_frames = [&](int budget_ms, bool preboot) {
+        LARGE_INTEGER slice{}, at{};
+        QueryPerformanceCounter(&slice);
+        if (!boot_skip_frames) boot_skip_started = slice;
+        bool finished = false;
+        for (;;) {
+            const u16 scene = game_scene_state(g_m);
+            finished = startup_intro_ready(g_m,intro_title_frames) || scene == 0x10 || scene == 0x18 || scene == 0x50 ||
+                       boot_skip_frames >= kBootSkipLimit || g_m.stop || !g_snd.fault.empty();
+            if (finished) break;
+            g_m.ports[0] = g_m.ports[1] = 0xffff;   // all controls released (active low)
+            if (g_host_solo || g_net.on) g_proof.taint();
+            if (g_host_solo) record_room_frame(0,0,u16(0xffff));
+            else if (preboot) {
+                // Pre-boot under the menu: keep the room history from power-on,
+                // exactly as a boot started by Start would record it.
+                if (!g_preboot_frames) { g_room_boot_cmos = g_m.cmos; g_room_history.clear(); g_room_frames = 0; }
+                g_record_local = true;
+                record_local_frame();
+                g_record_local = false;
+                ++g_preboot_frames;
+            }
+            else record_local_frame();
+            // Unseen frames skip only the pixel writes (render_line keeps
+            // autoerase and markers). The intro exit is predictable, so its
+            // final frames are drawn in full; an early exit presents the next frame.
+            g_m.skip_pixels = intro_title_frames + 2 < 320 && boot_skip_frames + 2 < kBootSkipLimit;
+            boot_last_unseen = g_m.skip_pixels;
+            run_one_frame();
+            g_m.skip_pixels = false;
+            g_pcm.clear();                          // power-on sound is generated, not played
+            if (g_frame_done) { ++boot_skip_frames; ++g_simulation_steps; }
+            QueryPerformanceCounter(&at);
+            if ((at.QuadPart - slice.QuadPart) * 1000 >= freq.QuadPart * budget_ms) break;   // keep the window responsive
+        }
+        return finished;
+    };
+    // Once the boot finished under the menu, Start shows its last frame.
+    bool boot_pending_present = false;
+    auto finish_boot = [&](bool preboot) {
+        boot_skip = false;
+        g_host_booting = false;
+        { char where[40]; std::snprintf(where, sizeof where, "state %02x background %08x", unsigned(game_scene_state(g_m)), unsigned(scene_background(g_m))); frontend_event("boot_skipped", boot_skip_frames, where); }
+        LARGE_INTEGER at{};
+        QueryPerformanceCounter(&at);
+        // The RAM/framebuffer hashes let a log compare boots taken on different paths.
+        u64 ram_hash = stv::host::ConfirmedAudioAudit::kOffset, frame_hash = ram_hash;
+        for (u16 word : g_m.ram) stv::host::ConfirmedAudioAudit::hash_word(ram_hash, word, 2);
+        for (u16 word : g_m.frame) stv::host::ConfirmedAudioAudit::hash_word(frame_hash, word, 2);
+        char line[224];
+        std::snprintf(line, sizeof line, "Power-on boot: %u frames in %llu ms%s; ram %016llx, frame %016llx%s.", boot_skip_frames,
+                      (unsigned long long)((at.QuadPart - boot_skip_started.QuadPart) * 1000 / freq.QuadPart),
+                      preboot ? " (behind the main menu)" : "", (unsigned long long)ram_hash,
+                      (unsigned long long)frame_hash, boot_last_unseen ? " (last frame unseen)" : "");
+        write_player_log(line);
+        if (!preboot) log_startup_stage("first frame");
+    };
     MSG msg;
     for (;;) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
+                g_menu_music.stop();
                 close_lobby();
 #if STV_HAS_EOS
                 g_epic.finish();
@@ -4002,6 +4382,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             else boot_skip = false;
             if (!boot_skip) g_host_booting = false;
         }
+        if (g_machine_resets != seen_resets) {
+            // A profile switch in the main menu restarts the machine outside the
+            // frontend request path: the next power-on boot starts over.
+            seen_resets = g_machine_resets;
+            if (!frontend_reset && !g_started && !g_net.on) {
+                boot_skip = boot_skip_allowed; boot_skip_frames = 0; intro_title_frames = 0; boot_pending_present = false;
+            }
+        }
         (void)g_audio.service(GetTickCount64());
         audio_status();
         if (audio) { (void)g_audio.queued(); audio_status(); }
@@ -4011,6 +4399,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
                             30.0 + double(smoke_frames) / 50.0) {
             finish_report(true);
             continue;
+        }
+        const bool want_menu_music =
+            (g_mode_menu || g_title_submenu) && !g_net.on && !g_m.stop && g_snd.fault.empty() && !smoke_frames && !scripted_run();
+        if (!want_menu_music) {
+            menu_music_failed = false;
+            if (g_menu_music.running()) {
+                g_menu_music.stop();
+                if (audio) { (void)g_audio.discard_pending(); audio_status(); }
+            }
         }
         if (g_net.on) {
             // The protocol ticks at exactly the arcade rate even while a shared
@@ -4053,7 +4450,60 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             // does not enter this path and its owed simulation steps are kept.
             clock_paused = output_was_paused = true;
             g_display_fps = g_simulation_hz = 0;
-            wait_seconds(timer, 0.008);
+            if (want_menu_music && audio) {
+                if (!g_menu_music.running() && !menu_music_failed) {
+                    if (g_menu_music.start(g_m.snd_u4, g_m.snd_u19, g_m.snd_u20, g_audio.rate())) {
+                        (void)g_audio.discard_pending();
+                        audio_status();
+                        QueryPerformanceCounter(&now);
+                        menu_music_last_qpc = u64(now.QuadPart);
+                    } else {
+                        menu_music_failed = true;
+                    }
+                }
+                if (g_menu_music.running()) {
+                    const u64 elapsed = u64(now.QuadPart) - menu_music_last_qpc;
+                    menu_music_last_qpc = u64(now.QuadPart);
+                    const u64 clamped = std::min(elapsed, std::max<u64>(1, u64(freq.QuadPart) / 20));
+                    const int64_t delta_as = static_cast<int64_t>(
+                        (double(clamped) / double(freq.QuadPart)) * double(stv::snd::Atto::kPerSec));
+                    g_menu_music.render(delta_as, menu_music_pcm);
+                    if (!menu_music_pcm.empty()) {
+                        g_audio.push(menu_music_pcm.data(), menu_music_pcm.size());
+                        g_audio.pump();
+                        audio_status();
+                    }
+                }
+            } else if (g_menu_music.running()) {
+                menu_music_last_qpc = u64(now.QuadPart);
+            }
+            // The unseen power-on boot is deterministic (controls released), so run
+            // it behind the top-level main menu in small slices; Start then shows
+            // the title immediately instead of waiting for the boot.
+            if (boot_skip && boot_skip_allowed && g_mode_menu && !g_title_submenu && !g_net.on && !g_host_solo &&
+                !g_connecting && !g_m.stop && g_snd.fault.empty()) {
+                if (run_boot_frames(3, true)) { finish_boot(true); boot_pending_present = true; }
+                QueryPerformanceCounter(&now);
+            }
+            // Animate the live main-menu booth at the display refresh rate (it is
+            // time-based); the presenter sizes it from measured GPU time.
+            const bool booth = (g_mode_menu || g_title_submenu) && g_resident_prepared && IsWindowVisible(g_wnd) && !IsIconic(g_wnd);
+            double booth_wait = 0.008;
+            if (booth) {
+                static u64 last_scene = 0;
+                const double hz = display_refresh_hz(g_wnd);
+                const u64 period = u64(double(freq.QuadPart) / hz);
+                g_resident_effects.set_menu_budget(float(std::clamp(550.0 / hz, 2.5, 6.0)));
+                if (u64(now.QuadPart) - last_scene >= period - period / 16) {
+                    last_scene = u64(now.QuadPart);
+                    InvalidateRect(g_wnd, nullptr, FALSE);
+                    UpdateWindow(g_wnd);
+                }
+                QueryPerformanceCounter(&now);
+                const u64 since = u64(now.QuadPart) - last_scene;
+                booth_wait = since >= period ? 0.0 : std::min(0.004, double(period - since) / double(freq.QuadPart));
+            }
+            wait_seconds(timer, booth ? booth_wait : ((g_mode_menu || g_title_submenu) && g_resident_prepared ? 0.004 : 0.008));
             continue;
         }
         if (clock_paused) {
@@ -4065,40 +4515,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             if (audio) { (void)g_audio.discard_pending(); audio_status(); }
             output_was_paused = false;
         }
-        if (boot_skip) {
-            LARGE_INTEGER slice{}, at{};
-            QueryPerformanceCounter(&slice);
-            if (!boot_skip_frames) boot_skip_started = slice;
-            bool finished = false;
-            for (;;) {
-                const u16 scene = game_scene_state(g_m);
-                finished = startup_intro_ready(g_m,intro_title_frames) || scene == 0x10 || scene == 0x18 || scene == 0x50 ||
-                           boot_skip_frames >= kBootSkipLimit || g_m.stop || !g_snd.fault.empty();
-                if (finished) break;
-                g_m.ports[0] = g_m.ports[1] = 0xffff;   // all controls released (active low)
-                if (g_host_solo || g_net.on) g_proof.taint();
-                if (g_host_solo) record_room_frame(0,0,u16(0xffff));
-                else record_local_frame();
-                run_one_frame();
-                g_pcm.clear();                          // power-on sound is generated, not played
-                if (g_frame_done) { ++boot_skip_frames; ++g_simulation_steps; }
-                QueryPerformanceCounter(&at);
-                if ((at.QuadPart - slice.QuadPart) * 1000 >= freq.QuadPart * 30) break;   // keep the window responsive
+        if (boot_skip || boot_pending_present) {
+            if (boot_skip) {
+                if (!run_boot_frames(30, false)) continue;
+                finish_boot(false);
+            } else {
+                log_startup_stage("first frame (pre-booted)");
             }
-            if (!finished) continue;
-            boot_skip = false;
-            g_host_booting = false;
-            { char where[40]; std::snprintf(where, sizeof where, "state %02x background %08x", unsigned(game_scene_state(g_m)), unsigned(scene_background(g_m))); frontend_event("boot_skipped", boot_skip_frames, where); }
-            {
-                QueryPerformanceCounter(&at);
-                char line[128];
-                std::snprintf(line, sizeof line, "Power-on boot: %u frames in %llu ms.", boot_skip_frames,
-                              (unsigned long long)((at.QuadPart - boot_skip_started.QuadPart) * 1000 / freq.QuadPart));
-                write_player_log(line);
-                log_startup_stage("first frame");
-            }
+            boot_pending_present = false;
             if (audio) { (void)g_audio.discard_pending(); audio_status(); }
-            if (g_frame_done) present_frame(g_m);
+            if (g_frame_done && !boot_last_unseen) present_frame(g_m);
             QueryPerformanceCounter(&now);
             simulation_clock.reset(u64(now.QuadPart));   // pacing starts at the first shown frame
             ++clock_rebases;

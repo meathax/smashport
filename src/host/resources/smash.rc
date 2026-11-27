@@ -1,2 +1,39 @@
 #include "resource.h"
 IDI_SMASHTV ICON "smash.ico"
+
+// Version information. An unsigned exe with no identity scores worse with
+// heuristic antivirus engines (Defender's cloud ML quarantined a fresh build
+// as Bearfoos.A!ml, 2026-11-26); this block does not replace code signing.
+#include <winver.h>
+#ifndef STV_VER
+#define STV_VER 1,0,9,0
+#define STV_VER_STR "1.0.9.0"
+#endif
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION STV_VER
+ PRODUCTVERSION STV_VER
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "smashport project"
+      VALUE "FileDescription", "Smash T.V. native PC port (runs from your own retail L8 ROM)"
+      VALUE "FileVersion", STV_VER_STR
+      VALUE "InternalName", "SmashTV"
+      VALUE "LegalCopyright", "Port code: see the project licence. No game data included."
+      VALUE "OriginalFilename", "SmashTV.exe"
+      VALUE "ProductName", "Smash T.V. Native Port"
+      VALUE "ProductVersion", STV_VER_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

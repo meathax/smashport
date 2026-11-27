@@ -56,7 +56,7 @@ enum class PcMenuItem : std::uint8_t {
     Atmosphere, SpriteRim, ContactShadows, WetMaterials, HeatDistortion, EmissiveSpill, CinematicGrade,
     SoundChannels, Reverb, StereoWidth, HiFiAudio,
     CombatFeedback, CameraShake, ZoomPunch, HitFlash, EdgeEffects, WeaponSignatures,
-    ReduceShake, ReduceFlashing, ReduceMotion, Count
+    ReduceShake, ReduceFlashing, ReduceMotion, FrameRate, WeaponVariants, VariantNotify, Count
 };
 
 constexpr std::size_t PcMenuItemCount = static_cast<std::size_t>(PcMenuItem::Count);

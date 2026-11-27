@@ -166,6 +166,8 @@ private:
     uint64_t roomStart_{},roomClockFrame_{};uint32_t roomClockRoom_{};bool roomClock_{};std::array<float,4> stepDistance_{};std::array<unsigned,2> nextFoot_{};
     bool primed_{};
     bool bossSmokeDeath_{};
+    // Per-slot explosion light age (fire colour ramp); per instance, cleared by reset().
+    std::array<uint64_t,256> blastStart_{},blastSeen_{};
     BossCinemaTracker roomCinema_;
     bool weaponFxObjectContinuity_{};
     uint32_t random_ = 0x51a7b10du;

@@ -415,7 +415,7 @@ EffectScene observe_effect_scene(std::span<const uint16_t> ram, uint64_t frame, 
 size_t EnhanceEffects::voxel_count() const { return size_t(std::count_if(particles_.begin(),particles_.end(),[](const auto& p){return p.kind==Kind::Voxel;})); }
 void EnhanceEffects::reset_weapon_fx() { packet_.weaponFx={}; }
 void EnhanceEffects::reset() {
-    bossSmokeDeath_=false;
+    bossSmokeDeath_=false;blastStart_={};blastSeen_={};
     packet_.remains.clear();packet_.spawns.clear();packet_.reset=true;packet_.dt=0;
     packet_.boxes.clear();packet_.casters.clear();packet_.hud.clear();packet_.lamps={};packet_.cinema={};
     reset_weapon_fx();++packet_.serial;particles_.clear();contacts_.clear();
@@ -549,7 +549,7 @@ void EnhanceEffects::advance(const EffectScene& scene,const PcSettings& settings
             const float flick=.9f+.1f*std::sin(float(scene.frame%4096)*.12f+float(obj.slot%31));
             // Explosion light follows the fireball: a short yellow-white flash
             // cooling through orange to ember red, dimming as it ages.
-            static std::array<std::uint64_t,256> blastStart{},blastSeen{};
+            auto& blastStart=blastStart_;auto& blastSeen=blastSeen_;
             float age=0;
             if(blast){
                 const unsigned k=obj.slot&255;
