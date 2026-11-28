@@ -1052,12 +1052,12 @@ bool apply_enhanced(Machine& m, int widen) {
             }
             // The admission cap, not the release timer, sets the crowd in most
             // rooms (tools/balance/widescreen_balance_model.py). Robot and
-            // Galaga squads get 175% of the slots, circuit-3 grunts 150%,
-            // circuit-1 grunts 140% (rounded to nearest; a gang can overshoot
-            // the cap once), orbs and heavy shooters 125% (rounded up).
-            const unsigned scaled=robot||squad?(7u*original+2u)/4u:
-                                  late_grunt?(3u*original+1u)/2u:
-                                  opening_grunt?(7u*original+2u)/5u:(5u*original+3u)/4u;
+            // Galaga squads get 225% of the slots, circuit-3 grunts 200%,
+            // circuit-1 grunts 180% (rounded to nearest; a gang can overshoot
+            // the cap once), orbs and heavy shooters 150% (rounded up).
+            const unsigned scaled=robot||squad?(9u*original+2u)/4u:
+                                  late_grunt?2u*original:
+                                  opening_grunt?(9u*original+2u)/5u:(3u*original+1u)/2u;
             const u8 count=original<=2?original:u8(std::min(120u,scaled));
             r.w(aligned)=u16((r.w(aligned)&~(0xffu<<shift))|(u16(count)<<shift));
         }
