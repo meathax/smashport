@@ -1,57 +1,41 @@
 # Smash T.V. Widescreen Recomp
 
-Play Smash T.V. in its original 4:3 format or take on a rebalanced campaign in a shared 16:9 arena.
+A native Windows remaster of the arcade classic: original 4:3 or a rebalanced shared 16:9 arena, with modern lighting, persistent gore and online play.
 
 > [!IMPORTANT]
-> Bring your own **Smash T.V. retail L8 arcade ROM set**. Setup uses your ROMs to build the native Windows player on your PC. The setup package contains no game ROMs, extracted graphics or sound, or prebuilt game executable.
+> Bring your own **Smash T.V. retail L8 arcade ROM set**. Setup builds the native player on your PC from your ROMs. The download contains no ROMs, game art, sound or prebuilt game executable.
 
-<p align="center"><img src="screenshots/arena.png" alt="Widescreen arena combat with enhanced lighting and effects" width="960"></p>
-
-| Mutoid Man | Scarface | Cobra |
-| --- | --- | --- |
-| ![Mutoid Man in the first circuit](screenshots/mutoid-man.png) | ![Scarface in the second circuit](screenshots/scarface.png) | ![Cobra in the third circuit](screenshots/cobra.png) |
-
-| Bonus Prizes arena | Final Mutoid Man |
+| | |
 | --- | --- |
-| ![Two players surrounded by an enemy wave in Bonus Prizes](screenshots/powerups.png) | ![The final Mutoid Man fight with enhanced lighting and smoke](screenshots/final-mutoid.png) |
+| ![Live TV-studio main menu on a wall of monitors](screenshots/main-menu.jpg) | ![The monitor wall turning into giant eyes behind the menu](screenshots/menu-wall.jpg) |
+| ![Widescreen 16:9 arena with the spread gun](screenshots/widescreen.jpg) | ![Arena floor soaked in persistent blood and gibs](screenshots/gore.jpg) |
+| ![Tank fight in a blood-covered widescreen arena](screenshots/gore-tank.jpg) | ![Global online leaderboard](screenshots/leaderboard.jpg) |
 
-## Main menu
+## Key features
 
-The title menu is a live TV broadcast booth: its monitors show bot-played footage and the current global leaderboard, and the original main theme plays behind it, driven by your ROM's own sound program.
-
-| Broadcast booth | Booth monitors |
-| --- | --- |
-| ![The main menu over a wall of broadcast monitors showing live bot play](screenshots/menu-booth.jpg) | ![Booth monitors with the title card, ratings and vitals feeds](screenshots/menu-monitors.jpg) |
-
-## PC enhancements
-
-- **Classic 4:3 and Widescreen 16:9.** Choose Classic for the original arcade playfield and difficulty, or Widescreen for wider combat arenas at the original sprite scale. Each mode keeps its own high scores.
-- **Enhanced Widescreen campaign.** The wider arenas hold about 1.8 times the arcade's enemies, arriving in bigger gangs and nearly twice as fast, with fewer mines. You move 30% faster, every gun fires about a third faster and special weapons carry more ammo. Pickups turn up a little more often than in the arcade, every ordinary room can drop the grenade gun, and each continue costs 100,000 points. Waves and boss fights are tuned for solo and two-player runs, with Widescreen designed to be the tougher challenge.
-- **New weapon and power-up variants (Widescreen).** Every pickup can roll a rare variant with its own look and behavior: Hot Lead and Ricochet Rounds for the default gun, Wall of Lead and Shrapnel Spread, Cluster and Napalm grenades, Tunnel Rocket and Twin Seekers, Mortar Barrage and Quake Shell in boss rooms, Buzz Storm and Thrown Blades, Double Tap and Gold Rush smart bombs, Reflector and Shockwave Shield force fields, Afterburner and Bulldozer Boots, and Clone or Last Stand extra men. A notification beside your lives box names each variant when you pick it up.
-- **Analog movement and aiming.** Move with the left stick and aim independently with the right so you can fire into a crowd while retreating or circling it. Keyboard and controller bindings are remappable, including every button and each direction of either stick (a stick bound to actions gives up its built-in move or aim role).
-- **Global online leaderboards.** Choose **Global Leaderboards** on the main menu to see worldwide rankings for all time, the last 7 days and the last 24 hours. Classic 4:3 and Widescreen 16:9 have separate boards, and each Widescreen balance revision starts a fresh board. Only the current release can post new scores, so update to keep submitting; older versions can still view the rankings. Scores come from the high-score table the game itself records after local play. Online sessions and reset or loaded score tables are never uploaded. Each score from an ordinary local run also carries a compact replay proof: your controls since power-on, with no personal data. The leaderboard owner re-simulates it, and confirmed rows show a VERIFIED mark.
-- **Online multiplayer with public lobbies.** Open **Multiplayer** to host a two-player game or browse public rooms by ping. Leave the second seat open, protect it with a password, or open a solo run to a partner mid-game. Couch co-op, LAN rooms and direct-IP play are also available.
-- **Custom dynamic lighting for every combat room.** Optional hardware ray tracing (DXR) adds lighting and shadows across the arena. Per-room color grading, impact debris and distinct boss attack and explosion smoke give each fight its own look. Reduced-flash and reduced-motion settings let you tone down the effects.
-- **Combat effects.** Muzzle flashes start exactly at each weapon's barrel tip. Spent casings eject, bounce and stay on the floor. Blood stays wet and layered and dries over time, with gibs, footprints and wall spray. Explosions leave scorch marks and pressure rings. Each effect has its own switch under **Options > Enhance**.
-- **More sound channels.** Enable extra sound boards to hear the announcer over sustained gunfire without cutting the shots short. Stereo and reverb are optional, and the original arcade mono mix is available.
-- **PC display options.** Choose fullscreen, integer scaling, smooth camera motion, and modern or CRT presets.
+- **Widescreen 16:9 campaign** - wider arenas at original sprite scale, faster movement, bigger waves, retuned bosses. Classic 4:3 stays arcade-exact. Separate high scores per mode.
+- **New weapon variants** - rare pickup rolls like Ricochet Rounds, Napalm grenades, Twin Seekers and Bulldozer Boots, each announced on pickup (Widescreen).
+- **Live TV-studio main menu** - a broadcast booth whose monitors show live bot play and the global leaderboard, with the original theme.
+- **Persistent gore** - blood pools, dries and layers; gibs, footprints, wall spray, scorch marks.
+- **Global online leaderboards** - all-time, 7-day and 24-hour boards per mode, replay-verified. Only the current release posts scores.
+- **Online multiplayer** - public lobbies, passworded rooms, drop-in partners, LAN, direct IP and couch co-op.
+- **Dynamic lighting** - optional DXR ray tracing, per-room grading, muzzle flashes, ejected brass, boss smoke. Every effect has its own toggle, plus reduced-flash/motion modes.
+- **Twin-stick controls** - analog move and aim, fully remappable keyboard and controller.
+- **Better audio** - extra sound channels so the announcer never cuts gunfire, optional stereo and reverb, or the original mono mix.
+- **Native code** - main and sound programs statically recompiled; no emulator, no interpreter.
 
 ## Play
 
-On Windows x64, extract the release ZIP. In [RecompLauncher](https://recomplauncher.com), use Easy Setup and select your retail L8 ROM ZIP. For standalone setup, open `SmashTV.exe` and select the same ZIP. Setup builds a native player locally from your copy. Later releases update in place: the next time you start the game or press Play in RecompLauncher, the player is rebuilt from the ROM copy kept by your first setup, so you are not asked for the ROM again.
+Windows x64: extract the release ZIP, then use Easy Setup in [RecompLauncher](https://recomplauncher.com) or run `SmashTV.exe` and pick your L8 ROM ZIP. Merged, non-merged and split sets work under any file name. Later releases rebuild in place from the ROM copy kept by your first setup.
 
-Merged, non-merged and split sets are supported, whatever the ZIP or file names are. Clone subfolders, ZIPs inside a ZIP and an extracted folder also work. For a split set, keep the parent ZIP (any name containing "smash") beside the clone ZIP during setup. The importer checks the chip contents for the L8 program, graphics and sound.
-
-**Portable mode.** To keep everything next to `SmashTV.exe` (for example on a USB drive), put an empty file named `portable.txt` in the same folder, or start `SmashTV.exe --portable` once, which creates it. The built player, your ROM copy, settings, key bindings, high scores, logs and leaderboard identity then live in a `data` folder beside the exe. Nothing is written to AppData and no Start menu shortcut is made. On a PC that already ran the normal setup, the first portable start copies your settings and saves and reuses the imported ROM. Delete `portable.txt` to go back to the normal per-user install. The folder must be writable, so don't use it under Program Files.
+**Portable mode:** put an empty `portable.txt` next to `SmashTV.exe` (or run `SmashTV.exe --portable`). Everything then lives in a `data` folder beside the exe. Don't use it under Program Files.
 
 ## Build from source
 
-Run `.\build.ps1 -Mode MSVC -Rom "C:\path\to\your-L8.zip"` from PowerShell with Visual Studio C++ tools, the Windows SDK, CMake, Ninja, and Python available. For a source-only checkout, restore the pinned graphics runtime dependencies listed in [the graphics manifest](tools/release/graphics-files.json) before building. The Windows build also requires the Epic Online Services C SDK 1.19.2.1 under `build/dependencies/eos/1.19.2.1/SDK` and a game-client configuration at `build/dependencies/eos/eos-client.ini`. SDL3 3.2.24 supplies gamepad input: unpack the official `SDL3-devel-3.2.24-VC.zip` to `build/platform-sdk/SDL3-3.2.24` (used automatically) or set `SDL3_DIR` to its CMake package directory. Without it the build falls back to XInput only. The main and sound programs are translated ahead of time.
+`.\build.ps1 -Mode MSVC -Rom "C:\path\to\your-L8.zip"` with Visual Studio C++ tools, Windows SDK, CMake, Ninja and Python. Source-only checkouts also need the pinned [graphics dependencies](tools/release/graphics-files.json), the EOS C SDK 1.19.2.1 in `build/dependencies/eos/1.19.2.1/SDK` with `build/dependencies/eos/eos-client.ini`, and SDL3 3.2.24 in `build/platform-sdk/SDL3-3.2.24` (or `SDL3_DIR`) for gamepads; without it the build uses XInput only.
 
 ## Credits and license
 
-Smash T.V. is the original arcade game by Williams Electronics Games, Inc. This unofficial Windows port uses static recompilation to run the retail main and sound programs as native code. Development used AI-assisted coding tools, automated tests, execution traces and gameplay captures. MAME 0.289 serves as the reference for comparing arcade behavior.
+Smash T.V. is by Williams Electronics Games, Inc. This is an unofficial port built with AI-assisted coding, automated tests and MAME 0.289 as the behavior reference. Thanks to Aaron Giles (**ymfm**) and Sebastian Toyos (**tmnt-port**, **arcade-lan**). Online lobbies use Epic Online Services.
 
-Thanks to Aaron Giles for **ymfm**, which provides FM sound synthesis, and to Sebastian Toyos for **tmnt-port** and **arcade-lan**, adapted here for PC menus, settings and multiplayer room discovery. Public online lobbies use Epic Online Services.
-
-The original game code, artwork and audio remain the property of their respective rights holders. The source distribution grants no permission to redistribute those materials or the player built from them. Third-party components retain their own licenses. [Third-party credits and license notices](THIRD_PARTY_NOTICES.md)
+The original code, art and audio belong to their rights holders; this source grants no right to redistribute them or the player built from them. Third-party components keep their own licenses: [notices](THIRD_PARTY_NOTICES.md).
