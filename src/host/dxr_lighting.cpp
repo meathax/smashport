@@ -32,6 +32,8 @@ struct Constants {
     Float4 previousFloor, previousAmbient, previousTone;
     Float4 fog; // on, column height, samples, light-map x origin
     Float4 temporal; // history weight
+    // Tone match (room_exposure): floor/wall/margin scale and colour balance.
+    Float4 exposure, balance, previousExposure, previousBalance;
     GpuLight lights[RoomLightRig::MaxLights];
 };
 // One front/cross pair per retail object, plus walls and the active set's
@@ -413,6 +415,11 @@ struct DxrLighting::Impl {
         c.extent = {float(width), float(height), float(offset), lastFrame.lightTime};
         c.floor = {fx, fy, floor[2], floor[3]};
         c.ambient = {mood.ambient[0], mood.ambient[1], mood.ambient[2], mood.gloss};
+        auto f4 = [](const std::array<float, 4> &a) { return Float4{a[0], a[1], a[2], a[3]}; };
+        c.exposure = f4(lastFrame.exposure.scale);
+        c.balance = f4(lastFrame.exposure.balance);
+        c.previousExposure = f4(lastFrame.previousExposure.scale);
+        c.previousBalance = f4(lastFrame.previousExposure.balance);
         c.world = {float(p.camera_x), float(p.camera_y), float(lastFrame.lights.size()),
                    float((useCoverage ? 1 : 0) | (height <= 256 ? 2 : 0) | (useOwners ? 4 : 0))};
         c.tone = {mood.actorFloor, mood.occlusion, float(firstBoss), float(actorCount)};

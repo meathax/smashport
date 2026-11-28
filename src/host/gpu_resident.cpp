@@ -236,7 +236,7 @@ struct ResidentEffects::Impl {
  // Returns the cascade-0 view the composite reads as indirect irradiance.
  ID3D11ShaderResourceView* runGi(const PcSettings& s,const EffectPacket& packet,int w,int h,int offset){
   static constexpr float gain[]{0.f,.45f,.75f,1.f},emit[]{0.f,1.f,1.4f,1.8f},flatten[]{0.f,.25f,.4f,.5f};
-  static constexpr float haze[]{0.f,.025f,.04f,.06f},smoke[]{0.f,.12f,.18f,.26f};
+  static constexpr float haze[]{0.f,.014f,.022f,.032f},smoke[]{0.f,.12f,.18f,.26f};
   const int level=std::clamp(s.rt_bounce,0,3),fog=std::clamp(s.vol_light,0,3);
   if(!giConstants){D3D11_BUFFER_DESC b{};b.ByteWidth=sizeof(GiParamsGpu);b.BindFlags=D3D11_BIND_CONSTANT_BUFFER;check(device->CreateBuffer(&b,nullptr,&giConstants),"GI params");}
   GiParamsGpu g{};g.levels=kGiLevels;g.enabled=level>0;g.gain=gain[level];g.emit=emit[level];g.flatten=flatten[level];

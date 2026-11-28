@@ -18,6 +18,11 @@ cbuffer Scene : register(b0) {
     float4 previousFloor, previousAmbient, previousTone; // old tone.z is light count
     float4 fog;       // on, column height, samples, light-map x origin
     float4 temporal;  // history weight (0 = none: camera, room or size changed)
+    // Tone match (room_lighting.cpp room_exposure): the art is already painted
+    // under light, so irradiance is normalised to ~1 per surface class.
+    float4 exposure;  // floor, rear wall, margins (sides and front lip), light chroma kept
+    float4 balance;   // rgb: removes most of the rig's average colour cast
+    float4 previousExposure, previousBalance;
     Light lights[MAX_LIGHTS];
 };
 RaytracingAccelerationStructure scene : register(t0);
@@ -249,6 +254,28 @@ void roomSelect(float2 pixel, out uint first, out uint limit, out float lightTim
     lightTime = departing ? previousTone.w : extent.w;
     occluders = departing ? 5 : 3;
 }
+// Exposure for one light-map pixel: the floor class inside the floor rectangle,
+// the rear wall above it and the margin class (side strips, front lip) outside.
+// The classes switch where surfaceAt switches surface, so the step sits on the
+// art's own floor/wall edge (a blend would put floor exposure on the wall base).
+float3 toneMatch(float2 px, float4 f, float3 N, float4 e, float4 bal) {
+    bool inside = px.x >= f.x && px.x < f.x + f.z && px.y >= f.y && px.y < f.y + f.w;
+    return (N.y > .5 ? e.y : inside ? e.x : e.z) * bal.rgb;
+}
+// Soft toe: deep corners and contact shadows keep their shape but never sink
+// the art to black (the original frame is fully lit everywhere).
+float3 shadowToe(float3 e) { return e + .3 * max(.8 - e, 0); }
+// Walls and margins sit beside the lamps: a fixture right next to them must
+// glow, not bleach the painted trim white. Soft shoulder above 1.1.
+float3 trimShoulder(float3 e) {
+    float3 over = max(e - 1.1, 0);
+    return min(e, 1.1) + over / (1 + over / .3);
+}
+// Coloured lamps tint the painted art only part-way: the pools keep their hue
+// without recolouring the whole set.
+float3 keepChroma(float3 e, float k) {
+    return lerp(dot(e, float3(.2126, .7152, .0722)).xxx, e, k);
+}
 // Volumetric in-scatter per unit density along the cabinet eye ray. Screen
 // (x, y) sees world (x, y + z, z) for every height z, so the column is marched
 // from the floor up to fog.y. Each sample takes the room lights' attenuation,
@@ -284,7 +311,9 @@ float3 inscatter(float2 pixel) {
             sum += L.color.rgb * att * phase * visibility(P, dir, dist - .5, NoSelf, occluders);
         }
     }
-    return sum / max(float(steps), 1.);
+    bool old = first > 0;
+    float4 e = old ? previousExposure : exposure;
+    return sum / max(float(steps), 1.) * e.x * (old ? previousBalance.rgb : balance.rgb);
 }
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
@@ -326,8 +355,22 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 diffuse = 0, spec = 0;
     for (uint i = first; i < limit; ++i)
         shadeLight(i, P, N, NoSelf, roomAmbient.w, 22, seed, lightTime, backgroundOccluders, diffuse, spec);
-    lightMap[id.xy] = stabilise(id.xy, float4(roomAmbient.rgb * ao + diffuse, ao));
-    if (specRows) lightMap[id.xy + uint2(0, 256)] = float4(spec, 0);
+    float3 match = toneMatch(pixel, roomFloor, N, departing ? previousExposure : exposure,
+                             departing ? previousBalance : balance);
+    float chroma = departing ? previousExposure.w : exposure.w;
+    float3 ground = shadowToe(keepChroma((roomAmbient.rgb * ao + diffuse) * match, chroma));
+    if (N.y > .5 || pixel.x < roomFloor.x || pixel.x >= roomFloor.x + roomFloor.z ||
+        pixel.y < roomFloor.y || pixel.y >= roomFloor.y + roomFloor.w)
+        ground = trimShoulder(ground);
+    lightMap[id.xy] = stabilise(id.xy, float4(ground, ao));
+    // Reflections are the lamps themselves: they take the floor exposure, never
+    // the walls' ambient compensation (which would turn wall glints into glare).
+    float4 specExposure = departing ? previousExposure : exposure;
+    if (specRows) lightMap[id.xy + uint2(0, 256)] =
+        float4(trimShoulder(keepChroma(spec * specExposure.x * (departing ? previousBalance.rgb : balance.rgb), chroma)), 0);
+    // Actors stand on the floor: they take the floor class exposure.
+    float3 actorMatch = (departing ? previousExposure.x : exposure.x) *
+                        (departing ? previousBalance.rgb : balance.rgb);
 
     float4 actorLight = 0;
     float3 actorSpec = 0;
@@ -396,7 +439,9 @@ void main(uint3 id : SV_DispatchThreadID) {
             for (uint i = first; i < limit; ++i)
                 shadeLight(i, Pa + Na * .2, Na, a, gloss, shine, seed, lightTime, occluders, diff, actorSpec);
             float3 base = max(roomAmbient.rgb, roomTone.x);
-            actorLight = float4(base + diff, (info.x + (polished ? 128 : 0)) / 255.);
+            // The readable minimum stays in art units after the tone match.
+            actorLight = float4(max(keepChroma((base + diff) * actorMatch, chroma), roomTone.x),
+                                (info.x + (polished ? 128 : 0)) / 255.);
         }
     }
     {
@@ -410,5 +455,5 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         lightMap[at] = actorLight;
     }
-    if (specRows) lightMap[id.xy + uint2(1024, 256)] = float4(actorSpec, 0);
+    if (specRows) lightMap[id.xy + uint2(1024, 256)] = float4(keepChroma(actorSpec * actorMatch, chroma), 0);
 }

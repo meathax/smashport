@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <map>
+#include <mutex>
 
 namespace stv::host {
 namespace {
@@ -10,6 +12,13 @@ constexpr float Pi = 3.14159265f;
 // Hard sci-fi TV studio grade: a high-key, cool-neutral LED soundstage. The
 // floor is always lit; colour lives in controlled accents, not in darkness.
 constexpr float AmbientScale = .76f, LightScale = 1.74f;
+// Tone match (room_exposure): mean art multiplier per surface class with every
+// enhancement on, calibrated against the original frames. The floor sits a touch
+// above the art so the lamp pools read; walls and margins keep the art level.
+// Ao/Lit are the measured mean occlusion and shadowing the analytic rig omits.
+constexpr float ExposureFloorTarget = 1.13f, ExposureWallTarget = 1.13f, ExposureMarginTarget = 1.2f;
+constexpr float ExposureFloorAo = 1.f, ExposureFloorLit = 1.5f, ExposureWallAo = .64f, ExposureMarginAo = .62f;
+constexpr float ExposureNeutralize = .5f, ExposureChroma = .82f;
 enum class Anim : uint8_t { Steady, Flicker, Pulse, Strobe, Broken, Sweep, Orbit, Hue };
 struct Lamp {
     float u{}, v{}, z{}, radius{};
@@ -289,6 +298,70 @@ std::vector<Lamp> scaffoldLamps(uint32_t room) {
     return {left, right, wash};
 }
 
+// Show spots: per-room coloured follow-spots on top of the scaffold movers. The
+// palette follows the set's theme (a primary from the room accent, a partner
+// colour from the theme); prize/broadcast sets run a full colour chase, boss
+// sets push harder, faster saturated beams. room_exposure folds them into the
+// room's tone match, so they add colour and contrast, never overall brightness.
+std::array<float, 3> rotateHue(std::array<float, 3> c, float turn) {
+    const float mx = std::max({c[0], c[1], c[2]}), mn = std::min({c[0], c[1], c[2]}), d = mx - mn;
+    float h = 0;
+    if (d > 1e-4f) {
+        if (mx == c[0]) h = std::fmod((c[1] - c[2]) / d + 6, 6.f);
+        else if (mx == c[1]) h = (c[2] - c[0]) / d + 2;
+        else h = (c[0] - c[1]) / d + 4;
+    }
+    const auto r = hue(h / 6 + turn);
+    // hue() keeps a .15 floor; restore the source saturation.
+    const float s = mx > 0 ? d / mx : 0;
+    return {mx * (1 - s + s * (r[0] - .15f) / .85f), mx * (1 - s + s * (r[1] - .15f) / .85f),
+            mx * (1 - s + s * (r[2] - .15f) / .85f)};
+}
+std::vector<Lamp> showSpots(uint32_t room) {
+    const auto &p = room_lighting_profile(room);
+    const auto [circuit, wave] = key(room);
+    const float seed = hash1(room * 2654435761u);
+    const std::array<float, 3> accent = p.accent;
+    std::array<float, 3> partner;
+    float power = .62f, rate = .011f + p.rate * .18f, cone = 12;
+    switch (room_theme(room)) {
+    case MoodTheme::Steel: partner = {.55f, .86f, 1}; break;              // cold work-light against the accent
+    case MoodTheme::Neon: partner = rotateHue(accent, .42f + seed * .16f); break; // complementary neon
+    case MoodTheme::Moonlit: partner = {.62f, .52f, 1}; break;            // icy violet
+    case MoodTheme::Toxic: partner = {.70f, .30f, 1}; break;              // acid green against ultraviolet
+    case MoodTheme::Jungle: partner = {.45f, 1, .38f}; break;             // leaf green through the canopy
+    case MoodTheme::Temple: partner = {1, .28f, .10f}; break;             // gold against ember red
+    case MoodTheme::Mutoid: partner = {1, .10f, .06f}; power = .95f; rate *= 1.6f; cone = 10; break;
+    case MoodTheme::Scarface: partner = {1, .16f, .60f}; power = .95f; rate *= 1.6f; cone = 10; break;
+    case MoodTheme::Cobra: partner = {1, .70f, .12f}; power = .95f; rate *= 1.6f; cone = 10; break;
+    case MoodTheme::Finale: partner = {.20f, .55f, 1}; power = 1.05f; rate *= 1.8f; cone = 10; break;
+    case MoodTheme::Stage:
+    case MoodTheme::Dome: {
+        // Prize shows: four hue-chasing beams criss-crossing the floor.
+        std::vector<Lamp> l;
+        for (int i = 0; i < 4; ++i) {
+            const float u = (i & 1) ? .82f : .18f, v = (i & 2) ? 1.25f : -.3f;
+            l.push_back(animate(spot(u, v, 195, 560, 1, 1, 1, .62f * p.rig, 11, 1 - u, .5f, .45f), Anim::Hue,
+                                .005f + .002f * float(i), seed + float(i) * .25f + float(circuit) * .13f,
+                                (i & 1) ? -.34f : .34f, .30f));
+        }
+        return l;
+    }
+    }
+    // Saturated beams, cut a little with white so the art under them still reads.
+    auto mixW = [](const std::array<float, 3> &c, float w) {
+        return std::array<float, 3>{c[0] * (1 - w) + w, c[1] * (1 - w) + w, c[2] * (1 - w) + w};
+    };
+    const auto a = mixW(accent, .12f), b = mixW(partner, .12f);
+    const float side = seed < .5f ? 1.f : -1.f; // mirror the cross per room
+    auto first = spot(.5f - .32f * side, -.32f, 200, 540, a[0], a[1], a[2], power * p.rig, cone, .5f + .18f * side, .5f, .42f);
+    auto second = spot(.5f + .32f * side, -.32f, 200, 540, b[0], b[1], b[2], power * .9f * p.rig, cone, .5f - .18f * side, .55f, .42f);
+    const bool orbit = (wave + circuit) & 1;
+    first = animate(first, orbit ? Anim::Orbit : Anim::Sweep, rate, p.phase + seed * 6.f, .30f * side, .22f);
+    second = animate(second, orbit ? Anim::Sweep : Anim::Orbit, rate * 1.13f, p.phase + 2.4f, -.30f * side, .22f);
+    return {first, second};
+}
+
 // Hard sci-fi soundstage key rig shared by every arena: an overhead grid of
 // cool-white LED softboxes (their reflections read on the polished floor), a
 // hard top-back rim light, and a cyan LED line along the rear wall. The theme
@@ -336,6 +409,8 @@ std::vector<Lamp> roomLamps(uint32_t room) {
     }
     auto scaffold = scaffoldLamps(room);
     lamps.insert(lamps.end(), scaffold.begin(), scaffold.end());
+    auto spots = showSpots(room);
+    lamps.insert(lamps.end(), spots.begin(), spots.end());
     // Leave exposure headroom for the boss rig and simultaneous attack lights.
     if(room==10 || room==0x10007 || room==0x20007 || room==0x20015)
         for(auto& lamp:lamps)lamp.intensity*=.72f;
@@ -542,6 +617,126 @@ void add_boss_lights(LightingFrame &frame, const EffectPacket &p, int offset) {
           (.92f + .34f * std::sin(phase * 2.1f + 4)) * cue, edgeTint, 6);
 }
 
+namespace {
+// Unshadowed diffuse irradiance of one light (dxr_lighting.hlsl shadeLight
+// without visibility, gobo or specular).
+std::array<float, 3> lampIrradiance(const GpuLight &L, const float *P, const float *N) {
+    float dx = L.x - P[0], dy = L.y - P[1], dz = L.z - P[2];
+    const float dist = std::max(std::sqrt(dx * dx + dy * dy + dz * dz), .25f);
+    dx /= dist; dy /= dist; dz /= dist;
+    const float x = dist / std::max(L.radius, 1e-3f);
+    if (x >= 1) return {0, 0, 0};
+    const float x2 = x * x, win = std::clamp(1 - x2 * x2, 0.f, 1.f);
+    float att = L.intensity * win * win / (1 + x2 * 5);
+    if (L.cosOuter > -1) {
+        const float c = -(dx * L.dx + dy * L.dy + dz * L.dz);
+        const float t = std::clamp((c - L.cosOuter) / std::max(L.cosInner - L.cosOuter, 1e-4f), 0.f, 1.f);
+        att *= t * t * (3 - 2 * t);
+    }
+    const float wrap = std::clamp((N[0] * dx + N[1] * dy + N[2] * dz + .12f) / 1.12f, 0.f, 1.f);
+    return {L.r * att * wrap, L.g * att * wrap, L.b * att * wrap};
+}
+float luma3(const std::array<float, 3> &c) { return c[0] * .2126f + c[1] * .7152f + c[2] * .0722f; }
+} // namespace
+
+RoomExposure room_exposure(uint32_t room, float fw, float fh) {
+    if (!(fw > 0) || !(fh > 0)) return {};
+    static std::mutex lock;
+    static std::map<std::array<uint32_t, 3>, RoomExposure> cache;
+    const std::array<uint32_t, 3> key{room, uint32_t(fw * 4), uint32_t(fh * 4)};
+    {
+        std::lock_guard guard(lock);
+        if (auto it = cache.find(key); it != cache.end()) return it->second;
+    }
+    // Average the lamp animation over ~25 s of show time.
+    constexpr int Times = 16;
+    std::vector<std::vector<GpuLight>> rigs;
+    for (int k = 0; k < Times; ++k) {
+        std::vector<GpuLight> rig;
+        for (const auto &lamp : roomLamps(room)) {
+            if (rig.size() >= RoomLightRig::MaxRoomLights - RoomLightRig::MaxDynamic) break;
+            auto g = realize(lamp, 0, 0, fw, fh, float(k) * 97.f);
+            if (g.intensity > .002f) rig.push_back(g);
+        }
+        rigs.push_back(std::move(rig));
+    }
+    auto mean = [&](auto &&point, int nu, int nv) {
+        std::array<float, 3> sum{};
+        for (int v = 0; v < nv; ++v)
+            for (int u = 0; u < nu; ++u) {
+                float P[3], N[3];
+                point((float(u) + .5f) / float(nu), (float(v) + .5f) / float(nv), P, N);
+                for (const auto &rig : rigs)
+                    for (const auto &L : rig) {
+                        const auto e = lampIrradiance(L, P, N);
+                        for (int c = 0; c < 3; ++c) sum[c] += e[c];
+                    }
+            }
+        for (auto &c : sum) c /= float(nu * nv * Times);
+        return sum;
+    };
+    const auto floorLight = mean([&](float u, float v, float *P, float *N) {
+        P[0] = u * fw; P[1] = v * fh; P[2] = 0; N[0] = 0; N[1] = 0; N[2] = 1;
+    }, 16, 10);
+    const auto wallLight = mean([&](float u, float v, float *P, float *N) {
+        P[0] = -30 + u * (fw + 60); P[1] = .6f; P[2] = v * 44; N[0] = 0; N[1] = 1; N[2] = 0;
+    }, 16, 4);
+    const auto marginLight = mean([&](float u, float v, float *P, float *N) {
+        // Side strips (two thirds of the samples) and the front lip.
+        N[0] = 0; N[1] = 0; N[2] = 1;
+        if (v < .66f) {
+            P[0] = u < .5f ? -30 + u * 60 : fw + (u - .5f) * 60; P[1] = v / .66f * fh; P[2] = 0;
+        } else {
+            P[0] = -30 + u * (fw + 60); P[1] = fh + (v - .66f) / .34f * 15 + 14; P[2] = 14.4f;
+        }
+    }, 16, 6);
+    const auto ambient = room_mood(room).ambient;
+    auto total = [&](const std::array<float, 3> &light, float ao, float lit) {
+        return std::array<float, 3>{ambient[0] * ao + light[0] * lit, ambient[1] * ao + light[1] * lit,
+                                    ambient[2] * ao + light[2] * lit};
+    };
+    const auto floorE = total(floorLight, ExposureFloorAo, ExposureFloorLit);
+    const auto wallE = total(wallLight, ExposureWallAo, 1);
+    const auto marginE = total(marginLight, ExposureMarginAo, 1);
+    RoomExposure out;
+    const float y = luma3(floorE);
+    for (int c = 0; c < 3; ++c) out.balance[c] = std::pow(y / std::max(floorE[c], 1e-3f), ExposureNeutralize);
+    auto balanced = [&](const std::array<float, 3> &e) {
+        return luma3({e[0] * out.balance[0], e[1] * out.balance[1], e[2] * out.balance[2]});
+    };
+    out.scale[0] = std::clamp(ExposureFloorTarget / std::max(balanced(floorE), 1e-3f), .2f, 2.f);
+    out.scale[1] = std::clamp(ExposureWallTarget / std::max(balanced(wallE), 1e-3f), .2f, 3.f);
+    out.scale[2] = std::clamp(ExposureMarginTarget / std::max(balanced(marginE), 1e-3f), .2f, 3.f);
+    // Boss and prize sets keep more of their beams' colour (their spots are also
+    // faster and more numerous); the exposure itself stays matched to the art.
+    const auto theme = room_theme(room);
+    const bool show = theme == MoodTheme::Stage || theme == MoodTheme::Dome;
+    const bool boss = theme == MoodTheme::Mutoid || theme == MoodTheme::Scarface || theme == MoodTheme::Cobra ||
+                      theme == MoodTheme::Finale;
+    out.scale[3] = std::min(1.f, ExposureChroma + (show || boss ? .12f : 0.f));
+    // Measured per-theme residual (all-effects 2P route captures, 28 Nov 2026):
+    // the analytic rig omits gobo averages, specular and haze, which differ by
+    // set dressing. Floor, wall, margin multipliers in MoodTheme order.
+    static constexpr float themeFix[12][3] = {
+        {1.02f, 1.09f, 1.04f}, // Steel
+        {.99f, .99f, 1.04f},   // Neon
+        {.94f, .96f, .99f},    // Moonlit
+        {.70f, 1.09f, 1.f},    // Toxic
+        {.58f, .87f, .78f},    // Stage (prize / broadcast)
+        {1.13f, 1.05f, 1.07f}, // Jungle
+        {1.12f, 1.02f, .97f},  // Temple
+        {.98f, .93f, .98f},    // Mutoid
+        {.97f, 1.08f, 1.03f},  // Scarface
+        {1.15f, 1.07f, 1.04f}, // Cobra
+        {1.02f, .92f, .82f},   // Finale
+        {.86f, 1.01f, .81f},   // Dome
+    };
+    for (int k = 0; k < 3; ++k) out.scale[k] = std::clamp(out.scale[k] * themeFix[size_t(theme)][k], .2f, 3.f);
+    std::lock_guard guard(lock);
+    cache[key] = out;
+    return out;
+}
+
 LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) {
     LightingFrame frame;
     frame.lights.reserve(MaxLights);
@@ -615,6 +810,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         frame.floor = {anchor.x - float(p.camera_x) + float(offset),
                        anchor.y - float(p.camera_y), anchor.w, anchor.h};
         frame.mood = current_.mood;
+        frame.exposure = room_exposure(current_.anchor.room, current_.anchor.w, current_.anchor.h);
         frame.gates = current_.gates;
         frame.leftGate = current_.leftGate;
         frame.lightTime = float(current_.frame % 1000003);
@@ -626,6 +822,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
     }
     current_.anchor = {p.room, wx, wy, f.w, f.h, true};
     frame.floor = {wx - float(p.camera_x) + float(offset), wy - float(p.camera_y), f.w, f.h};
+    frame.exposure = room_exposure(p.room, f.w, f.h);
     const float t = float(p.frame);
     const float W = float(width), H = 256.f;
     auto emit = [&](const std::vector<Lamp> &lamps, const Anchor &a, unsigned &counter) {
@@ -746,6 +943,7 @@ LightingFrame RoomLightRig::build(const EffectPacket &p, int width, int offset) 
         if (sx + old.w + 30 > 0 && sx - 30 < W && sy + old.h + 15 > 0 && sy - 44 < H) {
             frame.previousFloor = {sx, sy, old.w, old.h};
             frame.previousMood = previous_.mood;
+            frame.previousExposure = room_exposure(old.room, old.w, old.h);
             frame.previousGates = previous_.gates;
             frame.previousLeftGate = previous_.leftGate;
             frame.previousLightTime = float(previous_.frame % 1000003);

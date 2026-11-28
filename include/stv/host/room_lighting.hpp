@@ -54,8 +54,21 @@ struct RoomLightingLook {
     RoomCinemaCue cinema{};
 };
 
+// Tone match between the ray-traced rig and the original art. The arcade art is
+// already painted under its own light, so the irradiance that multiplies it must
+// average about 1 per surface, or the floor blows out while the walls sink.
+// scale: floor, rear wall, margins (sides/front); balance: rgb that removes most
+// of the rig's average colour cast. Derived from the static room lamps averaged
+// over their animation: explosions, boss cues and lamp motion still read.
+struct RoomExposure {
+    std::array<float, 4> scale{1, 1, 1, 1}; // w: share of the lamps' colour kept
+    std::array<float, 4> balance{1, 1, 1, 0};
+};
+RoomExposure room_exposure(uint32_t room, float floorWidth, float floorHeight);
+
 struct LightingFrame {
     RoomMood mood{};
+    RoomExposure exposure{}, previousExposure{};
     std::vector<GpuLight> lights;
     std::array<float, 4> floor{}; // anchored current floor, light-map space
     unsigned staticLights{}, previousRoomLights{}, studioLights{}, dynamicLights{};

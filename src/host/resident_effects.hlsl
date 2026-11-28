@@ -117,13 +117,18 @@ RWTexture2D<uint> writeMask : register(u0);
  }
  uint level=visualLevel(2);
  if(level){
-  int radius=max(4,int(r.z*(.09+.025*level)));
-  int depth=max(1,2+int(level));
+  // Floor items (material 6 icon, 7 mine) lie flat: a thin occlusion ring
+  // centred under the item, not an ellipse hanging off its bottom edge.
+  bool flat=casters[group.x*2+1].w>=6;
+  int grow=1+int(level)/2;
+  int radius=flat?max(2,r.z/2+grow):max(4,int(r.z*(.09+.025*level)));
+  int depth=flat?max(1,r.w/2+grow):max(1,2+int(level));
+  float centre=flat?r.y+r.w*.5+.5:foot;
   for(int y=lane.y;y<depth*2+1;y+=8)
    for(int x=lane.x;x<radius*2+1;x+=8){
     float2 delta=float2(x-radius,y-depth);
     if(dot(delta/float2(radius,depth),delta/float2(radius,depth))>1)continue;
-    int2 q=int2(round(r.x+r.z*.5+delta.x+shift),round(foot+delta.y));
+    int2 q=int2(round(r.x+r.z*.5+delta.x+shift),round(centre+delta.y));
     if(q.x>=0&&q.x<int(width)&&q.y>=25&&q.y<int(height))InterlockedOr(shadowBits[q],16);
    }
  }
@@ -400,6 +405,10 @@ uint2 giProbes(uint level){
  uint s=1u<<level;
  return uint2((width+s-1)/s+1,(height+s-1)/s+1);
 }
+// Bounce light is energy the direct map already carries: the art's tone match
+// (room_exposure) holds when the indirect share is folded back into the total.
+static const float GiShare=.2;
+float giKeep(float share){return giEnabled?1/(1+GiShare*share*giGain):1;}
 float3 giIrradiance(uint2 p){
  if(!giEnabled)return 0;
  uint2 probes=giProbes(0);
@@ -436,7 +445,7 @@ float3 giVolumetric(uint2 p){
 }
 float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float specBase,float specScale){
  float3 albedo=rgb*giAlbedoScale(p);
- return lightShoulder(albedo*(groundLight+giIrradiance(p))+groundSpec*(specBase+specScale*rgb));
+ return lightShoulder(albedo*(groundLight+giIrradiance(p))*giKeep(1)+groundSpec*(specBase+specScale*rgb));
 }
 [numthreads(8,8,1)] void composite(uint3 id:SV_DispatchThreadID) {
  if(id.x>=width||id.y>=height)return;
@@ -496,7 +505,7 @@ float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float sp
      if(at.y<256)shine+=dxrLight.Load(int3(at+int2(1024,256),0)).rgb*w;
     }
     body.rgb=bodySum/max(weight,1e-4);shine/=max(weight,1e-4);
-    lit=inkColor*(body.rgb+giIrradiance(id.xy)*giSpriteBounce)+shine*((tag&128)?.55:.16);
+    lit=inkColor*(body.rgb+giIrradiance(id.xy)*giSpriteBounce)*giKeep(giSpriteBounce)+shine*((tag&128)?.55:.16);
    }else{
     float k=.55*(1-smoothstep(.55,.95,max(inkColor.r,max(inkColor.g,inkColor.b))));
     lit=inkColor*lerp(float3(1,1,1),groundLight,k);
@@ -510,7 +519,7 @@ float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float sp
  cinemaRgb=roomCinema(cinemaRgb,id.xy,protectedHud || (visibleSprite && !scorePanel),departing);
  uint3 cinema8=(uint3)(saturate(cinemaRgb)*255+.5);
  original=(cinema8.x<<16)|(cinema8.y<<8)|cinema8.z;
- float3 sceneTint=dxrOn?min(groundLight+giIrradiance(id.xy),1.6):1;
+ float3 sceneTint=dxrOn?min((groundLight+giIrradiance(id.xy))*giKeep(1),1.6):1;
  uint tile=(id.y/16)*tileWidth+id.x/16;
  uint overlays=tiles[tile*55+54];
  bool spriteEffect=((overlays&1) && (mask&(1u<<20))) || ((overlays&2) && (mask&1024));
@@ -659,7 +668,7 @@ float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float sp
    rgb=lerp(rgb,scatter,opacity);
   }
  }
- if(dxrOn && !visibleSprite)rgb=giGround(rgb,id.xy,groundLight,groundSpec,.42,.4);
+ if(dxrOn && !visibleSprite)rgb=giGround(rgb,id.xy,groundLight,groundSpec,.28,.5);
  uint base=tile*55;
  uint groups=tiles[base], slots=0, group=0,slotBase=0;
  uint brassGroups=(mask&(512|262144))?tiles[base+33]:0;
@@ -909,6 +918,9 @@ float3 giGround(float3 rgb,uint2 p,float3 groundLight,float3 groundSpec,float sp
   float density=giFogHaze+giFogSmoke*saturate(plume*3);
   // Soft shoulder: dense smoke in a hot beam glows without clipping to white.
   float3 scatter=giVolumetric(id.xy)*density*giFogGain;
+  // Thin haze over dark painted floors reads as a milky veil, not as air: keep
+  // the beams where they cross lit art and smoke, fade them over the darkest art.
+  scatter*=lerp(.4,1,saturate(dot(rgb,float3(.2126,.7152,.0722))*3+saturate(plume*3)));
   rgb=rgb*(1-density*.12)+scatter/(1+scatter*1.6);
  }
  if(!combatProtected)applyCombatGlyphs(rgb,float2(id.xy)+.5);
